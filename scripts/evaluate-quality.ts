@@ -70,6 +70,7 @@ interface EvaluationFixture {
   name: string;
   immutable: boolean;
   extends?: string;
+  querySelection?: { code: string[]; memory: string[]; context: string[] };
   corpus?: { files: FixtureFile[]; memories: FixtureMemory[] };
   queries: { code: RankedQuery[]; memory: RankedQuery[]; context: ContextQuery[] };
 }
@@ -150,9 +151,16 @@ function loadFixture(name: string): { fixture: EvaluationFixture; checksum: stri
     const base = loadFixture(fixture.extends).fixture;
     if (!base.corpus) throw new Error(`Base fixture ${fixture.extends} has no corpus`);
     fixture.corpus = base.corpus;
+    if (fixture.querySelection) {
+      fixture.queries = {
+        code: base.queries.code.filter((query) => fixture.querySelection!.code.includes(query.id)),
+        memory: base.queries.memory.filter((query) => fixture.querySelection!.memory.includes(query.id)),
+        context: base.queries.context.filter((query) => fixture.querySelection!.context.includes(query.id)),
+      };
+    }
   }
   if (!fixture.corpus) throw new Error(`Fixture ${name} has no corpus`);
-  if (fixture.version === 2) validateV2Fixture(fixture);
+  if (fixture.version === 2 && fixture.immutable) validateV2Fixture(fixture);
   return { fixture, checksum: sha256(raw) };
 }
 
