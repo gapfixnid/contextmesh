@@ -1,11 +1,9 @@
-import { createRequire } from "node:module";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { APPROVED_MODEL_KEY } from "../src/semantic/manifest.js";
 import { createTransformersEmbeddingBackend } from "../src/semantic/transformers-backend.js";
-
-const require = createRequire(import.meta.url);
+import { installNetworkDenyGuard } from "./network-deny.js";
 
 function modelPathArgument(): string {
   const index = process.argv.indexOf("--model-path");
@@ -14,38 +12,7 @@ function modelPathArgument(): string {
   return path.resolve(configured);
 }
 
-function installNetworkDenyGuard(): () => void {
-  const restores: Array<() => void> = [];
-  const deny = (): never => {
-    throw new Error("NETWORK_DENIED_BY_SEMANTIC_SMOKE");
-  };
-  const replace = (target: Record<string, unknown>, key: string): void => {
-    const descriptor = Object.getOwnPropertyDescriptor(target, key);
-    if (!descriptor || descriptor.configurable === false) return;
-    Object.defineProperty(target, key, { ...descriptor, value: deny });
-    restores.push(() => Object.defineProperty(target, key, descriptor));
-  };
-  const globalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
-  if (globalDescriptor?.configurable) {
-    Object.defineProperty(globalThis, "fetch", { ...globalDescriptor, value: deny });
-    restores.push(() => Object.defineProperty(globalThis, "fetch", globalDescriptor));
-  }
-  for (const [moduleName, keys] of [
-    ["node:http", ["request", "get"]],
-    ["node:https", ["request", "get"]],
-    ["node:net", ["connect", "createConnection"]],
-    ["node:tls", ["connect"]],
-    ["node:dns", ["lookup", "resolve"]],
-  ] as const) {
-    const module = require(moduleName) as Record<string, unknown>;
-    for (const key of keys) replace(module, key);
-  }
-  return () => {
-    for (const restore of restores.reverse()) restore();
-  };
-}
-
-const restoreNetwork = installNetworkDenyGuard();
+const restoreNetwork = installNetworkDenyGuard("NETWORK_DENIED_BY_SEMANTIC_SMOKE");
 const started = performance.now();
 const backend = await createTransformersEmbeddingBackend(modelPathArgument());
 let report: Record<string, unknown> | null = null;

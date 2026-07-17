@@ -24,6 +24,7 @@ import {
   sourceDateEpochIso,
   type CanonicalJsonValue,
 } from "./evaluation-contract.js";
+import { installNetworkDenyGuard } from "./network-deny.js";
 
 interface GoldEntry {
   key: string;
@@ -322,6 +323,7 @@ for (const file of corpus.files) {
 }
 
 let evaluationNow = new Date();
+const restoreNetwork = semanticModelPath ? installNetworkDenyGuard("NETWORK_DENIED_BY_ACCEPTANCE") : () => {};
 const app = new ContextMeshApp(
   root,
   ":memory:",
@@ -695,7 +697,10 @@ try {
       effectiveExecutionProvider: runtime?.effectiveExecutionProvider ?? "not_applicable",
       effectiveIntraOpThreads: runtime?.effectiveIntraOpThreads ?? "not_applicable",
       effectiveInterOpThreads: runtime?.effectiveInterOpThreads ?? "not_applicable",
-      verificationMethod: runtime?.verificationMethod ?? ["semantic_disabled_control"],
+      verificationMethod: [
+        ...(runtime?.verificationMethod ?? ["semantic_disabled_control"]),
+        ...(semanticModelPath ? ["network_denied"] : []),
+      ],
       modelManifestDigest: semanticModelPath ? APPROVED_MODEL_KEY : null,
       transformersVersion: semanticModelPath ? APPROVED_MODEL_MANIFEST.backend.version : null,
       onnxruntimeNodeVersion: semanticModelPath ? APPROVED_MODEL_MANIFEST.backend.moduleVersion : null,
@@ -764,6 +769,7 @@ try {
   if (semanticModelPath && !gatesPassed) throw new Error("Phase 4 acceptance quality gate failed");
 } finally {
   await app.close();
+  restoreNetwork();
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });
 }
 }
