@@ -275,6 +275,8 @@ if (process.argv.includes("--self-test-v2")) {
 } else {
 const selectedFixture = argument("--fixture", "acceptance-v1");
 const semanticModelPath = argument("--semantic-model", "");
+const baselineToolCommit = argument("--baseline-tool-commit", "");
+const fixtureCommit = argument("--fixture-commit", "");
 const baselinePath = path.resolve(argument("--baseline", BASELINE_PATH));
 const lexicalBaseline = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8")) as BaselineEvaluation
@@ -641,7 +643,11 @@ try {
       commit: gitCommit,
       generatedAt,
       phase3SourceCommit:
-        lexicalBaseline?.baseline.phase3SourceCommit ?? lexicalBaseline?.baseline.commit ?? null,
+        !semanticModelPath
+          ? gitCommit
+          : lexicalBaseline?.baseline.phase3SourceCommit ?? lexicalBaseline?.baseline.commit ?? null,
+      baselineToolCommit: baselineToolCommit || null,
+      fixtureCommit: fixtureCommit || null,
       lexicalReferenceCommit: lexicalBaseline?.baseline.commit ?? null,
       lexicalReferenceDigest:
         (lexicalBaseline as (BaselineEvaluation & { baselineDigest?: string }) | null)?.baselineDigest ?? null,
