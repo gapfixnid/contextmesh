@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -47,11 +47,8 @@ const forbidden = [
 try {
   execFileSync("git", ["archive", "--format=zip", `--output=${archive}`, "HEAD"], { cwd: project });
   if (process.platform === "win32") {
-    execFileSync(
-      "powershell",
-      ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1]", archive, extracted],
-      { stdio: "inherit" },
-    );
+    mkdirSync(extracted, { recursive: true });
+    execFileSync("tar.exe", ["-xf", archive, "-C", extracted], { stdio: "inherit" });
   } else {
     execFileSync("unzip", ["-q", archive, "-d", extracted], { stdio: "inherit" });
   }
