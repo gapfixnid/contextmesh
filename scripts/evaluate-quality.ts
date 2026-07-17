@@ -15,6 +15,7 @@ import {
   addBaselineDigest,
   canonicalControlJson,
   metricsForGateGroup,
+  normalizedFixtureDigest,
   requiredChallengeRecall,
   requiredNdcg,
   runEvaluationContractSelfTest,
@@ -164,7 +165,7 @@ function loadFixture(name: string): { fixture: EvaluationFixture; checksum: stri
   }
   if (!fixture.corpus) throw new Error(`Fixture ${name} has no corpus`);
   if (fixture.version === 2 && fixture.immutable) validateV2Fixture(fixture);
-  return { fixture, checksum: sha256(raw) };
+  return { fixture, checksum: fixture.version === 2 ? normalizedFixtureDigest(raw) : sha256(raw) };
 }
 
 function round(value: number): number {
@@ -662,6 +663,7 @@ try {
       version: fixture.version,
       immutable: fixture.immutable,
       sha256: checksum,
+      digestVersion: fixture.version === 2 ? "lf-normalized-v1" : "raw-v1",
       goldDigest,
     },
     baseline: {

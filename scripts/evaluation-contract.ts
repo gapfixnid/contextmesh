@@ -53,6 +53,11 @@ export function sha256Bytes(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function normalizedFixtureDigest(value: Uint8Array): string {
+  const normalized = Buffer.from(value).toString("utf8").replace(/\r\n?/gu, "\n");
+  return sha256Bytes(Buffer.from(normalized, "utf8"));
+}
+
 export function addBaselineDigest<T extends Record<string, CanonicalJsonValue>>(
   artifact: T,
 ): T & { baselineDigest: string } {
@@ -108,6 +113,9 @@ export function runEvaluationContractSelfTest(): void {
   const expected = sha256Bytes(Buffer.from('{"a":"fixed","z":1}', "utf8"));
   if (artifact.baselineDigest !== expected) throw new Error("Non-self-referential baseline digest failed");
   if (serializeCanonicalArtifact(artifact)[0] === 0xef) throw new Error("Canonical artifact must not contain a BOM");
+  if (normalizedFixtureDigest(Buffer.from("{\r\n}\r\n")) !== normalizedFixtureDigest(Buffer.from("{\n}\n"))) {
+    throw new Error("Fixture digest line-ending normalization failed");
+  }
   if (requiredChallengeRecall(0.5) !== 0.8 || requiredChallengeRecall(0.8) !== 0.9) {
     throw new Error("Challenge recall contract failed");
   }

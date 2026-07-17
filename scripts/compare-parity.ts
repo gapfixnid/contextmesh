@@ -15,7 +15,7 @@ interface ContextQueryArtifact {
 
 interface ParityArtifact {
   evaluatorVersion: string;
-  fixture: { sha256: string; goldDigest: string };
+  fixture: { sha256: string; digestVersion: string; goldDigest: string };
   baseline: { commit: string; lexicalReferenceDigest: string | null };
   environment: {
     node: string;
@@ -48,6 +48,7 @@ const differences: Array<Record<string, unknown>> = [];
 const provenance = (artifact: ParityArtifact) => ({
   sourceCommitSha: artifact.baseline.commit,
   fixtureDigest: artifact.fixture.sha256,
+  fixtureDigestVersion: artifact.fixture.digestVersion,
   goldDigest: artifact.fixture.goldDigest,
   modelManifestDigest: artifact.environment.modelManifestDigest,
   baselineDigest: artifact.baseline.lexicalReferenceDigest,

@@ -4,6 +4,7 @@ import {
   addBaselineDigest,
   canonicalControlJson,
   metricsForGateGroup,
+  normalizedFixtureDigest,
   requiredChallengeRecall,
   requiredNdcg,
   runEvaluationContractSelfTest,
@@ -44,5 +45,11 @@ describe("acceptance-v2 evaluation contract", () => {
   it("requires a fixed SOURCE_DATE_EPOCH", () => {
     expect(sourceDateEpochIso("0")).toBe("1970-01-01T00:00:00.000Z");
     expect(() => sourceDateEpochIso(undefined)).toThrow(/SOURCE_DATE_EPOCH/);
+  });
+
+  it("keeps the v2 fixture digest stable across checkout line endings", () => {
+    expect(normalizedFixtureDigest(Buffer.from('{"value":1}\r\n'))).toBe(
+      normalizedFixtureDigest(Buffer.from('{"value":1}\n')),
+    );
   });
 });
