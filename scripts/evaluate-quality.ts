@@ -1,0 +1,414 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
+
+import { ContextMeshApp } from "../src/app.js";
+import type { Envelope, MemoryFragmentRecord } from "../src/contracts.js";
+import type { ContextCodeItem, ContextMemoryItem } from "../src/context/assembler.js";
+import type { CodeSearchResult } from "../src/storage/database.js";
+
+interface GoldEntry {
+  key: string;
+  grade: 0 | 1 | 2 | 3;
+  span?: { path: string; startLine: number; endLine: number };
+}
+
+interface RankedQuery {
+  id: string;
+  query: string;
+  k: number;
+  gold: GoldEntry[];
+  includeAnchors?: boolean;
+}
+
+interface ContextQuery {
+  id: string;
+  query: string;
+  tokenBudget: number;
+  gold: GoldEntry[];
+}
+
+interface FixtureFile {
+  path: string;
+  content: string;
+}
+
+interface FixtureMemory {
+  key: string;
+  draft: {
+    content: string;
+    topic: string;
+    type: "fact" | "decision" | "error" | "preference" | "procedure" | "relation" | "episode";
+    keywords: string[];
+    importance: number;
+    anchor: boolean;
+    assertionStatus: "observed" | "inferred" | "verified" | "rejected";
+    sourceLocalKeys: string[];
+  };
+}
+
+interface EvaluationFixture {
+  version: number;
+  name: string;
+  immutable: boolean;
+  extends?: string;
+  corpus?: { files: FixtureFile[]; memories: FixtureMemory[] };
+  queries: { code: RankedQuery[]; memory: RankedQuery[]; context: ContextQuery[] };
+}
+
+interface RankedMetric {
+  id: string;
+  returned: string[];
+  relevantReturned: number;
+  relevantTotal: number;
+  recall: number;
+  reciprocalRank: number;
+  ndcg: number;
+}
+
+const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
+const FIXTURE_DIRECTORY = path.join(PROJECT_ROOT, "evaluation", "fixtures");
+
+function argument(name: string, fallback: string): string {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? (process.argv[index + 1] ?? fallback) : fallback;
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function loadFixture(name: string): { fixture: EvaluationFixture; checksum: string } {
+  const fileName = name.endsWith(".json") ? name : `${name}.json`;
+  const fixturePath = path.join(FIXTURE_DIRECTORY, fileName);
+  const raw = readFileSync(fixturePath);
+  const fixture = JSON.parse(raw.toString("utf8")) as EvaluationFixture;
+  if (fixture.extends) {
+    const base = loadFixture(fixture.extends).fixture;
+    if (!base.corpus) throw new Error(`Base fixture ${fixture.extends} has no corpus`);
+    fixture.corpus = base.corpus;
+  }
+  if (!fixture.corpus) throw new Error(`Fixture ${name} has no corpus`);
+  return { fixture, checksum: sha256(raw) };
+}
+
+function round(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function percentile95(values: number[]): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0;
+}
+
+function rankedMetric(query: RankedQuery, returned: string[]): RankedMetric {
+  const grades = new Map(query.gold.map((entry) => [entry.key, entry.grade]));
+  const relevant = query.gold.filter((entry) => entry.grade >= 2);
+  const limited = returned.slice(0, query.k);
+  const relevantReturned = limited.filter((key) => (grades.get(key) ?? 0) >= 2).length;
+  const firstRelevant = limited.findIndex((key) => (grades.get(key) ?? 0) >= 2);
+  const dcg = limited.reduce((sum, key, index) => {
+    const grade = grades.get(key) ?? 0;
+    return sum + (2 ** grade - 1) / Math.log2(index + 2);
+  }, 0);
+  const ideal = [...query.gold]
+    .sort((left, right) => right.grade - left.grade || left.key.localeCompare(right.key))
+    .slice(0, query.k)
+    .reduce((sum, entry, index) => sum + (2 ** entry.grade - 1) / Math.log2(index + 2), 0);
+  return {
+    id: query.id,
+    returned: limited,
+    relevantReturned,
+    relevantTotal: relevant.length,
+    recall: round(relevant.length === 0 ? 1 : relevantReturned / relevant.length),
+    reciprocalRank: round(firstRelevant < 0 ? 0 : 1 / (firstRelevant + 1)),
+    ndcg: round(ideal === 0 ? 1 : dcg / ideal),
+  };
+}
+
+function aggregateRanked(metrics: RankedMetric[]): Record<string, number> {
+  const count = Math.max(1, metrics.length);
+  const relevantReturned = metrics.reduce((sum, metric) => sum + metric.relevantReturned, 0);
+  const relevantTotal = metrics.reduce((sum, metric) => sum + metric.relevantTotal, 0);
+  return {
+    macroRecall: round(metrics.reduce((sum, metric) => sum + metric.recall, 0) / count),
+    macroMrr: round(metrics.reduce((sum, metric) => sum + metric.reciprocalRank, 0) / count),
+    macroNdcg: round(metrics.reduce((sum, metric) => sum + metric.ndcg, 0) / count),
+    microRecall: round(relevantTotal === 0 ? 1 : relevantReturned / relevantTotal),
+  };
+}
+
+function normalizedTokens(value: string): string[] {
+  return value
+    .normalize("NFC")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLocaleLowerCase("en-US")
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function shingles(tokens: string[], width = 5): Set<string> {
+  if (tokens.length < width) return new Set(tokens.length > 0 ? [tokens.join(" ")] : []);
+  const result = new Set<string>();
+  for (let index = 0; index <= tokens.length - width; index += 1) {
+    result.add(tokens.slice(index, index + width).join(" "));
+  }
+  return result;
+}
+
+function jaccard(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 && right.size === 0) return 1;
+  let intersection = 0;
+  for (const value of left) if (right.has(value)) intersection += 1;
+  return intersection / (left.size + right.size - intersection);
+}
+
+function duplicateWaste(values: string[]): number {
+  const prior: Array<{ tokens: string[]; shingles: Set<string> }> = [];
+  let totalTokens = 0;
+  let wastedTokens = 0;
+  for (const value of values) {
+    const tokens = normalizedTokens(value);
+    const tokenShingles = shingles(tokens);
+    totalTokens += tokens.length;
+    const nearDuplicate = prior.find((candidate) => jaccard(candidate.shingles, tokenShingles) >= 0.8);
+    if (nearDuplicate) {
+      const priorTokens = new Set(nearDuplicate.tokens);
+      wastedTokens += tokens.filter((token) => priorTokens.has(token)).length;
+    }
+    prior.push({ tokens, shingles: tokenShingles });
+  }
+  return round(totalTokens === 0 ? 0 : wastedTokens / totalTokens);
+}
+
+async function measure(operation: () => Promise<void>): Promise<number> {
+  for (let index = 0; index < 5; index += 1) await operation();
+  const durations: number[] = [];
+  for (let index = 0; index < 50; index += 1) {
+    const started = performance.now();
+    await operation();
+    durations.push(performance.now() - started);
+  }
+  return round(percentile95(durations));
+}
+
+const selectedFixture = argument("--fixture", "acceptance-v1");
+const { fixture, checksum } = loadFixture(selectedFixture);
+const corpus = fixture.corpus;
+if (!corpus) throw new Error("Evaluation corpus is missing");
+const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-evaluation-"));
+writeFileSync(
+  path.join(root, "tsconfig.json"),
+  JSON.stringify({
+    compilerOptions: {
+      target: "ES2022",
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      strict: true,
+      noEmit: true,
+    },
+    include: ["src/**/*.ts"],
+  }),
+  "utf8",
+);
+for (const file of corpus.files) {
+  const target = path.join(root, file.path);
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, file.content, "utf8");
+}
+
+const app = new ContextMeshApp(root, ":memory:");
+try {
+  await app.indexWorkspace({ mode: "full" });
+  const codeNodes = app.database.searchCode("", undefined, 10_000);
+  const codeIds = new Map(codeNodes.map((node) => [node.localKey, node.id]));
+  const memoryIdToKey = new Map<string, string>();
+  for (const memory of corpus.memories) {
+    const sourceSymbolIds = memory.draft.sourceLocalKeys
+      .map((key) => codeIds.get(key))
+      .filter((id): id is string => Boolean(id));
+    const result = await app.remember({ ...memory.draft, sourceSymbolIds }) as Envelope<{
+      fragment: MemoryFragmentRecord;
+    }>;
+    memoryIdToKey.set(result.data.fragment.id, memory.key);
+  }
+
+  const codeMetrics: RankedMetric[] = [];
+  for (const query of fixture.queries.code) {
+    const result = await app.searchCode({ query: query.query, limit: query.k }) as Envelope<{
+      results: CodeSearchResult[];
+    }>;
+    codeMetrics.push(rankedMetric(query, result.data.results.map((node) => node.localKey)));
+  }
+
+  const memoryMetrics: RankedMetric[] = [];
+  for (const query of fixture.queries.memory) {
+    const result = await app.recall({
+      query: query.query,
+      includeAnchors: query.includeAnchors ?? false,
+      limit: query.k,
+      tokenBudget: 4000,
+    }) as Envelope<{ fragments: MemoryFragmentRecord[] }>;
+    memoryMetrics.push(
+      rankedMetric(query, result.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id)),
+    );
+  }
+
+  const contextMetrics: Array<Record<string, unknown>> = [];
+  for (const query of fixture.queries.context) {
+    const result = await app.getContext({
+      query: query.query,
+      tokenBudget: query.tokenBudget,
+      include: ["code", "memory"],
+    }) as Envelope<{ code: ContextCodeItem[]; memories: ContextMemoryItem[] }>;
+    const returned = new Set([
+      ...result.data.code.map((node) => node.localKey),
+      ...result.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
+    ]);
+    const relevant = query.gold.filter((entry) => entry.grade >= 2);
+    const covered = relevant.filter((entry) => {
+      if (!entry.span) return returned.has(entry.key);
+      return result.data.code.some(
+        (node) =>
+          node.localKey === entry.key &&
+          node.relativePath === entry.span?.path &&
+          node.startLine <= entry.span.endLine &&
+          node.endLine >= entry.span.startLine &&
+          node.snippet !== null,
+      );
+    });
+    const texts = [
+      ...result.data.code.map((node) => node.snippet ?? `${node.signature} ${node.doc}`),
+      ...result.data.memories.map((memory) => memory.content),
+    ];
+    const signature = JSON.stringify({
+      code: result.data.code.map((node) => [node.localKey, node.score]),
+      memories: result.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
+    });
+    let deterministic = true;
+    for (let run = 1; run < 20; run += 1) {
+      const repeated = await app.getContext({
+        query: query.query,
+        tokenBudget: query.tokenBudget,
+        include: ["code", "memory"],
+      }) as Envelope<{ code: ContextCodeItem[]; memories: ContextMemoryItem[] }>;
+      const repeatedSignature = JSON.stringify({
+        code: repeated.data.code.map((node) => [node.localKey, node.score]),
+        memories: repeated.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
+      });
+      if (repeatedSignature !== signature) deterministic = false;
+    }
+    contextMetrics.push({
+      id: query.id,
+      relevantCovered: covered.length,
+      relevantTotal: relevant.length,
+      evidenceCoverage: round(relevant.length === 0 ? 1 : covered.length / relevant.length),
+      estimatedTokens: result.estimatedTokens,
+      duplicateWaste: duplicateWaste(texts),
+      deterministic,
+      returned: [...returned],
+    });
+  }
+
+  const contextRelevantCovered = contextMetrics.reduce(
+    (sum, metric) => sum + Number(metric.relevantCovered),
+    0,
+  );
+  const contextRelevantTotal = contextMetrics.reduce((sum, metric) => sum + Number(metric.relevantTotal), 0);
+  const searchQuery = fixture.queries.code[0];
+  const contextQuery = fixture.queries.context[0];
+  const searchP95Ms = searchQuery
+    ? await measure(async () => {
+        await app.searchCode({ query: searchQuery.query, limit: searchQuery.k });
+      })
+    : 0;
+  const getContextP95Ms = contextQuery
+    ? await measure(async () => {
+        await app.getContext({
+          query: contextQuery.query,
+          tokenBudget: contextQuery.tokenBudget,
+          include: ["code", "memory"],
+        });
+      })
+    : 0;
+  const status = await app.workspaceStatus() as Envelope<{
+    counts: { files: number; nodes: number; memories: number };
+  }>;
+  const gitCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" }).trim();
+  const npmVersion = /(?:^|\s)npm\/([^\s]+)/.exec(process.env.npm_config_user_agent ?? "")?.[1] ?? "unknown";
+  const result = {
+    schemaVersion: 1,
+    fixture: {
+      name: fixture.name,
+      version: fixture.version,
+      immutable: fixture.immutable,
+      sha256: checksum,
+    },
+    baseline: {
+      mode: "semantic-disabled",
+      commit: gitCommit,
+      generatedAt: new Date().toISOString(),
+    },
+    environment: {
+      platform: process.platform,
+      release: os.release(),
+      architecture: process.arch,
+      cpu: os.cpus()[0]?.model ?? "unknown",
+      logicalCpuCount: os.cpus().length,
+      ramBytes: os.totalmem(),
+      node: process.version,
+      npm: npmVersion,
+      resolvedBackend: "disabled",
+      requestedSessionOptions: null,
+      requestedExecutionProviders: [],
+      effectiveExecutionProvider: "not_applicable",
+      effectiveIntraOpThreads: "not_applicable",
+      effectiveInterOpThreads: "not_applicable",
+      verificationMethod: ["semantic_disabled_control"],
+    },
+    corpus: {
+      checksum: sha256(corpus.files.map((file) => `${file.path}\0${file.content}`).join("\0")),
+      files: status.data.counts.files,
+      symbols: status.data.counts.nodes,
+      memories: status.data.counts.memories,
+      tokenEstimate: normalizedTokens(corpus.files.map((file) => file.content).join("\n")).length,
+      embeddingTokens: 0,
+    },
+    evaluation: {
+      relevanceThreshold: 2,
+      ndcgGain: "2^grade-1",
+      tieBreak: "canonical-id-ascending",
+      code: { aggregate: aggregateRanked(codeMetrics), queries: codeMetrics },
+      memory: { aggregate: aggregateRanked(memoryMetrics), queries: memoryMetrics },
+      context: {
+        macroEvidenceCoverage: round(
+          contextMetrics.reduce((sum, metric) => sum + Number(metric.evidenceCoverage), 0) /
+            Math.max(1, contextMetrics.length),
+        ),
+        microEvidenceCoverage: round(
+          contextRelevantTotal === 0 ? 1 : contextRelevantCovered / contextRelevantTotal,
+        ),
+        macroDuplicateWaste: round(
+          contextMetrics.reduce((sum, metric) => sum + Number(metric.duplicateWaste), 0) /
+            Math.max(1, contextMetrics.length),
+        ),
+        queries: contextMetrics,
+      },
+    },
+    performance: {
+      warmups: 5,
+      samples: 50,
+      p95Method: "sort-ascending-index-floor(n*0.95)",
+      searchP95Ms,
+      getContextP95Ms,
+    },
+  };
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+} finally {
+  await app.close();
+  rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+}

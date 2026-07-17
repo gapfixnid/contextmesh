@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "name": "phase4-acceptance-v1",
+  "immutable": true,
+  "corpus": {
+    "files": [
+      {
+        "path": "src/access.ts",
+        "content": "/** Returns whether an account may perform a privileged operation. */\nexport function authorizeAction(accountRoles: string[], operation: string): boolean {\n  if (operation === \"read\") return true;\n  return accountRoles.includes(\"administrator\");\n}\n"
+      },
+      {
+        "path": "src/audit.ts",
+        "content": "/** Writes a redacted security decision to the compliance trail. */\nexport function recordAuditDecision(actorId: string, outcome: \"allowed\" | \"denied\"): string {\n  return `${actorId.slice(0, 4)}:${outcome}`;\n}\n"
+      },
+      {
+        "path": "src/cache.ts",
+        "content": "export class TimedValueStore<T> {\n  private readonly entries = new Map<string, { value: T; expiresAt: number }>();\n\n  put(key: string, value: T, ttlMilliseconds: number, now: number): void {\n    this.entries.set(key, { value, expiresAt: now + ttlMilliseconds });\n  }\n\n  read(key: string, now: number): T | undefined {\n    const entry = this.entries.get(key);\n    if (!entry || entry.expiresAt <= now) return undefined;\n    return entry.value;\n  }\n}\n"
+      },
+      {
+        "path": "src/gateway.ts",
+        "content": "/** Repeats a transient gateway operation with exponentially increasing delays. */\nexport async function retryTransient<T>(operation: () => Promise<T>, wait: (ms: number) => Promise<void>): Promise<T> {\n  let delay = 25;\n  for (let attempt = 0; attempt < 3; attempt += 1) {\n    try {\n      return await operation();\n    } catch (error) {\n      if (attempt === 2) throw error;\n      await wait(delay);\n      delay *= 2;\n    }\n  }\n  throw new Error(\"unreachable\");\n}\n"
+      },
+      {
+        "path": "src/pricing.ts",
+        "content": "import { TimedValueStore } from \"./cache.js\";\nimport { retryTransient } from \"./gateway.js\";\n\nconst prices = new TimedValueStore<number>();\n\nexport async function loadPrice(sku: string, now: number, fetchPrice: () => Promise<number>): Promise<number> {\n  const cached = prices.read(sku, now);\n  if (cached !== undefined) return cached;\n  const value = await retryTransient(fetchPrice, async () => undefined);\n  prices.put(sku, value, 300000, now);\n  return value;\n}\n"
+      }
+    ],
+    "memories": [
+      {
+        "key": "memory:admin-policy",
+        "draft": {
+          "content": "Privileged operations must be denied unless the account has the administrator role.",
+          "topic": "authorization policy",
+          "type": "decision",
+          "keywords": ["authorization", "administrator", "deny"],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": ["src/access.ts:function:authorizeAction"]
+        }
+      },
+      {
+        "key": "memory:pricing-cache",
+        "draft": {
+          "content": "Pricing responses are retained locally for five minutes to avoid repeated upstream work.",
+          "topic": "pricing cache",
+          "type": "decision",
+          "keywords": ["pricing", "five minutes", "upstream"],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": ["src/pricing.ts:function:loadPrice"]
+        }
+      },
+      {
+        "key": "memory:pricing-cache-near-duplicate",
+        "draft": {
+          "content": "Pricing responses are kept in a local store for five minutes so repeated upstream calls are avoided.",
+          "topic": "pricing response retention",
+          "type": "fact",
+          "keywords": ["pricing", "local store", "five minutes"],
+          "importance": 2,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:gateway-retry",
+        "draft": {
+          "content": "Transient gateway failures are retried at most three times with an exponentially increasing delay.",
+          "topic": "gateway resilience",
+          "type": "procedure",
+          "keywords": ["transient", "retry", "exponential delay"],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": ["src/gateway.ts:function:retryTransient"]
+        }
+      },
+      {
+        "key": "memory:audit-redaction",
+        "draft": {
+          "content": "Compliance audit records must contain a shortened actor identifier and the authorization outcome only.",
+          "topic": "audit privacy",
+          "type": "decision",
+          "keywords": ["compliance", "redaction", "authorization outcome"],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": ["src/audit.ts:function:recordAuditDecision"]
+        }
+      }
+    ]
+  },
+  "queries": {
+    "code": [
+      {
+        "id": "code-exact-authorize",
+        "query": "authorizeAction",
+        "k": 5,
+        "gold": [{ "key": "src/access.ts:function:authorizeAction", "grade": 3 }]
+      },
+      {
+        "id": "code-semantic-permission",
+        "query": "check whether a person may perform a privileged operation",
+        "k": 10,
+        "gold": [{ "key": "src/access.ts:function:authorizeAction", "grade": 3 }]
+      },
+      {
+        "id": "code-semantic-temporary-values",
+        "query": "temporarily retain expensive computed values until they become stale",
+        "k": 10,
+        "gold": [
+          { "key": "src/cache.ts:class:TimedValueStore", "grade": 3 },
+          { "key": "src/cache.ts:method:TimedValueStore.read", "grade": 2 },
+          { "key": "src/cache.ts:method:TimedValueStore.put", "grade": 2 }
+        ]
+      },
+      {
+        "id": "code-semantic-resilience",
+        "query": "recover from temporary upstream errors with increasing pauses",
+        "k": 10,
+        "gold": [{ "key": "src/gateway.ts:function:retryTransient", "grade": 3 }]
+      }
+    ],
+    "memory": [
+      {
+        "id": "memory-authorization",
+        "query": "who is permitted to run a privileged operation",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [{ "key": "memory:admin-policy", "grade": 3 }]
+      },
+      {
+        "id": "memory-cache-duration",
+        "query": "how long do we avoid another pricing request",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          { "key": "memory:pricing-cache", "grade": 3 },
+          { "key": "memory:pricing-cache-near-duplicate", "grade": 1 }
+        ]
+      },
+      {
+        "id": "memory-transient-failure",
+        "query": "what is the recovery policy for temporary gateway errors",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [{ "key": "memory:gateway-retry", "grade": 3 }]
+      }
+    ],
+    "context": [
+      {
+        "id": "context-pricing-resilience",
+        "query": "explain how pricing avoids repeated work and survives temporary failures",
+        "tokenBudget": 2000,
+        "gold": [
+          { "key": "src/pricing.ts:function:loadPrice", "grade": 3, "span": { "path": "src/pricing.ts", "startLine": 6, "endLine": 12 } },
+          { "key": "src/gateway.ts:function:retryTransient", "grade": 2, "span": { "path": "src/gateway.ts", "startLine": 2, "endLine": 14 } },
+          { "key": "memory:pricing-cache", "grade": 3 },
+          { "key": "memory:gateway-retry", "grade": 2 }
+        ]
+      },
+      {
+        "id": "context-authorization-audit",
+        "query": "describe privileged access and how its decision is recorded safely",
+        "tokenBudget": 2000,
+        "gold": [
+          { "key": "src/access.ts:function:authorizeAction", "grade": 3, "span": { "path": "src/access.ts", "startLine": 2, "endLine": 5 } },
+          { "key": "src/audit.ts:function:recordAuditDecision", "grade": 3, "span": { "path": "src/audit.ts", "startLine": 2, "endLine": 4 } },
+          { "key": "memory:admin-policy", "grade": 3 },
+          { "key": "memory:audit-redaction", "grade": 3 }
+        ]
+      }
+    ]
+  }
+}

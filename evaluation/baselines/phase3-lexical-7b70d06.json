@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "fixture": {
+    "name": "phase4-acceptance-v1",
+    "version": 1,
+    "immutable": true,
+    "sha256": "4c1c5dead6f4aee1d0f6a8be168681d8c658b6c2b3f71ba672855ea2410b4c5f"
+  },
+  "baseline": {
+    "mode": "semantic-disabled",
+    "commit": "7b70d06123fd95aa5f143f661ad3e894c92c929a",
+    "generatedAt": "2026-07-17T08:06:58.383Z"
+  },
+  "environment": {
+    "platform": "win32",
+    "release": "10.0.26200",
+    "architecture": "x64",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor           ",
+    "logicalCpuCount": 16,
+    "ramBytes": 33694904320,
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "resolvedBackend": "disabled",
+    "requestedSessionOptions": null,
+    "requestedExecutionProviders": [],
+    "effectiveExecutionProvider": "not_applicable",
+    "effectiveIntraOpThreads": "not_applicable",
+    "effectiveInterOpThreads": "not_applicable",
+    "verificationMethod": ["semantic_disabled_control"]
+  },
+  "corpus": {
+    "checksum": "04ace332235c827042240689d5c26eb15fff643ce5ce8245edc91029b2948018",
+    "files": 5,
+    "symbols": 13,
+    "memories": 5,
+    "tokenEstimate": 238,
+    "embeddingTokens": 0
+  },
+  "evaluation": {
+    "relevanceThreshold": 2,
+    "ndcgGain": "2^grade-1",
+    "tieBreak": "canonical-id-ascending",
+    "code": {
+      "aggregate": {
+        "macroRecall": 0.75,
+        "macroMrr": 0.75,
+        "macroNdcg": 0.75,
+        "microRecall": 0.5
+      },
+      "queries": [
+        {
+          "id": "code-exact-authorize",
+          "returned": ["src/access.ts:function:authorizeAction"],
+          "relevantReturned": 1,
+          "relevantTotal": 1,
+          "recall": 1,
+          "reciprocalRank": 1,
+          "ndcg": 1
+        },
+        {
+          "id": "code-semantic-permission",
+          "returned": [
+            "src/access.ts:function:authorizeAction",
+            "src/gateway.ts:function:retryTransient",
+            "src/access.ts:module",
+            "src/audit.ts:module",
+            "src/audit.ts:function:recordAuditDecision"
+          ],
+          "relevantReturned": 1,
+          "relevantTotal": 1,
+          "recall": 1,
+          "reciprocalRank": 1,
+          "ndcg": 1
+        },
+        {
+          "id": "code-semantic-temporary-values",
+          "returned": [],
+          "relevantReturned": 0,
+          "relevantTotal": 3,
+          "recall": 0,
+          "reciprocalRank": 0,
+          "ndcg": 0
+        },
+        {
+          "id": "code-semantic-resilience",
+          "returned": ["src/gateway.ts:function:retryTransient"],
+          "relevantReturned": 1,
+          "relevantTotal": 1,
+          "recall": 1,
+          "reciprocalRank": 1,
+          "ndcg": 1
+        }
+      ]
+    },
+    "memory": {
+      "aggregate": {
+        "macroRecall": 1,
+        "macroMrr": 0.833333,
+        "macroNdcg": 0.876977,
+        "microRecall": 1
+      },
+      "queries": [
+        {
+          "id": "memory-authorization",
+          "returned": [
+            "memory:admin-policy",
+            "memory:pricing-cache",
+            "memory:audit-redaction",
+            "memory:pricing-cache-near-duplicate",
+            "memory:gateway-retry"
+          ],
+          "relevantReturned": 1,
+          "relevantTotal": 1,
+          "recall": 1,
+          "reciprocalRank": 1,
+          "ndcg": 1
+        },
+        {
+          "id": "memory-cache-duration",
+          "returned": ["memory:pricing-cache", "memory:pricing-cache-near-duplicate"],
+          "relevantReturned": 1,
+          "relevantTotal": 1,
+          "recall": 1,
+          "reciprocalRank": 1,
+          "ndcg": 1
+        },
+        {
+          "id": "memory-transient-failure",
+          "returned": [
+            "memory:admin-policy",
+            "memory:gateway-retry",
+            "memory:pricing-cache",
+            "memory:audit-redaction",
+            "memory:pricing-cache-near-duplicate"
+          ],
+          "relevantReturned": 1,
+          "relevantTotal": 1,
+          "recall": 1,
+          "reciprocalRank": 0.5,
+          "ndcg": 0.63093
+        }
+      ]
+    },
+    "context": {
+      "macroEvidenceCoverage": 0.75,
+      "microEvidenceCoverage": 0.75,
+      "macroDuplicateWaste": 0.129465,
+      "queries": [
+        {
+          "id": "context-pricing-resilience",
+          "relevantCovered": 2,
+          "relevantTotal": 4,
+          "evidenceCoverage": 0.5,
+          "estimatedTokens": 1975,
+          "duplicateWaste": 0,
+          "deterministic": true,
+          "returned": [
+            "src/pricing.ts:module",
+            "src/pricing.ts:variable:prices",
+            "src/pricing.ts:function:loadPrice",
+            "src/gateway.ts:module",
+            "memory:pricing-cache"
+          ]
+        },
+        {
+          "id": "context-authorization-audit",
+          "relevantCovered": 4,
+          "relevantTotal": 4,
+          "evidenceCoverage": 1,
+          "estimatedTokens": 1995,
+          "duplicateWaste": 0.258929,
+          "deterministic": true,
+          "returned": [
+            "src/access.ts:function:authorizeAction",
+            "src/audit.ts:function:recordAuditDecision",
+            "src/access.ts:module",
+            "memory:admin-policy",
+            "memory:audit-redaction"
+          ]
+        }
+      ]
+    }
+  },
+  "performance": {
+    "warmups": 5,
+    "samples": 50,
+    "p95Method": "sort-ascending-index-floor(n*0.95)",
+    "searchP95Ms": 2.0682,
+    "getContextP95Ms": 7.0416
+  }
+}

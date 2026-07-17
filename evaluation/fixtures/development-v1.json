@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "name": "phase4-development-v1",
+  "immutable": false,
+  "extends": "acceptance-v1.json",
+  "queries": {
+    "code": [
+      {
+        "id": "dev-code-audit",
+        "query": "write a privacy-safe record of a security outcome",
+        "k": 10,
+        "gold": [{ "key": "src/audit.ts:function:recordAuditDecision", "grade": 3 }]
+      },
+      {
+        "id": "dev-code-pricing",
+        "query": "load an item price without repeatedly calling the supplier",
+        "k": 10,
+        "gold": [{ "key": "src/pricing.ts:function:loadPrice", "grade": 3 }]
+      }
+    ],
+    "memory": [
+      {
+        "id": "dev-memory-audit",
+        "query": "what personal information may be written to compliance records",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [{ "key": "memory:audit-redaction", "grade": 3 }]
+      }
+    ],
+    "context": [
+      {
+        "id": "dev-context-cache",
+        "query": "show the implementation and decision for retaining prices temporarily",
+        "tokenBudget": 2000,
+        "gold": [
+          { "key": "src/cache.ts:class:TimedValueStore", "grade": 2, "span": { "path": "src/cache.ts", "startLine": 1, "endLine": 13 } },
+          { "key": "src/pricing.ts:function:loadPrice", "grade": 3, "span": { "path": "src/pricing.ts", "startLine": 6, "endLine": 12 } },
+          { "key": "memory:pricing-cache", "grade": 3 }
+        ]
+      }
+    ]
+  }
+}

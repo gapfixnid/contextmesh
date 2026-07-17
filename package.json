@@ -31,6 +31,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "benchmark": "tsx scripts/benchmark.ts",
+    "evaluate:quality": "tsx scripts/evaluate-quality.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.check.json --noEmit",
     "lint": "eslint src tests scripts --max-warnings=0",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
