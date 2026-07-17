@@ -1,0 +1,73 @@
+{
+  "manifestVersion": 1,
+  "backend": {
+    "package": "@huggingface/transformers",
+    "version": "4.2.0",
+    "module": "onnxruntime-node",
+    "moduleVersion": "1.24.3",
+    "device": "cpu",
+    "requestedExecutionProviders": ["cpu"],
+    "requestedSessionOptions": {
+      "intraOpNumThreads": 4,
+      "interOpNumThreads": 1,
+      "executionMode": "sequential"
+    }
+  },
+  "model": {
+    "repository": "Xenova/multilingual-e5-small",
+    "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+    "modelFile": "onnx/model_quantized.onnx",
+    "dtype": "q8",
+    "dimensions": 384,
+    "outputType": "float32"
+  },
+  "preprocessing": {
+    "queryPrefix": "query: ",
+    "passagePrefix": "passage: ",
+    "pooling": "mean",
+    "normalize": true,
+    "maxLength": 512,
+    "truncation": true,
+    "padding": "longest_in_batch"
+  },
+  "textBuilderVersion": 1,
+  "sourceHashVersion": 1,
+  "vectorCodec": "f32le-v1",
+  "files": [
+    {
+      "path": "onnx/model_quantized.onnx",
+      "sizeBytes": 118308185,
+      "sha256": "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193"
+    },
+    {
+      "path": "config.json",
+      "sizeBytes": 658,
+      "sha256": "cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1"
+    },
+    {
+      "path": "quant_config.json",
+      "sizeBytes": 674,
+      "sha256": "59d175f15264115f18c698d76e443b5d49fc6c8c599911c421405ef4f236e87d"
+    },
+    {
+      "path": "tokenizer.json",
+      "sizeBytes": 17082730,
+      "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+    },
+    {
+      "path": "sentencepiece.bpe.model",
+      "sizeBytes": 5069051,
+      "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865"
+    },
+    {
+      "path": "special_tokens_map.json",
+      "sizeBytes": 167,
+      "sha256": "d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "sizeBytes": 443,
+      "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b"
+    }
+  ]
+}

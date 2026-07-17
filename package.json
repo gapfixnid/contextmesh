@@ -32,6 +32,8 @@
     "test:watch": "vitest",
     "benchmark": "tsx scripts/benchmark.ts",
     "evaluate:quality": "tsx scripts/evaluate-quality.ts",
+    "fetch:semantic-smoke-model": "tsx scripts/fetch-semantic-smoke-model.ts",
+    "smoke:semantic": "tsx scripts/smoke-semantic.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.check.json --noEmit",
     "lint": "eslint src tests scripts --max-warnings=0",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
@@ -45,6 +47,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "ignore": "^7.0.5",
     "typescript": "^5.9.3",
