@@ -24,6 +24,7 @@ import type {
 } from "../storage/database.js";
 import { AsyncMutex } from "../concurrency.js";
 import { ContextMeshError } from "../errors.js";
+import type { SemanticService } from "../semantic/service.js";
 import {
   clampText,
   isPathInside,
@@ -352,13 +353,19 @@ export class CodeIndexer {
   private readonly rootPath: string;
   private readonly caseSensitivePaths: boolean;
   private readonly runtime: WorkspaceRuntime;
+  private readonly semantic: SemanticService | null;
   readonly freshnessMode: FreshnessMode;
 
-  constructor(database: ContextMeshStorage, freshnessMode: FreshnessMode = "fast") {
+  constructor(
+    database: ContextMeshStorage,
+    freshnessMode: FreshnessMode = "fast",
+    semantic: SemanticService | null = null,
+  ) {
     this.database = database;
     this.rootPath = database.rootPath;
     this.caseSensitivePaths = database.caseSensitivePaths;
     this.freshnessMode = freshnessMode;
+    this.semantic = semantic;
     this.runtime = workspaceRuntime(`${database.dbPath}\0${database.workspace.id}`);
   }
 
@@ -438,6 +445,7 @@ export class CodeIndexer {
             failedFiles: 0,
           };
           this.database.completeNoOpRun(handle, stats, scan.diagnostics, compiler.configHash);
+          await this.semantic?.reconcileCodeIfNeeded();
           const counts = this.database.getStatus().counts as Record<string, number>;
           result = {
             generation: workspace.currentGeneration,
@@ -484,7 +492,13 @@ export class CodeIndexer {
             deletedFiles,
             failedFiles: graph.files.filter((file) => file.parseStatus !== "ok").length,
           };
-          this.database.commitGraph(handle, graph, stats, compiler.configHash);
+          const semanticCommit = this.semantic ? await this.semantic.prepareCodeCommit(graph) : undefined;
+          if (semanticCommit?.lastError) {
+            graph.diagnostics.push(
+              `${semanticCommit.unavailable ? "SEMANTIC_UNAVAILABLE" : "SEMANTIC_PARTIAL"}: ${semanticCommit.lastError}`,
+            );
+          }
+          this.database.commitGraph(handle, graph, stats, compiler.configHash, semanticCommit);
           result = {
             generation: handle.generation,
             mode,
@@ -517,6 +531,11 @@ export class CodeIndexer {
       });
       return result;
     });
+  }
+
+  async reconcileSemantic(): Promise<void> {
+    if (!this.semantic) return;
+    await this.runtime.indexMutex.runExclusive(() => this.semantic!.reconcileCodeIfNeeded());
   }
 
   async readSnippet(

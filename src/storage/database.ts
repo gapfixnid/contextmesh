@@ -24,10 +24,16 @@ import type {
 import { AsyncMutex } from "../concurrency.js";
 import { ContextMeshError } from "../errors.js";
 import {
+  buildCodeSemanticDocument,
+  buildMemorySemanticDocument,
+  type SemanticDocument,
+} from "../semantic/documents.js";
+import type { SemanticPlane } from "../semantic/backend.js";
+import { validateEncodedVector, VECTOR_CODEC } from "../semantic/vector-codec.js";
+import {
   buildFtsQuery,
   detectPathCaseSensitivity,
   normalizePathKey,
-  nowIso,
   sha256,
   tokenizeIdentifier,
   unique,
@@ -94,6 +100,7 @@ export interface RememberResult {
   fragment: MemoryFragmentRecord;
   duplicate: boolean;
   warnings: string[];
+  semanticCapture?: MemorySemanticCapture;
 }
 
 export interface RecallResult {
@@ -141,7 +148,76 @@ export interface MemoryCodeProvenance {
   locatorSnapshot: Record<string, unknown>;
 }
 
+export type SemanticStateStatus = "ready" | "partial" | "needs_backfill" | "unavailable";
+
+export interface SemanticModelRegistration {
+  modelKey: string;
+  manifestDigest: string;
+  manifestJson: string;
+  dimensions: number;
+  vectorCodec: string;
+}
+
+export interface SemanticStateRecord {
+  workspaceId: string;
+  plane: SemanticPlane;
+  modelKey: string | null;
+  graphGeneration: number | null;
+  semanticRevision: number;
+  status: SemanticStateStatus;
+  eligibleEntityCount: number;
+  validEmbeddingCount: number;
+  coverage: number;
+  lastError: string | null;
+  updatedAt: string;
+}
+
+export interface StoredSemanticEmbedding {
+  entityId: string;
+  sourceHash: string;
+  modelKey: string;
+  generation: number | null;
+  vector: Uint8Array;
+  dimensions: number;
+  codec: string;
+}
+
+export interface SemanticCommitEntry {
+  entityId: string;
+  sourceHash: string;
+  vector?: Uint8Array;
+  reuse?: boolean;
+}
+
+export interface SemanticPlaneCommit {
+  modelKey: string;
+  dimensions: number;
+  codec: string;
+  entries: SemanticCommitEntry[];
+  lastError?: string | null;
+  unavailable?: boolean;
+}
+
+export interface MemorySemanticCapture {
+  entityId: string;
+  sourceHash: string;
+  modelKey: string;
+  semanticRevision: number;
+}
+
+export interface ReflectResult {
+  episode: MemoryFragmentRecord;
+  learnings: MemoryFragmentRecord[];
+  duplicates: number;
+  semanticCaptures?: MemorySemanticCapture[];
+}
+
+export interface ContextMeshDatabaseOptions {
+  clock?: () => Date;
+}
+
 const MIGRATIONS_DIRECTORY = fileURLToPath(new URL("../../migrations", import.meta.url));
+const PHASE4_PAGE_SIZE = 8_192;
 
 function stringValue(value: SQLOutputValue | undefined): string {
   if (typeof value === "string") return value;
@@ -157,6 +233,10 @@ function numberValue(value: SQLOutputValue | undefined): number {
   if (typeof value === "number") return value;
   if (typeof value === "bigint") return Number(value);
   return Number(value ?? 0);
+}
+
+function hexValue(value: SQLOutputValue | undefined): string {
+  return value instanceof Uint8Array ? Buffer.from(value).toString("hex") : stringValue(value);
 }
 
 function parseJson<T>(value: SQLOutputValue | undefined, fallback: T): T {
@@ -233,6 +313,24 @@ function mapMemory(row: SqlRow): MemoryFragmentRecord {
   };
 }
 
+function mapSemanticState(row: SqlRow): SemanticStateRecord {
+  const eligibleEntityCount = numberValue(row.eligible_entity_count);
+  const validEmbeddingCount = numberValue(row.valid_embedding_count);
+  return {
+    workspaceId: stringValue(row.workspace_id),
+    plane: stringValue(row.plane) as SemanticPlane,
+    modelKey: nullableString(row.model_key),
+    graphGeneration: row.graph_generation === null ? null : numberValue(row.graph_generation),
+    semanticRevision: numberValue(row.semantic_revision),
+    status: stringValue(row.status) as SemanticStateStatus,
+    eligibleEntityCount,
+    validEmbeddingCount,
+    coverage: eligibleEntityCount === 0 ? 1 : validEmbeddingCount / eligibleEntityCount,
+    lastError: nullableString(row.last_error),
+    updatedAt: stringValue(row.updated_at),
+  };
+}
+
 function memoryHash(input: Pick<RememberInput, "type" | "topic" | "content">): string {
   return sha256(`${input.type}\0${input.topic.trim().toLocaleLowerCase()}\0${input.content.trim()}`);
 }
@@ -273,10 +371,12 @@ export interface ContextMeshStorage {
     graph: ExtractedGraph,
     stats: IndexCommitStats,
     indexConfigHash: string,
+    semantic?: SemanticPlaneCommit,
   ): void;
   getStatus(): Record<string, unknown>;
   searchCode(query: string, kinds: CodeNodeKind[] | undefined, limit: number, offset?: number): CodeSearchResult[];
   getCodeNode(id: string): CodeSearchResult | null;
+  getCodeNodesByIds(ids: string[]): CodeSearchResult[];
   traceCode(
     symbolId: string,
     direction: "in" | "out" | "both",
@@ -291,8 +391,31 @@ export interface ContextMeshStorage {
   getMemoriesLinkedToNodes(nodeIds: string[], limit?: number): MemoryFragmentRecord[];
   getMemoryCodeProvenance(memoryIds: string[]): Map<string, MemoryCodeProvenance[]>;
   getRelatedMemories(memoryIds: string[], limit?: number): MemoryFragmentRecord[];
-  reflect(input: ReflectInput): { episode: MemoryFragmentRecord; learnings: MemoryFragmentRecord[]; duplicates: number };
+  getMemoriesByIds(memoryIds: string[], timestamp?: string): MemoryFragmentRecord[];
+  reflect(input: ReflectInput): ReflectResult;
   forget(input: ForgetInput): MemoryFragmentRecord;
+  configureSemanticModel(model: SemanticModelRegistration): void;
+  backfillSemanticSourceHashes(): void;
+  getSemanticState(plane: SemanticPlane): SemanticStateRecord | null;
+  getCurrentCodeSemanticDocuments(): SemanticDocument[];
+  getCurrentMemorySemanticDocuments(timestamp?: string): SemanticDocument[];
+  loadSemanticEmbeddings(plane: SemanticPlane, modelKey: string, timestamp?: string): StoredSemanticEmbedding[];
+  getEligibleSemanticEntityKeys(
+    plane: SemanticPlane,
+    timestamp?: string,
+    filters?: { kinds?: CodeNodeKind[]; types?: MemoryType[]; topic?: string },
+  ): Map<string, string>;
+  commitCodeSemanticBackfill(expectedGeneration: number, commit: SemanticPlaneCommit): boolean;
+  commitMemorySemanticBackfill(expectedRevision: number, commit: SemanticPlaneCommit, timestamp?: string): boolean;
+  casUpsertMemoryEmbedding(
+    capture: MemorySemanticCapture,
+    vector: Uint8Array,
+    dimensions: number,
+    codec: string,
+    timestamp?: string,
+  ): boolean;
+  markSemanticUnavailable(plane: SemanticPlane, error: string): void;
+  markSemanticNeedsBackfill(plane: SemanticPlane, error: string): void;
   doctor(): DoctorResult;
 }
 
@@ -304,8 +427,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   readonly workspace: WorkspaceRecord;
   private readonly db: DatabaseSync;
   private readonly snapshotMutex = new AsyncMutex();
+  private readonly clock: () => Date;
 
-  constructor(rootPath: string, databasePath?: string) {
+  constructor(rootPath: string, databasePath?: string, options: ContextMeshDatabaseOptions = {}) {
+    this.clock = options.clock ?? (() => new Date());
     const resolvedRoot = path.resolve(rootPath);
     if (!existsSync(resolvedRoot)) {
       throw new ContextMeshError("INVALID_ARGUMENT", `Workspace does not exist: ${resolvedRoot}`);
@@ -325,14 +450,20 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
     this.db = new DatabaseSync(this.dbPath, { timeout: 5_000, defensive: true });
     this.db.exec("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
-    if (this.dbPath !== ":memory:") this.db.exec("PRAGMA journal_mode = WAL;");
+    const schemaObjects = this.db.prepare("SELECT count(*) AS count FROM sqlite_schema").get();
+    if (numberValue(schemaObjects?.count) === 0) this.db.exec(`PRAGMA page_size = ${PHASE4_PAGE_SIZE}`);
     this.applyMigrations();
+    if (this.dbPath !== ":memory:") this.db.exec("PRAGMA journal_mode = WAL;");
     this.recoverInterruptedRuns();
     this.workspace = this.ensureWorkspace();
   }
 
   close(): void {
     if (this.db.isOpen) this.db.close();
+  }
+
+  private nowIso(): string {
+    return this.clock().toISOString();
   }
 
   private transaction<T>(operation: () => T): T {
@@ -387,8 +518,20 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     });
     if (pendingMigrations.length > 0 && applied.size > 0 && this.dbPath !== ":memory:") {
       this.db.exec("PRAGMA wal_checkpoint(FULL)");
-      const timestamp = nowIso().replace(/[:.]/g, "-");
+      const timestamp = this.nowIso().replace(/[:.]/g, "-");
       copyFileSync(this.dbPath, `${this.dbPath}.backup-${timestamp}`);
+    }
+    const semanticMigrationPending = pendingMigrations.some(
+      (name) => Number.parseInt(name.split("_", 1)[0] ?? "", 10) === 4,
+    );
+    const pageSize = numberValue(this.db.prepare("PRAGMA page_size").get()?.page_size);
+    if (semanticMigrationPending && applied.size > 0 && pageSize !== PHASE4_PAGE_SIZE) {
+      this.db.exec(
+        `PRAGMA wal_checkpoint(FULL);
+         PRAGMA journal_mode = DELETE;
+         PRAGMA page_size = ${PHASE4_PAGE_SIZE};
+         VACUUM;`,
+      );
     }
     for (const name of pendingMigrations) {
       const version = Number.parseInt(name.split("_", 1)[0] ?? "", 10);
@@ -397,7 +540,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         this.db.exec(sql);
         this.db
           .prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
-          .run(version, name, nowIso());
+          .run(version, name, this.nowIso());
       });
     }
   }
@@ -412,11 +555,11 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         if (!existing) throw new ContextMeshError("INTERNAL_ERROR", "Workspace lookup failed");
         this.db
           .prepare("UPDATE workspaces SET name = ?, root_path = ?, root_path_key = ?, updated_at = ? WHERE id = ?")
-          .run(path.basename(this.rootPath), this.rootPath, rootPathKey, nowIso(), stringValue(existing.id));
+          .run(path.basename(this.rootPath), this.rootPath, rootPathKey, this.nowIso(), stringValue(existing.id));
         row = this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(stringValue(existing.id));
       } else {
         const id = `ws_${randomUUID()}`;
-        const timestamp = nowIso();
+        const timestamp = this.nowIso();
         this.db
           .prepare(
             "INSERT INTO workspaces(id, name, root_path, root_path_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -436,7 +579,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          SET status = 'failed', completed_at = ?, diagnostics_json = ?
          WHERE status = 'running'`,
       )
-      .run(nowIso(), JSON.stringify(["Indexing process exited before the run completed"]));
+      .run(this.nowIso(), JSON.stringify(["Indexing process exited before the run completed"]));
     return Number(result.changes);
   }
 
@@ -526,7 +669,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       ) {
         return false;
       }
-      const timestamp = nowIso();
+      const timestamp = this.nowIso();
       const reasons = unique([...state.freshnessReasons, reason]);
       this.db
         .prepare(
@@ -661,7 +804,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         `INSERT INTO index_runs(id, workspace_id, generation, mode, status, started_at)
          VALUES (?, ?, ?, ?, 'running', ?)`,
       )
-      .run(handle.id, this.workspace.id, handle.generation, handle.mode, nowIso());
+      .run(handle.id, this.workspace.id, handle.generation, handle.mode, this.nowIso());
     return handle;
   }
 
@@ -671,7 +814,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         `UPDATE index_runs SET status = 'failed', failed_files = 1,
          diagnostics_json = ?, completed_at = ? WHERE id = ?`,
       )
-      .run(JSON.stringify(diagnostics), nowIso(), handle.id);
+      .run(JSON.stringify(diagnostics), this.nowIso(), handle.id);
   }
 
   completeNoOpRun(
@@ -680,7 +823,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     diagnostics: string[],
     indexConfigHash: string,
   ): void {
-    const timestamp = nowIso();
+    const timestamp = this.nowIso();
     this.transaction(() => {
       this.db
         .prepare(
@@ -818,13 +961,228 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     return relinked;
   }
 
+  private semanticStatusForCounts(
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+    unavailable: boolean,
+  ): SemanticStateStatus {
+    if (unavailable) return "unavailable";
+    if (eligibleEntityCount === validEmbeddingCount) return "ready";
+    return validEmbeddingCount > 0 ? "partial" : "needs_backfill";
+  }
+
+  private semanticWorkspaceKey(): bigint {
+    const digest = Buffer.from(sha256(this.workspace.id), "hex");
+    return digest.readBigUInt64BE(0) & 0x7fff_ffff_ffff_ffffn;
+  }
+
+  private semanticEntityKey(plane: SemanticPlane, entityId: string): Uint8Array {
+    if (plane === "code") {
+      if (!/^[0-9a-f]{64}$/.test(entityId)) {
+        throw new ContextMeshError("INTERNAL_ERROR", `Invalid code semantic entity ID: ${entityId}`);
+      }
+      return Buffer.from(entityId, "hex");
+    }
+    const key = Buffer.from(entityId, "utf8");
+    if (key.length === 0) throw new ContextMeshError("INTERNAL_ERROR", "Memory semantic entity ID is empty");
+    return key;
+  }
+
+  private semanticEntityId(plane: SemanticPlane, entityKey: SQLOutputValue | undefined): string {
+    if (!(entityKey instanceof Uint8Array)) {
+      throw new ContextMeshError("INTERNAL_ERROR", "Semantic entity key is not a BLOB");
+    }
+    return plane === "code" ? Buffer.from(entityKey).toString("hex") : Buffer.from(entityKey).toString("utf8");
+  }
+
+  private semanticEntityMapKey(plane: SemanticPlane, entityId: string): string {
+    return Buffer.from(this.semanticEntityKey(plane, entityId)).toString("hex");
+  }
+
+  private semanticEmbeddingIds(plane: SemanticPlane, modelKey: string): Map<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT embedding.embedding_id, embedding.entity_key
+         FROM semantic_embeddings embedding
+         JOIN semantic_models model ON model.model_id = embedding.model_id
+         WHERE embedding.workspace_key = ? AND embedding.plane = ? AND model.model_key = ?
+         ORDER BY embedding.embedding_id`,
+      )
+      .all(this.semanticWorkspaceKey(), plane, modelKey);
+    return new Map(
+      rows.map((row) => [Buffer.from(row.entity_key as Uint8Array).toString("hex"), numberValue(row.embedding_id)]),
+    );
+  }
+
+  private writeSemanticEntry(
+    plane: SemanticPlane,
+    generation: number | null,
+    commit: SemanticPlaneCommit,
+    entry: SemanticCommitEntry,
+    existingEmbeddingId: number | undefined,
+  ): void {
+    if (entry.vector) {
+      if (commit.codec !== VECTOR_CODEC) {
+        throw new ContextMeshError("INTERNAL_ERROR", `Unsupported semantic vector codec: ${commit.codec}`);
+      }
+      try {
+        validateEncodedVector(entry.vector, commit.dimensions);
+      } catch (error) {
+        throw new ContextMeshError(
+          "INTERNAL_ERROR",
+          `Invalid semantic vector for ${entry.entityId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const statement = existingEmbeddingId === undefined
+        ? this.db.prepare(
+            `INSERT INTO semantic_embeddings(
+               workspace_key, plane, entity_key, source_hash, model_id, generation, vector
+             ) VALUES (?, ?, ?, ?, (SELECT model_id FROM semantic_models WHERE model_key = ?), ?, ?)`,
+          )
+        : this.db.prepare(
+            `UPDATE semantic_embeddings SET source_hash = ?, generation = ?, vector = ?
+             WHERE embedding_id = ? AND workspace_key = ? AND plane = ? AND entity_key = ?
+               AND model_id = (SELECT model_id FROM semantic_models WHERE model_key = ?)`,
+          );
+      const written = existingEmbeddingId === undefined
+        ? statement.run(
+            this.semanticWorkspaceKey(),
+            plane,
+            this.semanticEntityKey(plane, entry.entityId),
+            Buffer.from(entry.sourceHash, "hex"),
+            commit.modelKey,
+            generation,
+            entry.vector,
+          )
+        : statement.run(
+            Buffer.from(entry.sourceHash, "hex"),
+            generation,
+            entry.vector,
+            existingEmbeddingId,
+            this.semanticWorkspaceKey(),
+            plane,
+            this.semanticEntityKey(plane, entry.entityId),
+            commit.modelKey,
+          );
+      if (Number(written.changes) !== 1) {
+        throw new ContextMeshError("INTERNAL_ERROR", `Semantic embedding write conflict for ${entry.entityId}`);
+      }
+      return;
+    }
+    if (entry.reuse && existingEmbeddingId !== undefined) {
+      const reused = this.db
+        .prepare(
+          `UPDATE semantic_embeddings
+           SET generation = ?
+           WHERE embedding_id = ? AND workspace_key = ? AND plane = ? AND entity_key = ?
+             AND model_id = (SELECT model_id FROM semantic_models WHERE model_key = ?)
+             AND source_hash = ? AND length(vector) = ?`,
+        )
+        .run(
+          generation,
+          existingEmbeddingId,
+          this.semanticWorkspaceKey(),
+          plane,
+          this.semanticEntityKey(plane, entry.entityId),
+          commit.modelKey,
+          Buffer.from(entry.sourceHash, "hex"),
+          commit.dimensions * Float32Array.BYTES_PER_ELEMENT,
+        );
+      if (Number(reused.changes) > 0) return;
+    }
+    if (existingEmbeddingId !== undefined) {
+      this.db
+        .prepare("DELETE FROM semantic_embeddings WHERE embedding_id = ? AND workspace_key = ?")
+        .run(existingEmbeddingId, this.semanticWorkspaceKey());
+    }
+  }
+
+  private applyCodeSemanticCommit(generation: number, commit: SemanticPlaneCommit, timestamp: string): void {
+    const existingIds = this.semanticEmbeddingIds("code", commit.modelKey);
+    for (const entry of commit.entries) {
+      this.writeSemanticEntry(
+        "code",
+        generation,
+        commit,
+        entry,
+        existingIds.get(this.semanticEntityMapKey("code", entry.entityId)),
+      );
+    }
+    this.db
+      .prepare(
+        `DELETE FROM semantic_embeddings
+         WHERE workspace_key = ? AND plane = 'code'
+           AND model_id = (SELECT model_id FROM semantic_models WHERE model_key = ?)
+           AND (generation <> ? OR NOT EXISTS (
+             SELECT 1 FROM code_nodes node
+             WHERE node.workspace_id = ? AND unhex(node.id) = semantic_embeddings.entity_key
+               AND unhex(node.semantic_source_hash) = semantic_embeddings.source_hash
+               AND node.generation = ?
+           ))`,
+      )
+      .run(this.semanticWorkspaceKey(), commit.modelKey, generation, this.workspace.id, generation);
+    const counts = this.db
+      .prepare(
+        `SELECT
+           (SELECT count(*) FROM code_nodes
+           WHERE workspace_id = ? AND generation = ? AND semantic_source_hash IS NOT NULL) AS eligible,
+           (SELECT count(*) FROM semantic_embeddings embedding
+            JOIN semantic_models model ON model.model_id = embedding.model_id
+            JOIN code_nodes node ON node.workspace_id = ? AND unhex(node.id) = embedding.entity_key
+              AND unhex(node.semantic_source_hash) = embedding.source_hash
+              AND node.generation = embedding.generation
+            WHERE embedding.workspace_key = ? AND embedding.plane = 'code'
+              AND model.model_key = ? AND embedding.generation = ?
+              AND length(embedding.vector) = ?) AS valid`,
+      )
+      .get(
+        this.workspace.id,
+        generation,
+        this.workspace.id,
+        this.semanticWorkspaceKey(),
+        commit.modelKey,
+        generation,
+        commit.dimensions * Float32Array.BYTES_PER_ELEMENT,
+      );
+    const eligible = numberValue(counts?.eligible);
+    const valid = numberValue(counts?.valid);
+    const status = this.semanticStatusForCounts(eligible, valid, commit.unavailable ?? false);
+    this.db
+      .prepare(
+        `INSERT INTO workspace_semantic_state(
+           workspace_id, plane, model_key, graph_generation, semantic_revision, status,
+           eligible_entity_count, valid_embedding_count, last_error, updated_at
+         ) VALUES (?, 'code', ?, ?, 1, ?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_id, plane) DO UPDATE SET
+           model_key = excluded.model_key,
+           graph_generation = excluded.graph_generation,
+           semantic_revision = workspace_semantic_state.semantic_revision + 1,
+           status = excluded.status,
+           eligible_entity_count = excluded.eligible_entity_count,
+           valid_embedding_count = excluded.valid_embedding_count,
+           last_error = excluded.last_error,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        this.workspace.id,
+        commit.modelKey,
+        generation,
+        status,
+        eligible,
+        valid,
+        commit.lastError ?? null,
+        timestamp,
+      );
+  }
+
   commitGraph(
     handle: IndexRunHandle,
     graph: ExtractedGraph,
     stats: IndexCommitStats,
     indexConfigHash: string,
+    semantic?: SemanticPlaneCommit,
   ): void {
-    const timestamp = nowIso();
+    const timestamp = this.nowIso();
     this.transaction(() => {
       this.db.prepare("DELETE FROM code_nodes_fts").run();
       this.db.prepare("DELETE FROM unresolved_refs WHERE workspace_id = ?").run(this.workspace.id);
@@ -855,18 +1213,23 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         );
       }
 
+      const relativePathByFileId = new Map(graph.files.map((file) => [file.id, file.relativePath]));
       const insertNode = this.db.prepare(
         `INSERT INTO code_nodes(
           id, workspace_id, file_id, kind, name, qualified_name, local_key, signature, doc,
           is_exported, start_byte, end_byte, start_line, start_column, end_line, end_column,
-          content_hash, generation, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          content_hash, generation, metadata_json, semantic_source_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const insertNodeFts = this.db.prepare(
         `INSERT INTO code_nodes_fts(node_id, name, qualified_name, signature, doc, search_tokens)
          VALUES (?, ?, ?, ?, ?, ?)`,
       );
       for (const node of graph.nodes) {
+        const semanticDocument = buildCodeSemanticDocument(
+          node,
+          node.fileId ? (relativePathByFileId.get(node.fileId) ?? null) : null,
+        );
         insertNode.run(
           node.id,
           node.workspaceId,
@@ -887,6 +1250,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           node.contentHash,
           handle.generation,
           JSON.stringify(node.metadata),
+          semanticDocument.sourceHash,
         );
         insertNodeFts.run(
           node.id,
@@ -957,6 +1321,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            freshness_stale_at = NULL, freshness_reasons_json = '[]', updated_at = ? WHERE id = ?`,
         )
         .run(handle.generation, indexConfigHash, timestamp, this.workspace.id);
+      if (semantic) this.applyCodeSemanticCommit(handle.generation, semantic, timestamp);
       this.db
         .prepare(
           `UPDATE index_runs SET status = ?, scanned_files = ?, changed_files = ?, deleted_files = ?,
@@ -973,6 +1338,443 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           handle.id,
         );
     });
+  }
+
+  configureSemanticModel(model: SemanticModelRegistration): void {
+    const timestamp = this.nowIso();
+    this.transaction(() => {
+      const workspaceKey = this.semanticWorkspaceKey();
+      this.db
+        .prepare("INSERT OR IGNORE INTO semantic_workspaces(workspace_key, workspace_id) VALUES (?, ?)")
+        .run(workspaceKey, this.workspace.id);
+      const semanticWorkspace = this.db
+        .prepare("SELECT workspace_id FROM semantic_workspaces WHERE workspace_key = ?")
+        .get(workspaceKey);
+      if (stringValue(semanticWorkspace?.workspace_id) !== this.workspace.id) {
+        throw new ContextMeshError("INTERNAL_ERROR", "Semantic workspace key collision");
+      }
+      this.db
+        .prepare(
+          `INSERT INTO semantic_models(
+             model_key, manifest_digest, manifest_json, dimensions, vector_codec, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(model_key) DO UPDATE SET
+             manifest_digest = excluded.manifest_digest,
+             manifest_json = excluded.manifest_json,
+             dimensions = excluded.dimensions,
+             vector_codec = excluded.vector_codec`,
+        )
+        .run(
+          model.modelKey,
+          model.manifestDigest,
+          model.manifestJson,
+          model.dimensions,
+          model.vectorCodec,
+          timestamp,
+        );
+      const generation = this.getWorkspace().currentGeneration;
+      for (const plane of ["code", "memory"] as const) {
+        const existing = this.getSemanticState(plane);
+        if (!existing) {
+          this.db
+            .prepare(
+              `INSERT INTO workspace_semantic_state(
+                 workspace_id, plane, model_key, graph_generation, semantic_revision, status,
+                 eligible_entity_count, valid_embedding_count, updated_at
+               ) VALUES (?, ?, ?, ?, 0, 'needs_backfill', 0, 0, ?)`,
+            )
+            .run(this.workspace.id, plane, model.modelKey, plane === "code" ? generation : null, timestamp);
+          continue;
+        }
+        if (existing.modelKey === model.modelKey) continue;
+        this.db
+          .prepare(
+            `UPDATE workspace_semantic_state SET
+               model_key = ?, graph_generation = ?, semantic_revision = semantic_revision + 1,
+               status = 'needs_backfill', eligible_entity_count = 0, valid_embedding_count = 0,
+               last_error = NULL, updated_at = ?
+             WHERE workspace_id = ? AND plane = ?`,
+          )
+          .run(model.modelKey, plane === "code" ? generation : null, timestamp, this.workspace.id, plane);
+      }
+      this.db
+        .prepare(
+          `DELETE FROM semantic_embeddings
+           WHERE workspace_key = ?
+             AND model_id <> (SELECT model_id FROM semantic_models WHERE model_key = ?)`,
+        )
+        .run(workspaceKey, model.modelKey);
+    });
+  }
+
+  backfillSemanticSourceHashes(): void {
+    const timestamp = this.nowIso();
+    this.transaction(() => {
+      let codeChanges = 0;
+      const codeRows = this.db
+        .prepare(
+          `SELECT node.*, file.relative_path, file.content_hash AS file_content_hash, 0.0 AS score
+           FROM code_nodes node LEFT JOIN source_files file ON file.id = node.file_id
+           WHERE node.workspace_id = ? ORDER BY node.id`,
+        )
+        .all(this.workspace.id);
+      const updateCode = this.db.prepare(
+        "UPDATE code_nodes SET semantic_source_hash = ? WHERE workspace_id = ? AND id = ? AND semantic_source_hash IS NOT ?",
+      );
+      for (const row of codeRows) {
+        const node = mapCodeNode(row);
+        const semantic = buildCodeSemanticDocument(node, node.relativePath);
+        codeChanges += Number(updateCode.run(semantic.sourceHash, this.workspace.id, node.id, semantic.sourceHash).changes);
+      }
+
+      let memoryChanges = 0;
+      const memoryRows = this.db
+        .prepare("SELECT * FROM memory_fragments WHERE workspace_id = ? ORDER BY id")
+        .all(this.workspace.id);
+      const updateMemory = this.db.prepare(
+        "UPDATE memory_fragments SET semantic_source_hash = ? WHERE workspace_id = ? AND id = ? AND semantic_source_hash IS NOT ?",
+      );
+      for (const row of memoryRows) {
+        const memory = mapMemory(row);
+        const semantic = buildMemorySemanticDocument(memory);
+        memoryChanges += Number(
+          updateMemory.run(semantic.sourceHash, this.workspace.id, memory.id, semantic.sourceHash).changes,
+        );
+      }
+      for (const [plane, changes] of [
+        ["code", codeChanges],
+        ["memory", memoryChanges],
+      ] as const) {
+        if (changes === 0) continue;
+        this.db
+          .prepare(
+            `UPDATE workspace_semantic_state SET
+               semantic_revision = semantic_revision + 1, status = 'needs_backfill',
+               valid_embedding_count = 0, last_error = NULL, updated_at = ?
+             WHERE workspace_id = ? AND plane = ?`,
+          )
+          .run(timestamp, this.workspace.id, plane);
+      }
+    });
+  }
+
+  getSemanticState(plane: SemanticPlane): SemanticStateRecord | null {
+    const row = this.db
+      .prepare("SELECT * FROM workspace_semantic_state WHERE workspace_id = ? AND plane = ?")
+      .get(this.workspace.id, plane);
+    return row ? mapSemanticState(row) : null;
+  }
+
+  getCurrentCodeSemanticDocuments(): SemanticDocument[] {
+    return this.db
+      .prepare(
+        `SELECT node.*, file.relative_path, file.content_hash AS file_content_hash, 0.0 AS score
+         FROM code_nodes node LEFT JOIN source_files file ON file.id = node.file_id
+         WHERE node.workspace_id = ? AND node.generation = ? ORDER BY node.id`,
+      )
+      .all(this.workspace.id, this.getWorkspace().currentGeneration)
+      .map((row) => {
+        const node = mapCodeNode(row);
+        return buildCodeSemanticDocument(node, node.relativePath);
+      });
+  }
+
+  getCurrentMemorySemanticDocuments(timestamp = this.nowIso()): SemanticDocument[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM memory_fragments
+         WHERE workspace_id = ? AND state = 'active'
+           AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY id`,
+      )
+      .all(this.workspace.id, timestamp)
+      .map((row) => buildMemorySemanticDocument(mapMemory(row)));
+  }
+
+  loadSemanticEmbeddings(
+    plane: SemanticPlane,
+    modelKey: string,
+    timestamp = this.nowIso(),
+  ): StoredSemanticEmbedding[] {
+    const rows =
+      plane === "code"
+        ? this.db
+            .prepare(
+              `SELECT embedding.entity_key, embedding.source_hash, model.model_key,
+                      embedding.generation, embedding.vector,
+                      model.dimensions, model.vector_codec AS codec
+               FROM semantic_embeddings embedding
+               JOIN semantic_models model ON model.model_id = embedding.model_id
+               JOIN code_nodes node ON node.workspace_id = ? AND unhex(node.id) = embedding.entity_key
+                 AND unhex(node.semantic_source_hash) = embedding.source_hash
+                 AND node.generation = embedding.generation
+               JOIN workspaces workspace ON workspace.id = node.workspace_id
+                 AND workspace.current_generation = node.generation
+               WHERE embedding.workspace_key = ? AND embedding.plane = 'code'
+                 AND model.model_key = ?
+               ORDER BY embedding.entity_key`,
+            )
+            .all(this.workspace.id, this.semanticWorkspaceKey(), modelKey)
+        : this.db
+            .prepare(
+              `SELECT embedding.entity_key, embedding.source_hash, model.model_key,
+                      embedding.generation, embedding.vector,
+                      model.dimensions, model.vector_codec AS codec
+               FROM semantic_embeddings embedding
+               JOIN semantic_models model ON model.model_id = embedding.model_id
+               JOIN memory_fragments memory ON memory.workspace_id = ?
+                 AND CAST(memory.id AS BLOB) = embedding.entity_key
+                 AND unhex(memory.semantic_source_hash) = embedding.source_hash
+               WHERE embedding.workspace_key = ? AND embedding.plane = 'memory'
+                 AND model.model_key = ? AND memory.state = 'active'
+                 AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+               ORDER BY embedding.entity_key`,
+            )
+            .all(this.workspace.id, this.semanticWorkspaceKey(), modelKey, timestamp);
+    return rows.map((row) => ({
+      entityId: this.semanticEntityId(plane, row.entity_key),
+      sourceHash: hexValue(row.source_hash),
+      modelKey: stringValue(row.model_key),
+      generation: row.generation === null ? null : numberValue(row.generation),
+      vector: row.vector instanceof Uint8Array ? row.vector : new Uint8Array(),
+      dimensions: numberValue(row.dimensions),
+      codec: stringValue(row.codec),
+    }));
+  }
+
+  getEligibleSemanticEntityKeys(
+    plane: SemanticPlane,
+    timestamp = this.nowIso(),
+    filters: { kinds?: CodeNodeKind[]; types?: MemoryType[]; topic?: string } = {},
+  ): Map<string, string> {
+    if (plane === "code") {
+      const kindClause = filters.kinds?.length ? ` AND kind IN (${placeholders(filters.kinds.length)})` : "";
+      const rows = this.db
+        .prepare(
+          `SELECT id, semantic_source_hash FROM code_nodes
+           WHERE workspace_id = ? AND generation = ? AND semantic_source_hash IS NOT NULL${kindClause}
+           ORDER BY id`,
+        )
+        .all(this.workspace.id, this.getWorkspace().currentGeneration, ...(filters.kinds ?? []));
+      return new Map(rows.map((row) => [stringValue(row.id), stringValue(row.semantic_source_hash)]));
+    }
+    const typeClause = filters.types?.length ? ` AND type IN (${placeholders(filters.types.length)})` : "";
+    const topicClause = filters.topic ? " AND lower(topic) = lower(?)" : "";
+    const rows = this.db
+      .prepare(
+        `SELECT id, semantic_source_hash FROM memory_fragments
+         WHERE workspace_id = ? AND state = 'active' AND semantic_source_hash IS NOT NULL
+           AND (expires_at IS NULL OR expires_at > ?)${typeClause}${topicClause}
+         ORDER BY id`,
+      )
+      .all(
+        this.workspace.id,
+        timestamp,
+        ...(filters.types ?? []),
+        ...(filters.topic ? [filters.topic] : []),
+      );
+    return new Map(rows.map((row) => [stringValue(row.id), stringValue(row.semantic_source_hash)]));
+  }
+
+  getCodeNodesByIds(ids: string[]): CodeSearchResult[] {
+    const uniqueIds = unique(ids);
+    if (uniqueIds.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT node.*, file.relative_path, file.content_hash AS file_content_hash, 0.0 AS score
+         FROM code_nodes node LEFT JOIN source_files file ON file.id = node.file_id
+         WHERE node.workspace_id = ? AND node.id IN (${placeholders(uniqueIds.length)})`,
+      )
+      .all(this.workspace.id, ...uniqueIds);
+    const byId = new Map(rows.map((row) => {
+      const node = mapCodeNode(row);
+      return [node.id, node] as const;
+    }));
+    return uniqueIds.flatMap((id) => {
+      const node = byId.get(id);
+      return node ? [node] : [];
+    });
+  }
+
+  getMemoriesByIds(memoryIds: string[], timestamp = this.nowIso()): MemoryFragmentRecord[] {
+    const ids = unique(memoryIds);
+    if (ids.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM memory_fragments
+         WHERE workspace_id = ? AND id IN (${placeholders(ids.length)}) AND state = 'active'
+           AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .all(this.workspace.id, ...ids, timestamp);
+    const byId = new Map(rows.map((row) => {
+      const memory = mapMemory(row);
+      return [memory.id, memory] as const;
+    }));
+    return ids.flatMap((id) => {
+      const memory = byId.get(id);
+      return memory ? [memory] : [];
+    });
+  }
+
+  commitCodeSemanticBackfill(expectedGeneration: number, commit: SemanticPlaneCommit): boolean {
+    const timestamp = this.nowIso();
+    return this.transaction(() => {
+      if (this.getWorkspace().currentGeneration !== expectedGeneration) return false;
+      this.applyCodeSemanticCommit(expectedGeneration, commit, timestamp);
+      return true;
+    });
+  }
+
+  private refreshMemorySemanticState(commit: SemanticPlaneCommit, timestamp: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM semantic_embeddings
+         WHERE workspace_key = ? AND plane = 'memory'
+           AND model_id = (SELECT model_id FROM semantic_models WHERE model_key = ?)
+           AND NOT EXISTS (
+             SELECT 1 FROM memory_fragments memory
+             WHERE memory.workspace_id = ?
+               AND CAST(memory.id AS BLOB) = semantic_embeddings.entity_key
+               AND unhex(memory.semantic_source_hash) = semantic_embeddings.source_hash
+               AND memory.state = 'active'
+               AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+           )`,
+      )
+      .run(this.semanticWorkspaceKey(), commit.modelKey, this.workspace.id, timestamp);
+    const counts = this.db
+      .prepare(
+        `SELECT
+           (SELECT count(*) FROM memory_fragments
+           WHERE workspace_id = ? AND state = 'active' AND semantic_source_hash IS NOT NULL
+              AND (expires_at IS NULL OR expires_at > ?)) AS eligible,
+           (SELECT count(*) FROM semantic_embeddings embedding
+            JOIN semantic_models model ON model.model_id = embedding.model_id
+            JOIN memory_fragments memory ON memory.workspace_id = ?
+              AND CAST(memory.id AS BLOB) = embedding.entity_key
+              AND unhex(memory.semantic_source_hash) = embedding.source_hash
+            WHERE embedding.workspace_key = ? AND embedding.plane = 'memory'
+              AND model.model_key = ? AND memory.state = 'active'
+              AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+              AND length(embedding.vector) = ?) AS valid`,
+      )
+      .get(
+        this.workspace.id,
+        timestamp,
+        this.workspace.id,
+        this.semanticWorkspaceKey(),
+        commit.modelKey,
+        timestamp,
+        commit.dimensions * Float32Array.BYTES_PER_ELEMENT,
+      );
+    const eligible = numberValue(counts?.eligible);
+    const valid = numberValue(counts?.valid);
+    const status = this.semanticStatusForCounts(eligible, valid, commit.unavailable ?? false);
+    this.db
+      .prepare(
+        `UPDATE workspace_semantic_state SET
+           semantic_revision = semantic_revision + 1, status = ?,
+           eligible_entity_count = ?, valid_embedding_count = ?, last_error = ?, updated_at = ?
+         WHERE workspace_id = ? AND plane = 'memory' AND model_key = ?`,
+      )
+      .run(
+        status,
+        eligible,
+        valid,
+        commit.lastError ?? null,
+        timestamp,
+        this.workspace.id,
+        commit.modelKey,
+      );
+  }
+
+  commitMemorySemanticBackfill(
+    expectedRevision: number,
+    commit: SemanticPlaneCommit,
+    timestamp = this.nowIso(),
+  ): boolean {
+    return this.transaction(() => {
+      const state = this.getSemanticState("memory");
+      if (!state || state.modelKey !== commit.modelKey || state.semanticRevision !== expectedRevision) return false;
+      const check = this.db.prepare(
+        `SELECT id FROM memory_fragments
+         WHERE workspace_id = ? AND id = ? AND semantic_source_hash = ? AND state = 'active'
+           AND (expires_at IS NULL OR expires_at > ?)`,
+      );
+      for (const entry of commit.entries) {
+        if (!check.get(this.workspace.id, entry.entityId, entry.sourceHash, timestamp)) return false;
+      }
+      const existingIds = this.semanticEmbeddingIds("memory", commit.modelKey);
+      for (const entry of commit.entries) {
+        this.writeSemanticEntry(
+          "memory",
+          null,
+          commit,
+          entry,
+          existingIds.get(this.semanticEntityMapKey("memory", entry.entityId)),
+        );
+      }
+      this.refreshMemorySemanticState(commit, timestamp);
+      return true;
+    });
+  }
+
+  casUpsertMemoryEmbedding(
+    capture: MemorySemanticCapture,
+    vector: Uint8Array,
+    dimensions: number,
+    codec: string,
+    timestamp = this.nowIso(),
+  ): boolean {
+    return this.transaction(() => {
+      const state = this.getSemanticState("memory");
+      if (
+        !state ||
+        state.modelKey !== capture.modelKey ||
+        state.semanticRevision !== capture.semanticRevision
+      ) {
+        return false;
+      }
+      const row = this.db
+        .prepare(
+          `SELECT id FROM memory_fragments
+           WHERE workspace_id = ? AND id = ? AND semantic_source_hash = ? AND state = 'active'
+             AND (expires_at IS NULL OR expires_at > ?)`,
+        )
+        .get(this.workspace.id, capture.entityId, capture.sourceHash, timestamp);
+      if (!row) return false;
+      const commit: SemanticPlaneCommit = {
+        modelKey: capture.modelKey,
+        dimensions,
+        codec,
+        entries: [{ entityId: capture.entityId, sourceHash: capture.sourceHash, vector }],
+      };
+      const existingId = this.semanticEmbeddingIds("memory", commit.modelKey).get(
+        this.semanticEntityMapKey("memory", capture.entityId),
+      );
+      this.writeSemanticEntry("memory", null, commit, commit.entries[0]!, existingId);
+      this.refreshMemorySemanticState(commit, timestamp);
+      return true;
+    });
+  }
+
+  markSemanticUnavailable(plane: SemanticPlane, error: string): void {
+    this.db
+      .prepare(
+        `UPDATE workspace_semantic_state SET status = 'unavailable', last_error = ?, updated_at = ?
+         WHERE workspace_id = ? AND plane = ?`,
+      )
+      .run(error, this.nowIso(), this.workspace.id, plane);
+  }
+
+  markSemanticNeedsBackfill(plane: SemanticPlane, error: string): void {
+    this.db
+      .prepare(
+        `UPDATE workspace_semantic_state SET
+           status = CASE WHEN valid_embedding_count > 0 THEN 'partial' ELSE 'needs_backfill' END,
+           last_error = ?, updated_at = ?
+         WHERE workspace_id = ? AND plane = ?`,
+      )
+      .run(error, this.nowIso(), this.workspace.id, plane);
   }
 
   getStatus(): Record<string, unknown> {
@@ -1160,10 +1962,16 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     input: RememberInput,
     timestamp: string,
     warnings: string[],
-  ): { fragment: MemoryFragmentRecord; duplicate: boolean } {
+  ): { fragment: MemoryFragmentRecord; duplicate: boolean; semanticSourceHash: string } {
     const contentHash = memoryHash(input);
     const duplicate = this.existingActiveMemory(contentHash);
-    if (duplicate) return { fragment: duplicate, duplicate: true };
+    if (duplicate) {
+      return {
+        fragment: duplicate,
+        duplicate: true,
+        semanticSourceHash: buildMemorySemanticDocument(duplicate).sourceHash,
+      };
+    }
 
     if (input.sessionId) this.ensureSession(input.sessionId, null, timestamp);
     if (input.supersedesId) {
@@ -1178,6 +1986,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         .run(timestamp, input.supersedesId);
       this.db.prepare("DELETE FROM memory_fragments_fts WHERE fragment_id = ?").run(input.supersedesId);
       this.db
+        .prepare("DELETE FROM semantic_embeddings WHERE workspace_key = ? AND plane = 'memory' AND entity_key = ?")
+        .run(this.semanticWorkspaceKey(), this.semanticEntityKey("memory", input.supersedesId));
+      this.db
         .prepare(
           `INSERT INTO memory_events(workspace_id, fragment_id, session_id, event_type, payload_json, created_at)
            VALUES (?, ?, ?, 'superseded', ?, ?)`,
@@ -1189,12 +2000,33 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const expiresAt = input.ttlDays
       ? new Date(Date.parse(timestamp) + input.ttlDays * 86_400_000).toISOString()
       : null;
+    const normalizedKeywords = unique(input.keywords.map((keyword) => keyword.normalize("NFC")));
+    const semanticSourceHash = buildMemorySemanticDocument({
+      id,
+      workspaceId: this.workspace.id,
+      type: input.type,
+      topic: input.topic,
+      content: input.content,
+      keywords: normalizedKeywords,
+      importance: input.importance,
+      isAnchor: input.anchor,
+      assertionStatus: input.assertionStatus,
+      state: "active",
+      sessionId: input.sessionId ?? null,
+      supersedesId: input.supersedesId ?? null,
+      accessCount: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastAccessedAt: null,
+      expiresAt,
+    }).sourceHash;
     this.db
       .prepare(
         `INSERT INTO memory_fragments(
           id, workspace_id, type, topic, content, keywords_json, importance, is_anchor,
-          assertion_status, content_hash, session_id, supersedes_id, created_at, updated_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          assertion_status, content_hash, session_id, supersedes_id, created_at, updated_at, expires_at,
+          semantic_source_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1202,7 +2034,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         input.type,
         input.topic,
         input.content,
-        JSON.stringify(unique(input.keywords.map((keyword) => keyword.normalize("NFC")))),
+        JSON.stringify(normalizedKeywords),
         input.importance,
         input.anchor ? 1 : 0,
         input.assertionStatus,
@@ -1212,6 +2044,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         timestamp,
         timestamp,
         expiresAt,
+        semanticSourceHash,
       );
     this.db
       .prepare("INSERT INTO memory_fragments_fts(fragment_id, topic, content, keywords) VALUES (?, ?, ?, ?)")
@@ -1286,20 +2119,58 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       );
     const inserted = this.db.prepare("SELECT * FROM memory_fragments WHERE id = ?").get(id);
     if (!inserted) throw new ContextMeshError("INTERNAL_ERROR", "Memory insert did not return a row");
-    return { fragment: mapMemory(inserted), duplicate: false };
+    return { fragment: mapMemory(inserted), duplicate: false, semanticSourceHash };
+  }
+
+  private currentMemorySemanticCommit(
+    entries: SemanticCommitEntry[] = [],
+    lastError: string | null = null,
+  ): SemanticPlaneCommit | null {
+    const state = this.getSemanticState("memory");
+    if (!state?.modelKey) return null;
+    const model = this.db
+      .prepare("SELECT dimensions, vector_codec FROM semantic_models WHERE model_key = ?")
+      .get(state.modelKey);
+    if (!model) return null;
+    return {
+      modelKey: state.modelKey,
+      dimensions: numberValue(model.dimensions),
+      codec: stringValue(model.vector_codec),
+      entries,
+      lastError,
+    };
   }
 
   remember(input: RememberInput): RememberResult {
     this.expireMemories();
     const warnings: string[] = [];
     return this.transaction(() => {
-      const result = this.insertMemory(input, nowIso(), warnings);
-      return { ...result, warnings };
+      const result = this.insertMemory(input, this.nowIso(), warnings);
+      if (result.duplicate) return { fragment: result.fragment, duplicate: true, warnings };
+      const commit = this.currentMemorySemanticCommit();
+      if (!commit) return { fragment: result.fragment, duplicate: false, warnings };
+      this.refreshMemorySemanticState(commit, this.nowIso());
+      const state = this.getSemanticState("memory");
+      return {
+        fragment: result.fragment,
+        duplicate: false,
+        warnings,
+        ...(state?.modelKey
+          ? {
+              semanticCapture: {
+                entityId: result.fragment.id,
+                sourceHash: result.semanticSourceHash,
+                modelKey: state.modelKey,
+                semanticRevision: state.semanticRevision,
+              },
+            }
+          : {}),
+      };
     });
   }
 
   private expireMemories(): number {
-    const timestamp = nowIso();
+    const timestamp = this.nowIso();
     const rows = this.db
       .prepare(
         `SELECT id, session_id FROM memory_fragments
@@ -1320,8 +2191,13 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         const id = stringValue(row.id);
         update.run(timestamp, id);
         removeFts.run(id);
+        this.db
+          .prepare("DELETE FROM semantic_embeddings WHERE workspace_key = ? AND plane = 'memory' AND entity_key = ?")
+          .run(this.semanticWorkspaceKey(), this.semanticEntityKey("memory", id));
         event.run(this.workspace.id, id, nullableString(row.session_id), timestamp);
       }
+      const semanticCommit = this.currentMemorySemanticCommit();
+      if (semanticCommit) this.refreshMemorySemanticState(semanticCommit, timestamp);
       return rows.length;
     });
   }
@@ -1332,7 +2208,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   recallSnapshot(input: RecallInput): RecallResult {
-    const timestamp = nowIso();
+    const timestamp = this.nowIso();
     const queryText = [input.query ?? "", ...(input.keywords ?? [])].filter(Boolean).join(" ");
     const ftsQuery = buildFtsQuery(queryText);
     const typeClause = input.types?.length ? ` AND m.type IN (${placeholders(input.types.length)})` : "";
@@ -1435,7 +2311,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            AND m.state = 'active' AND (m.expires_at IS NULL OR m.expires_at > ?)
          ORDER BY m.is_anchor DESC, m.importance DESC, m.updated_at DESC LIMIT ?`,
       )
-      .all(this.workspace.id, ...ids, nowIso(), limit);
+      .all(this.workspace.id, ...ids, this.nowIso(), limit);
     return rows.map(mapMemory);
   }
 
@@ -1488,14 +2364,14 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         ...ids,
         ...ids,
         ...ids,
-        nowIso(),
+        this.nowIso(),
         limit,
       );
     return rows.map(mapMemory);
   }
 
-  reflect(input: ReflectInput): { episode: MemoryFragmentRecord; learnings: MemoryFragmentRecord[]; duplicates: number } {
-    const timestamp = nowIso();
+  reflect(input: ReflectInput): ReflectResult {
+    const timestamp = this.nowIso();
     return this.transaction(() => {
       this.ensureSession(input.sessionId, input.clientName ?? null, timestamp);
       const episodeInput: RememberInput = {
@@ -1511,6 +2387,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       };
       const episodeResult = this.insertMemory(episodeInput, timestamp, []);
       const learnings: MemoryFragmentRecord[] = [];
+      const semanticInputs: Array<{ entityId: string; sourceHash: string }> = episodeResult.duplicate
+        ? []
+        : [{ entityId: episodeResult.fragment.id, sourceHash: episodeResult.semanticSourceHash }];
       let duplicates = episodeResult.duplicate ? 1 : 0;
       const link = this.db.prepare(
         `INSERT OR IGNORE INTO memory_links(
@@ -1525,6 +2404,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         const result = this.insertMemory({ ...learning, sessionId: input.sessionId }, timestamp, []);
         learnings.push(result.fragment);
         if (result.duplicate) duplicates += 1;
+        else semanticInputs.push({ entityId: result.fragment.id, sourceHash: result.semanticSourceHash });
         if (result.fragment.id !== episodeResult.fragment.id) {
           const linked = link.run(this.workspace.id, result.fragment.id, episodeResult.fragment.id, timestamp);
           if (Number(linked.changes) > 0) {
@@ -1553,12 +2433,28 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           JSON.stringify({ learningIds: learnings.map((learning) => learning.id) }),
           timestamp,
         );
-      return { episode: episodeResult.fragment, learnings, duplicates };
+      const semanticCommit = semanticInputs.length > 0 ? this.currentMemorySemanticCommit() : null;
+      if (semanticCommit) this.refreshMemorySemanticState(semanticCommit, timestamp);
+      const state = semanticCommit ? this.getSemanticState("memory") : null;
+      return {
+        episode: episodeResult.fragment,
+        learnings,
+        duplicates,
+        ...(state?.modelKey
+          ? {
+              semanticCaptures: semanticInputs.map((entry) => ({
+                ...entry,
+                modelKey: state.modelKey!,
+                semanticRevision: state.semanticRevision,
+              })),
+            }
+          : {}),
+      };
     });
   }
 
   forget(input: ForgetInput): MemoryFragmentRecord {
-    const timestamp = nowIso();
+    const timestamp = this.nowIso();
     return this.transaction(() => {
       const row = this.db
         .prepare("SELECT * FROM memory_fragments WHERE workspace_id = ? AND id = ? AND state = 'active'")
@@ -1572,6 +2468,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         .run(timestamp, timestamp, input.fragmentId);
       this.db.prepare("DELETE FROM memory_fragments_fts WHERE fragment_id = ?").run(input.fragmentId);
       this.db
+        .prepare("DELETE FROM semantic_embeddings WHERE workspace_key = ? AND plane = 'memory' AND entity_key = ?")
+        .run(this.semanticWorkspaceKey(), this.semanticEntityKey("memory", input.fragmentId));
+      this.db
         .prepare(
           `INSERT INTO memory_events(workspace_id, fragment_id, session_id, event_type, payload_json, created_at)
            VALUES (?, ?, ?, 'forgotten', ?, ?)`,
@@ -1583,6 +2482,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           JSON.stringify({ reason: input.reason }),
           timestamp,
         );
+      const semanticCommit = this.currentMemorySemanticCommit();
+      if (semanticCommit) this.refreshMemorySemanticState(semanticCommit, timestamp);
       return mapMemory({ ...row, state: "forgotten", updated_at: timestamp });
     });
   }

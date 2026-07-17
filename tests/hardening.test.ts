@@ -72,7 +72,7 @@ describe("token envelope and memory selection hardening", () => {
         .filter((node) => node.fileId !== null)
         .map((node) => node.id)
         .slice(0, 20);
-      const remembered = app.remember({
+      const remembered = await app.remember({
         content: "Token hardening memory with many provenance links.",
         topic: "token-hardening",
         type: "fact",
@@ -81,7 +81,7 @@ describe("token envelope and memory selection hardening", () => {
         sourceSymbolIds,
       }) as Envelope<{ fragment: MemoryFragmentRecord }>;
 
-      const linkedRecall = app.recall({
+      const linkedRecall = await app.recall({
         query: "Token hardening memory",
         tokenBudget: 900,
       }) as Envelope<{ query: string; fragments: MemoryView[]; nextOffset: number | null }>;
@@ -95,7 +95,7 @@ describe("token envelope and memory selection hardening", () => {
       expect(linkedMemory?.provenance.codeLinksOmitted).toBeGreaterThan(0);
 
       const longQuery = "long-query ".repeat(90).trim().slice(0, 1000);
-      const minimumRecall = app.recall({ query: longQuery, tokenBudget: 128 }) as Envelope<{
+      const minimumRecall = await app.recall({ query: longQuery, tokenBudget: 128 }) as Envelope<{
         query: string;
         fragments: MemoryView[];
       }>;
@@ -114,7 +114,7 @@ describe("token envelope and memory selection hardening", () => {
       expect(minimumContext.data.query.length).toBeLessThan(longQuery.length);
       expect(minimumContext.warnings).toContainEqual(expect.stringContaining("QUERY_TRUNCATED"));
 
-      const compact = app.remember({
+      const compact = await app.remember({
         content: "q",
         topic: "q",
         type: "fact",
@@ -124,7 +124,7 @@ describe("token envelope and memory selection hardening", () => {
         sourceSymbolIds: [],
       }) as Envelope<{ fragment: MemoryFragmentRecord }>;
       const relatedLongQuery = `q${"-".repeat(999)}`;
-      const compactRecall = app.recall({
+      const compactRecall = await app.recall({
         query: relatedLongQuery,
         includeAnchors: true,
         tokenBudget: 256,
@@ -144,7 +144,7 @@ describe("token envelope and memory selection hardening", () => {
       expect(compactContext.data.query.length).toBeLessThan(relatedLongQuery.length);
       expect(compactContext.warnings).toContain("QUERY_TRUNCATED");
 
-      expect(() => app.recall({ query: "invalid budget", tokenBudget: 127 })).toThrow(ContextMeshError);
+      await expect(app.recall({ query: "invalid budget", tokenBudget: 127 })).rejects.toThrow(ContextMeshError);
       await expect(app.getContext({ query: "invalid budget", tokenBudget: 255 })).rejects.toThrow(
         ContextMeshError,
       );
@@ -159,7 +159,7 @@ describe("token envelope and memory selection hardening", () => {
     const app = new ContextMeshApp(root);
     try {
       await app.indexWorkspace({ mode: "full" });
-      const remembered = app.remember({
+      const remembered = await app.remember({
         content: "Access transaction failure regression memory.",
         topic: "access-transaction",
         type: "fact",
@@ -173,7 +173,7 @@ describe("token envelope and memory selection hardening", () => {
       });
       let recallError: unknown;
       try {
-        app.recall({ query: "Access transaction failure", tokenBudget: 1000 });
+        await app.recall({ query: "Access transaction failure", tokenBudget: 1000 });
       } catch (error) {
         recallError = error;
       }
@@ -203,12 +203,12 @@ describe("token envelope and memory selection hardening", () => {
     }
   });
 
-  it("keeps an unrelated anchor ahead of pagination when more than the limit match FTS", () => {
+  it("keeps an unrelated anchor ahead of pagination when more than the limit match FTS", async () => {
     const root = temporaryWorkspace();
     const app = new ContextMeshApp(root);
     try {
       for (let index = 0; index < 60; index += 1) {
-        app.remember({
+        await app.remember({
           content: `Ordinary searchable memory ${index}`,
           topic: "anchor-pagination",
           type: "fact",
@@ -217,7 +217,7 @@ describe("token envelope and memory selection hardening", () => {
           sourceSymbolIds: [],
         });
       }
-      const anchor = app.remember({
+      const anchor = await app.remember({
         content: "Guaranteed unrelated anchor.",
         topic: "anchor-pagination",
         type: "decision",
@@ -227,7 +227,7 @@ describe("token envelope and memory selection hardening", () => {
         sourceSymbolIds: [],
       }) as Envelope<{ fragment: MemoryFragmentRecord }>;
 
-      const recalled = app.recall({
+      const recalled = await app.recall({
         query: "Ordinary searchable memory",
         includeAnchors: true,
         limit: 20,
@@ -238,7 +238,7 @@ describe("token envelope and memory selection hardening", () => {
       expect(recalled.data.fragments.filter((memory) => !memory.isAnchor)).toHaveLength(20);
       expectBudget(recalled, 8000);
 
-      const withoutAnchors = app.recall({
+      const withoutAnchors = await app.recall({
         query: "Guaranteed unrelated anchor",
         includeAnchors: false,
         tokenBudget: 1000,
@@ -249,13 +249,13 @@ describe("token envelope and memory selection hardening", () => {
     }
   });
 
-  it("advances recall offsets by only the contiguous general-memory prefix", () => {
+  it("advances recall offsets by only the contiguous general-memory prefix", async () => {
     const root = temporaryWorkspace();
     const app = new ContextMeshApp(root);
     try {
       const expectedIds = new Set<string>();
       for (let index = 0; index < 10; index += 1) {
-        const remembered = app.remember({
+        const remembered = await app.remember({
           content: `page-sequence ${index}`,
           topic: "page-sequence",
           type: "fact",
@@ -265,7 +265,7 @@ describe("token envelope and memory selection hardening", () => {
         }) as Envelope<{ fragment: MemoryFragmentRecord }>;
         expectedIds.add(remembered.data.fragment.id);
       }
-      const anchor = app.remember({
+      const anchor = await app.remember({
         content: "a",
         topic: "a",
         type: "decision",
@@ -278,7 +278,7 @@ describe("token envelope and memory selection hardening", () => {
       const returnedIds: string[] = [];
       let offset = 0;
       for (let page = 0; page < 20; page += 1) {
-        const recalled = app.recall({
+        const recalled = await app.recall({
           query: "page-sequence",
           includeAnchors: true,
           limit: 20,
@@ -303,11 +303,11 @@ describe("token envelope and memory selection hardening", () => {
     }
   });
 
-  it("returns PAGINATION_STALLED without skipping an oversized first general memory", () => {
+  it("returns PAGINATION_STALLED without skipping an oversized first general memory", async () => {
     const root = temporaryWorkspace();
     const app = new ContextMeshApp(root);
     try {
-      app.remember({
+      await app.remember({
         content: `oversized-stall ${"x".repeat(3980)}`,
         topic: "oversized-stall",
         type: "fact",
@@ -315,7 +315,7 @@ describe("token envelope and memory selection hardening", () => {
         importance: 3,
         sourceSymbolIds: [],
       });
-      const recalled = app.recall({
+      const recalled = await app.recall({
         query: "oversized-stall",
         limit: 20,
         offset: 0,

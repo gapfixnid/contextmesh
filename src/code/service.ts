@@ -1,5 +1,8 @@
-import type { CodeNodeKind, SearchCodeInput, TraceCodeInput } from "../contracts.js";
+import type { SearchCodeInput, TraceCodeInput } from "../contracts.js";
 import type { ContextMeshStorage } from "../storage/database.js";
+import type { SemanticService } from "../semantic/service.js";
+import type { SemanticSearchResult } from "../semantic/service.js";
+import { hybridCodeSearch } from "../semantic/hybrid.js";
 import { estimateTokens } from "../utils.js";
 import { CodeIndexer, type IndexResult } from "./indexer.js";
 import type { FreshnessMode, RequestGenerationState } from "./indexer.js";
@@ -10,13 +13,21 @@ export class CodeService {
   readonly indexer: CodeIndexer;
   private readonly database: ContextMeshStorage;
 
-  constructor(database: ContextMeshStorage, freshnessMode: FreshnessMode = "fast") {
+  constructor(
+    database: ContextMeshStorage,
+    freshnessMode: FreshnessMode = "fast",
+    semantic: SemanticService | null = null,
+  ) {
     this.database = database;
-    this.indexer = new CodeIndexer(database, freshnessMode);
+    this.indexer = new CodeIndexer(database, freshnessMode, semantic);
   }
 
   index(mode: "full" | "incremental"): Promise<IndexResult> {
     return this.indexer.index(mode);
+  }
+
+  reconcileSemantic(): Promise<void> {
+    return this.indexer.reconcileSemantic();
   }
 
   async status(): Promise<Record<string, unknown>> {
@@ -52,25 +63,19 @@ export class CodeService {
     return (await this.freshnessState()).stale ? [INDEX_STALE_WARNING] : [];
   }
 
-  search(input: SearchCodeInput): {
+  search(input: SearchCodeInput, semantic: SemanticSearchResult | null = null): {
     results: ReturnType<ContextMeshStorage["searchCode"]>;
     estimatedTokens: number;
     truncated: boolean;
     nextOffset: number | null;
   } {
-    const page = this.database.searchCode(
-      input.query,
-      input.kinds as CodeNodeKind[] | undefined,
-      input.limit + 1,
-      input.offset,
-    );
-    const truncated = page.length > input.limit;
-    const results = page.slice(0, input.limit);
+    const hybrid = hybridCodeSearch(this.database, input, semantic);
+    const results = hybrid.results;
     return {
       results,
       estimatedTokens: estimateTokens(results),
-      truncated,
-      nextOffset: truncated ? input.offset + input.limit : null,
+      truncated: hybrid.truncated,
+      nextOffset: hybrid.nextOffset,
     };
   }
 

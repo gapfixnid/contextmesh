@@ -56,7 +56,7 @@ try {
   await app.indexWorkspace({ mode: "incremental" });
   const noOpIndexMs = performance.now() - noOpStarted;
 
-  app.close();
+  await app.close();
   app = new ContextMeshApp(root, undefined, { freshnessMode: "fast" });
   const strictStartupStarted = performance.now();
   await app.initialize(false);
@@ -132,7 +132,7 @@ try {
       strictPublicGetContextDurations.push(performance.now() - started);
     }
   } finally {
-    strictApp.close();
+    await strictApp.close();
   }
   const databaseSearchTraceP95Ms = percentile95(databaseSearchTraceDurations);
   const fastPublicSearchTraceP95Ms = percentile95(fastPublicSearchTraceDurations);
@@ -161,6 +161,6 @@ try {
     throw new Error("ContextMesh benchmark exceeded one or more MVP performance limits");
   }
 } finally {
-  app.close();
+  await app.close();
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });
 }

@@ -157,7 +157,7 @@ describe("Phase 3 freshness coordination", () => {
     const app = new ContextMeshApp(root);
     try {
       await app.indexWorkspace({ mode: "full" });
-      app.remember({
+      await app.remember({
         content: "Generation retry access memory",
         topic: "generation-retry",
         type: "fact",

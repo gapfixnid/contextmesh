@@ -1,6 +1,6 @@
 # Architecture
 
-ContextMesh is a single-workspace, local-first MCP process. The stdio transport calls application services, which coordinate code intelligence, memory lifecycle, context assembly, and a SQLite storage boundary. It has no LLM, telemetry, embedding service, or runtime network client.
+ContextMesh is a single-workspace, local-first MCP process. The stdio transport calls application services, which coordinate code intelligence, memory lifecycle, context assembly, optional local embeddings, and a SQLite storage boundary. It has no LLM, telemetry, remote embedding service, or runtime network client.
 
 ```mermaid
 flowchart LR
@@ -8,9 +8,11 @@ flowchart LR
   App --> Index["TypeScript code index"]
   App --> Memory["Memory lifecycle"]
   App --> Context["Context assembler"]
+  App -. "explicit local model only" .-> Semantic["Transformers.js + ONNX Runtime CPU"]
   Index --> Storage["SQLite + FTS5"]
   Memory --> Storage
   Context --> Storage
+  Semantic --> Storage
   Context --> Source["Hash-validated source snippets"]
 ```
 
@@ -25,6 +27,18 @@ Startup and strict mode hash every scoped file. Fast mode compares effective con
 Code-facing requests capture the active graph generation and success fence, read graph data in one serialized SQLite snapshot, and recheck generation, fence, and durable stale state before returning. A changed generation retries once; a second change returns the internally consistent second snapshot with `INDEX_STALE`. Index preparation does not hold the freshness mutex, so the last committed generation remains available while a new graph is built.
 
 Incremental runs calculate the reverse dependency closure of changed and deleted files from existing cross-file edges. Only that closure is relationship-resolved again. Added files, compiler configuration changes, declaration-file changes, and full runs use a complete relationship pass. The final graph is still replaced in one transaction, favoring consistency over partial visibility.
+
+## Semantic lifecycle
+
+Semantic retrieval exists only when `ContextMeshAppOptions.semantic.modelPath` or CLI `--semantic-model` is supplied. The approved manifest is compiled into the application; its canonical JSON SHA-256 is the `model_key`. The local manifest, all seven required files, the canonical ONNX path, and every SHA-256 must match before the runtime is usable. The Node adapter dynamically imports `@huggingface/transformers@4.2.0` and `onnxruntime-node@1.24.3`, disables remote models and caches, requests only the CPU execution provider, and passes intra-op 4, inter-op 1, and sequential execution. Sequential mode records effective inter-op threads as `not_applicable`; settings without observable runtime getters remain `not_observable`.
+
+Migration 004 stores semantic source hashes, the approved model registration, per-plane state, and `f32le-v1` Float32 BLOBs. Canonical passages are NFC-normalized and hashed. BLOB decoding rejects wrong dimensions or byte order, non-finite values, zero vectors, and vectors outside the L2 normalization tolerance.
+
+The process-local workspace writer mutex covers code change detection, passage embedding, and the final graph/semantic transaction. Unchanged ID plus source hash vectors are restamped for the new graph generation; stale generations and changed or deleted entities are pruned atomically. A semantic failure never rolls back an otherwise valid graph/FTS commit.
+
+Memory writes use a two-transaction CAS. The durable fragment commits first, embedding runs without a SQLite transaction, and the vector transaction then rechecks active state, expiry, source hash, model key, and semantic revision. A failed CAS discards the result without changing the vector table or revision. Forget, supersession, and expiry writes remove vectors and update state in their own transaction.
+
+Each plane hydrates a contiguous `Float32Array` cache keyed by workspace, model, graph generation or memory revision. Readers compare the durable key on every request. Memory candidates additionally receive a live active/expiry/source-hash mask, so wall-clock expiry cannot leak from a warm cache even when no revision changed. Exact scan is capped at 50,000 eligible entities per plane.
 
 ## Memory lifecycle
 
@@ -44,4 +58,6 @@ All recalled/context memory objects include `untrusted: true` and assertion stat
 
 ## Context selection
 
-`get_context` ranks direct symbols, anchor memories, lexical code matches, code-linked memories, one-hop graph neighbors, related memories, and remaining memory matches. Snippets are read only after rejecting a final symlink, resolving the real path inside the workspace, reading one file-descriptor Buffer with stable identity checks, and matching its SHA-256 hash; the returned slice comes from that same Buffer. Candidates, provenance, relationships, warnings, query text, and envelope fields are admitted only while the requested estimated token budget remains. Access metadata and audit events for selected memories commit only for the final request attempt before the response is returned.
+`get_context` ranks direct symbols, anchor memories, lexical and semantic matches, code-linked memories, one-hop graph neighbors, related memories, and remaining memory matches. Exact/direct/anchor candidates remain pinned. Other sources use weighted reciprocal-rank fusion (`k=60`, lexical/semantic weight 1.0, graph weight 0.75) followed by deterministic MMR (`0.75 relevance - 0.25 redundancy`). Scores are quantized to `1e-6` and canonical IDs resolve ties. Final packing removes normalized 5-token-shingle near duplicates.
+
+Snippets are read only after rejecting a final symlink, resolving the real path inside the workspace, reading one file-descriptor Buffer with stable identity checks, and matching its SHA-256 hash; the returned slice comes from that same Buffer. Candidates, provenance, relationships, warnings, query text, and envelope fields are admitted only while the requested estimated token budget remains. Access metadata and audit events for selected memories commit only for the final request attempt before the response is returned.

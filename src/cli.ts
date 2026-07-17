@@ -10,7 +10,7 @@ import { runStdioServer } from "./mcp/server.js";
 const HELP = `ContextMesh — local MCP code intelligence and long-term memory
 
 Usage:
-  contextmesh serve [--workspace PATH] [--no-auto-index] [--freshness-mode fast|strict]
+  contextmesh serve [--workspace PATH] [--no-auto-index] [--freshness-mode fast|strict] [--semantic-model PATH]
   contextmesh index [--workspace PATH] [--full | --incremental]
   contextmesh status [--workspace PATH]
   contextmesh search QUERY [--kind function --limit 20 --offset 0]
@@ -23,6 +23,7 @@ Usage:
   contextmesh doctor [--workspace PATH]
 
 The default database is WORKSPACE/.contextmesh/contextmesh.sqlite3.
+Semantic retrieval is disabled unless --semantic-model points to an approved local model directory.
 `;
 
 function numeric(value: string | undefined, fallback: number): number {
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
       incremental: { type: "boolean", default: false },
       "no-auto-index": { type: "boolean", default: false },
       "freshness-mode": { type: "string" },
+      "semantic-model": { type: "string" },
       kind: { type: "string", multiple: true },
       limit: { type: "string" },
       offset: { type: "string" },
@@ -90,33 +92,37 @@ async function main(): Promise<void> {
   if (freshnessMode !== "fast" && freshnessMode !== "strict") {
     throw new ContextMeshError("INVALID_ARGUMENT", `Unknown freshness mode: ${freshnessMode}`);
   }
-  const app = new ContextMeshApp(workspace, values["db-path"], { freshnessMode });
+  const app = new ContextMeshApp(
+    workspace,
+    values["db-path"],
+    values["semantic-model"]
+      ? { freshnessMode, semantic: { modelPath: values["semantic-model"] } }
+      : { freshnessMode },
+  );
 
   if (command === "serve") {
     let closed = false;
-    const close = (): void => {
+    const close = async (): Promise<void> => {
       if (closed) return;
       closed = true;
-      app.close();
+      await app.close();
     };
     const shutdown = (): void => {
-      close();
-      process.exit(0);
+      void close().finally(() => process.exit(0));
     };
-    const onExit = (): void => close();
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
-    process.once("exit", onExit);
     try {
       await app.initialize(!values["no-auto-index"]);
       await runStdioServer(app);
+      await new Promise<void>((resolve) => process.stdin.once("end", resolve));
     } catch (error) {
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
-      process.removeListener("exit", onExit);
-      close();
+      await close();
       throw error;
     }
+    await close();
     return;
   }
 
@@ -159,7 +165,7 @@ async function main(): Promise<void> {
           throw new ContextMeshError("INVALID_ARGUMENT", `Unknown memory type: ${type}`);
         }
         writeJson(
-          app.remember({
+          await app.remember({
             content: required(positionals[0], "CONTENT"),
             topic: required(values.topic, "--topic"),
             type,
@@ -177,7 +183,7 @@ async function main(): Promise<void> {
       }
       case "recall":
         writeJson(
-          app.recall({
+          await app.recall({
             query: positionals[0],
             keywords: values.keyword,
             tokenBudget: numeric(values["token-budget"], 1000),
@@ -199,7 +205,7 @@ async function main(): Promise<void> {
         break;
       case "reflect":
         writeJson(
-          app.reflect({
+          await app.reflect({
             sessionId: required(values.session, "--session"),
             summary: required(values.summary, "--summary"),
             learnings: values.learnings ? (JSON.parse(values.learnings) as unknown) : [],
@@ -222,7 +228,7 @@ async function main(): Promise<void> {
         throw new ContextMeshError("INVALID_ARGUMENT", `Unknown command: ${command}\n\n${HELP}`);
     }
   } finally {
-    app.close();
+    await app.close();
   }
 }
 

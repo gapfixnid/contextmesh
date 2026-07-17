@@ -29,6 +29,9 @@ import {
 } from "./context/assembler.js";
 import { asContextMeshError, ContextMeshError } from "./errors.js";
 import { MemoryService } from "./memory/service.js";
+import type { EmbeddingBackendFactory } from "./semantic/backend.js";
+import { SemanticService } from "./semantic/service.js";
+import { nearDuplicateText } from "./semantic/ranking.js";
 import {
   ContextMeshDatabase,
   type MemoryCodeProvenance,
@@ -40,6 +43,7 @@ import type { FreshnessMode, RequestGenerationState } from "./code/indexer.js";
 
 const QUERY_TRUNCATED_WARNING = "QUERY_TRUNCATED";
 const PAGINATION_STALLED_WARNING = "PAGINATION_STALLED";
+const SEMANTIC_SNAPSHOT_CHANGED_WARNING = "SEMANTIC_UNAVAILABLE: SNAPSHOT_CHANGED";
 
 interface RecallMemoryItem extends MemoryFragmentRecord {
   untrusted: true;
@@ -74,21 +78,39 @@ function validate<T>(schema: { parse(input: unknown): T }, input: unknown): T {
   }
 }
 
+export interface ContextMeshAppOptions {
+  freshnessMode?: FreshnessMode;
+  semantic?: {
+    modelPath: string;
+    backendFactory?: EmbeddingBackendFactory;
+  };
+  clock?: () => Date;
+}
+
 export class ContextMeshApp {
   readonly database: ContextMeshDatabase;
   readonly code: CodeService;
   readonly memory: MemoryService;
   readonly context: ContextAssembler;
+  readonly semantic: SemanticService | null;
   private activeIndex: Promise<Envelope<unknown>> | null = null;
 
   constructor(
     rootPath: string,
     databasePath?: string,
-    options: { freshnessMode?: FreshnessMode } = {},
+    options: ContextMeshAppOptions = {},
   ) {
-    this.database = new ContextMeshDatabase(rootPath, databasePath);
-    this.code = new CodeService(this.database, options.freshnessMode ?? "fast");
-    this.memory = new MemoryService(this.database);
+    this.database = new ContextMeshDatabase(rootPath, databasePath, options.clock ? { clock: options.clock } : {});
+    this.semantic = options.semantic
+      ? new SemanticService(
+          this.database,
+          options.semantic.backendFactory
+            ? { modelPath: options.semantic.modelPath, backendFactory: options.semantic.backendFactory }
+            : { modelPath: options.semantic.modelPath },
+        )
+      : null;
+    this.code = new CodeService(this.database, options.freshnessMode ?? "fast", this.semantic);
+    this.memory = new MemoryService(this.database, this.semantic);
     this.context = new ContextAssembler(this.database, this.code.indexer);
   }
 
@@ -104,9 +126,13 @@ export class ContextMeshApp {
     }
   }
 
-  close(): void {
+  async close(): Promise<void> {
     this.code.indexer.dispose();
-    this.database.close();
+    try {
+      if (this.semantic) await this.semantic.dispose();
+    } finally {
+      this.database.close();
+    }
   }
 
   private scope(generation = this.database.getWorkspace().currentGeneration): EnvelopeScope {
@@ -176,7 +202,7 @@ export class ContextMeshApp {
   }
 
   async workspaceStatus(): Promise<Envelope<unknown>> {
-    return this.envelope(await this.code.status());
+    return this.envelope({ ...(await this.code.status()), semantic: this.semantic?.status() ?? { enabled: false } });
   }
 
   private async graphReadAttempt<T>(
@@ -212,14 +238,41 @@ export class ContextMeshApp {
 
   async searchCode(input: unknown): Promise<Envelope<unknown>> {
     const parsed = validate<SearchCodeInput>(searchCodeSchema, input);
+    const sourceDepth = Math.min(10_100, parsed.offset + parsed.limit + 1);
+    if (this.semantic) await this.code.reconcileSemantic();
+    let semanticResult = this.semantic
+      ? await this.semantic.searchCode(parsed.query, parsed.kinds, sourceDepth)
+      : null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const read = await this.graphReadAttempt(() => this.code.search(parsed));
-      if (read.generationChanged && attempt === 0) continue;
+      const read = await this.graphReadAttempt(() => {
+        const semanticCurrent = !semanticResult || !this.semantic || this.semantic.isCurrent("code", semanticResult);
+        return {
+          result: this.code.search(parsed, semanticCurrent ? semanticResult : null),
+          semanticCurrent,
+        };
+      });
+      const semanticChanged = Boolean(
+        semanticResult &&
+          this.semantic &&
+          (!read.value.semanticCurrent || !this.semantic.isCurrent("code", semanticResult)),
+      );
+      if ((read.generationChanged || semanticChanged) && attempt === 0) {
+        if (this.semantic && semanticResult) {
+          semanticResult = semanticResult.queryVector
+            ? this.semantic.rescanCode(semanticResult, parsed.kinds, sourceDepth)
+            : await this.semantic.searchCode(parsed.query, parsed.kinds, sourceDepth);
+        }
+        continue;
+      }
       return stabilizeEnvelope(
         this.scope(read.snapshot.generation),
-        { results: read.value.results, nextOffset: read.value.nextOffset },
-        read.stale || read.generationChanged ? [INDEX_STALE_WARNING] : [],
-        read.value.truncated || read.generationChanged,
+        { results: read.value.result.results, nextOffset: read.value.result.nextOffset },
+        [
+          ...(read.stale || read.generationChanged ? [INDEX_STALE_WARNING] : []),
+          ...(semanticResult?.warnings ?? []),
+          ...(semanticChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
+        ],
+        read.value.result.truncated || read.generationChanged || semanticChanged,
       );
     }
     throw new ContextMeshError("INTERNAL_ERROR", "Code search retry did not produce a result");
@@ -247,16 +300,48 @@ export class ContextMeshApp {
     throw new ContextMeshError("INTERNAL_ERROR", "Code trace retry did not produce a result");
   }
 
-  remember(input: unknown): Envelope<unknown> {
+  async remember(input: unknown): Promise<Envelope<unknown>> {
     const parsed = validate<RememberInput>(rememberSchema, input);
-    const result = this.memory.remember(parsed);
+    const result = await this.memory.remember(parsed);
     return this.envelope({ fragment: result.fragment, duplicate: result.duplicate }, { warnings: result.warnings });
   }
 
-  recall(input: unknown): Envelope<unknown> {
+  async recall(input: unknown): Promise<Envelope<unknown>> {
     const parsed = validate<RecallInput>(recallSchema, input);
     const scope = this.scope();
-    const result = this.memory.recall(parsed);
+    const semanticQuery = [parsed.query ?? "", ...(parsed.keywords ?? [])].filter(Boolean).join(" ");
+    let semanticResult =
+      this.semantic && semanticQuery
+        ? await this.semantic.searchMemory(
+            semanticQuery,
+            parsed.types,
+            parsed.topic,
+            Math.min(10_100, parsed.offset + parsed.limit + 1),
+          )
+        : null;
+    let result!: ReturnType<MemoryService["recall"]>;
+    let semanticSnapshotChanged = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const semanticCurrentBefore =
+        !semanticResult || !this.semantic || this.semantic.isCurrent("memory", semanticResult);
+      const candidate = this.memory.recall(parsed, semanticCurrentBefore ? semanticResult : null);
+      const semanticCurrentAfter =
+        !semanticResult || !this.semantic || this.semantic.isCurrent("memory", semanticResult);
+      semanticSnapshotChanged = !semanticCurrentBefore || !semanticCurrentAfter;
+      if (semanticSnapshotChanged && attempt === 0 && this.semantic && semanticResult) {
+        semanticResult = semanticResult.queryVector
+          ? this.semantic.rescanMemory(semanticResult, parsed.types, parsed.topic, Math.min(10_100, parsed.offset + parsed.limit + 1))
+          : await this.semantic.searchMemory(
+              semanticQuery,
+              parsed.types,
+              parsed.topic,
+              Math.min(10_100, parsed.offset + parsed.limit + 1),
+            );
+        continue;
+      }
+      result = semanticSnapshotChanged ? this.memory.recall(parsed, null) : candidate;
+      break;
+    }
     const allFragments = [...result.anchors, ...result.fragments];
     const provenance = this.database.getMemoryCodeProvenance(allFragments.map((fragment) => fragment.id));
     const accessTimestamp = nowIso();
@@ -283,7 +368,11 @@ export class ContextMeshApp {
       fragments: [],
       nextOffset: reservedNextOffset,
     };
-    let warnings = parsed.query ? [QUERY_TRUNCATED_WARNING] : [];
+    let warnings = [
+      ...(parsed.query ? [QUERY_TRUNCATED_WARNING] : []),
+      ...(semanticResult?.warnings ?? []),
+      ...(semanticSnapshotChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
+    ];
     if (!envelopeFits(scope, data, warnings, false, parsed.tokenBudget)) {
       throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum response envelope", {
         tokenBudget: parsed.tokenBudget,
@@ -412,6 +501,15 @@ export class ContextMeshApp {
 
   async getContext(input: unknown): Promise<Envelope<unknown>> {
     const parsed = validate<GetContextInput>(getContextSchema, input);
+    if (this.semantic && parsed.include.includes("code")) await this.code.reconcileSemantic();
+    let semanticContext = this.semantic
+      ? await this.semantic.searchContext(
+          parsed.query,
+          parsed.include.includes("code"),
+          parsed.include.includes("memory"),
+          100,
+        )
+      : { code: null, memory: null };
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const initial = await this.code.freshnessState();
       const snapshotResult = await this.database.withReadSnapshot(() => {
@@ -421,7 +519,20 @@ export class ContextMeshApp {
           successFence: state.successFenceGeneration,
           stale: state.stale,
         };
-        return { snapshot, result: this.context.assembleDatabase(parsed) };
+        const semanticCodeCurrent =
+          !semanticContext.code || !this.semantic || this.semantic.isCurrent("code", semanticContext.code);
+        const semanticMemoryCurrent =
+          !semanticContext.memory || !this.semantic || this.semantic.isCurrent("memory", semanticContext.memory);
+        return {
+          snapshot,
+          semanticCodeCurrent,
+          semanticMemoryCurrent,
+          result: this.context.assembleDatabase(
+            parsed,
+            semanticCodeCurrent ? semanticContext.code : null,
+            semanticMemoryCurrent ? semanticContext.memory : null,
+          ),
+        };
       });
       const hydrated = await this.context.hydrateSnippets(
         snapshotResult.result,
@@ -435,14 +546,42 @@ export class ContextMeshApp {
         initial.successFence !== snapshotResult.snapshot.successFence ||
         final.generation !== snapshotResult.snapshot.generation ||
         final.successFence !== snapshotResult.snapshot.successFence;
-      if (generationChanged && attempt === 0) continue;
+      const semanticChanged = Boolean(
+        this.semantic &&
+          ((!snapshotResult.semanticCodeCurrent ||
+            (semanticContext.code && !this.semantic.isCurrent("code", semanticContext.code))) ||
+            (!snapshotResult.semanticMemoryCurrent ||
+              (semanticContext.memory && !this.semantic.isCurrent("memory", semanticContext.memory)))),
+      );
+      if ((generationChanged || semanticChanged) && attempt === 0) {
+        if (this.semantic) {
+          semanticContext =
+            semanticContext.code?.queryVector || semanticContext.memory?.queryVector
+              ? this.semantic.rescanContext(
+                  semanticContext,
+                  parsed.include.includes("code"),
+                  parsed.include.includes("memory"),
+                  100,
+                )
+              : await this.semantic.searchContext(
+                  parsed.query,
+                  parsed.include.includes("code"),
+                  parsed.include.includes("memory"),
+                  100,
+                );
+        }
+        continue;
+      }
       const stale = initial.stale || snapshotResult.snapshot.stale || final.stale || generationChanged;
       return this.packContext(
         parsed,
         hydrated.assembled,
         this.scope(snapshotResult.snapshot.generation),
-        stale ? [INDEX_STALE_WARNING] : [],
-        generationChanged,
+        [
+          ...(stale ? [INDEX_STALE_WARNING] : []),
+          ...(semanticChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
+        ],
+        generationChanged || semanticChanged,
       );
     }
     throw new ContextMeshError("INTERNAL_ERROR", "Context retry did not produce a result");
@@ -464,6 +603,8 @@ export class ContextMeshApp {
     }
 
     let data: ContextData = { query: "", code: [], memories: [], relationships: [] };
+    const selectedTexts: string[] = [];
+    const selectedPlanes = new Set<"code" | "memory">();
     let warnings = [...new Set([...staleWarnings, QUERY_TRUNCATED_WARNING])];
     if (!envelopeFits(scope, data, warnings, false, parsed.tokenBudget)) {
       throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum response envelope", {
@@ -473,10 +614,24 @@ export class ContextMeshApp {
 
     let candidateOmitted = false;
     for (const candidate of result.candidates) {
+      const crossPlaneRepresentative = selectedPlanes.size > 0 && !selectedPlanes.has(candidate.kind);
+      if (candidate.priority >= 2 && crossPlaneRepresentative && candidate.relevance < 0.35) {
+        candidateOmitted = true;
+        continue;
+      }
       if (candidate.kind === "code") {
-        const tentative = { ...data, code: [...data.code, candidate.value as ContextCodeItem] };
-        if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) data = tentative;
-        else candidateOmitted = true;
+        const code = candidate.value as ContextCodeItem;
+        const candidateText = code.snippet ?? `${code.signature}\n${code.doc}`;
+        if (candidate.priority >= 2 && selectedTexts.some((selected) => nearDuplicateText(candidateText, selected))) {
+          candidateOmitted = true;
+          continue;
+        }
+        const tentative = { ...data, code: [...data.code, code] };
+        if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) {
+          data = tentative;
+          selectedTexts.push(candidateText);
+          selectedPlanes.add("code");
+        } else candidateOmitted = true;
         continue;
       }
 
@@ -492,8 +647,16 @@ export class ContextMeshApp {
           codeLinksOmitted: links.length,
         },
       };
+      if (candidate.priority >= 2 && selectedTexts.some((selected) => nearDuplicateText(prepared.content, selected))) {
+        candidateOmitted = true;
+        continue;
+      }
       const tentative = { ...data, memories: [...data.memories, prepared] };
-      if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) data = tentative;
+      if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) {
+        data = tentative;
+        selectedTexts.push(prepared.content);
+        selectedPlanes.add("memory");
+      }
       else candidateOmitted = true;
     }
 
@@ -574,9 +737,13 @@ export class ContextMeshApp {
     return envelope;
   }
 
-  reflect(input: unknown): Envelope<unknown> {
+  async reflect(input: unknown): Promise<Envelope<unknown>> {
     const parsed = validate<ReflectInput>(reflectSchema, input);
-    return this.envelope(this.memory.reflect(parsed));
+    const result = await this.memory.reflect(parsed);
+    return this.envelope(
+      { episode: result.episode, learnings: result.learnings, duplicates: result.duplicates },
+      { warnings: result.warnings },
+    );
   }
 
   forget(input: unknown): Envelope<unknown> {
@@ -585,6 +752,9 @@ export class ContextMeshApp {
   }
 
   doctor(): Envelope<unknown> {
-    return this.envelope(this.database.doctor());
+    return this.envelope({
+      ...this.database.doctor(),
+      semantic: this.semantic?.status() ?? { enabled: false },
+    });
   }
 }

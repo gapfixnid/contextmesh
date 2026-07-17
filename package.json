@@ -1,6 +1,6 @@
 {
   "name": "contextmesh",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first MCP code intelligence and long-term memory server",
   "type": "module",
   "bin": {
@@ -31,6 +31,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "benchmark": "tsx scripts/benchmark.ts",
+    "benchmark:semantic": "node --expose-gc --import tsx scripts/benchmark-semantic.ts",
     "evaluate:quality": "tsx scripts/evaluate-quality.ts",
     "fetch:semantic-smoke-model": "tsx scripts/fetch-semantic-smoke-model.ts",
     "smoke:semantic": "tsx scripts/smoke-semantic.ts",

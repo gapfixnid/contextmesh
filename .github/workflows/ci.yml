@@ -28,5 +28,7 @@ jobs:
           key: semantic-smoke-${{ runner.os }}-761b726dd34fb839
       - run: npm run fetch:semantic-smoke-model -- --output .semantic-smoke-model
       - run: npm run smoke:semantic -- --model-path .semantic-smoke-model
+      - run: npm run benchmark:semantic -- --model-path .semantic-smoke-model
+        if: matrix.os == 'windows-latest'
       - run: npm run benchmark
         if: matrix.os == 'windows-latest'

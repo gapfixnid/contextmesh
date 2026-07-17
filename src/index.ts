@@ -1,7 +1,12 @@
-export { ContextMeshApp } from "./app.js";
+export { ContextMeshApp, type ContextMeshAppOptions } from "./app.js";
 export * from "./contracts.js";
 export { ContextMeshError, type ContextMeshErrorCode } from "./errors.js";
 export type { FreshnessMode } from "./code/indexer.js";
+export type {
+  EmbeddingBackend,
+  EmbeddingBackendFactory,
+  SemanticRuntimeDiagnostics,
+} from "./semantic/backend.js";
 export type {
   CodeSearchResult,
   ContextMeshStorage,

@@ -47,7 +47,7 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
-  const server = new McpServer({ name: "contextmesh", version: "0.1.0" });
+  const server = new McpServer({ name: "contextmesh", version: "0.2.0" });
 
   server.registerTool(
     "index_workspace",
@@ -89,7 +89,7 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     "search_code",
     {
       title: "Search code",
-      description: "Search indexed code symbols using exact and SQLite FTS5 ranking.",
+      description: "Search indexed code symbols using exact, SQLite FTS5, and optional local semantic ranking.",
       inputSchema: searchCodeSchema,
       outputSchema: envelopeOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -132,7 +132,7 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     },
     async (input) => {
       try {
-        return success(app.remember(input));
+        return success(await app.remember(input));
       } catch (error) {
         return failure(error);
       }
@@ -143,14 +143,14 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     "recall",
     {
       title: "Recall",
-      description: "Retrieve active memories with keyword/FTS ranking and a strict token budget.",
+      description: "Retrieve active memories with keyword/FTS and optional local semantic ranking under a strict token budget.",
       inputSchema: recallSchema,
       outputSchema: envelopeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (input) => {
       try {
-        return success(app.recall(input));
+        return success(await app.recall(input));
       } catch (error) {
         return failure(error);
       }
@@ -186,7 +186,7 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     },
     async (input) => {
       try {
-        return success(app.reflect(input));
+        return success(await app.reflect(input));
       } catch (error) {
         return failure(error);
       }

@@ -29,7 +29,7 @@ describe("long-term memory lifecycle", () => {
       const calculatorId = code.data.results[0]?.id;
       expect(calculatorId).toBeTruthy();
 
-      const remembered = app.remember({
+      const remembered = await app.remember({
         content: "Use Calculator for numeric operations.",
         topic: "architecture",
         type: "decision",
@@ -41,7 +41,7 @@ describe("long-term memory lifecycle", () => {
       durableId = remembered.data.fragment.id;
       expect(remembered.data.duplicate).toBe(false);
 
-      const duplicate = app.remember({
+      const duplicate = await app.remember({
         content: "Use Calculator for numeric operations.",
         topic: "architecture",
         type: "decision",
@@ -60,7 +60,7 @@ describe("long-term memory lifecycle", () => {
       expect(context.data.memories.some((memory) => memory.id === durableId)).toBe(true);
       expect(context.estimatedTokens).toBeLessThanOrEqual(2000);
 
-      const replacement = app.remember({
+      const replacement = await app.remember({
         content: "Use Calculator only for synchronous numeric operations.",
         topic: "architecture",
         type: "decision",
@@ -71,7 +71,7 @@ describe("long-term memory lifecycle", () => {
         supersedesId: durableId,
       }) as Envelope<{ fragment: MemoryFragmentRecord }>;
       const replacementId = replacement.data.fragment.id;
-      const recalled = app.recall({
+      const recalled = await app.recall({
         query: "Calculator",
         includeAnchors: true,
         tokenBudget: 2000,
@@ -89,7 +89,7 @@ describe("long-term memory lifecycle", () => {
         ).provenance.codeLinks[0]?.codeNodeId,
       ).toBe(calculatorId);
 
-      const reflection = app.reflect({
+      const reflection = await app.reflect({
         sessionId: "session-test-1",
         summary: "Implemented and verified numeric code intelligence.",
         clientName: "vitest",
@@ -116,7 +116,7 @@ describe("long-term memory lifecycle", () => {
       const forgottenId = reflection.data.learnings[0]?.id;
       expect(forgottenId).toBeTruthy();
       app.forget({ fragmentId: forgottenId, reason: "Covered by automated startup indexing" });
-      const forgottenRecall = app.recall({ query: "Run the indexer", tokenBudget: 1000 }) as Envelope<{
+      const forgottenRecall = await app.recall({ query: "Run the indexer", tokenBudget: 1000 }) as Envelope<{
         fragments: MemoryFragmentRecord[];
       }>;
       expect(forgottenRecall.data.fragments.some((memory) => memory.id === forgottenId)).toBe(false);
@@ -128,7 +128,7 @@ describe("long-term memory lifecycle", () => {
 
     app = new ContextMeshApp(root);
     try {
-      const afterRestart = app.recall({
+      const afterRestart = await app.recall({
         query: "synchronous numeric",
         includeAnchors: true,
         tokenBudget: 1000,
@@ -152,7 +152,7 @@ describe("long-term memory lifecycle", () => {
       }>;
       const oldSymbolId = before.data.results[0]?.id;
       expect(oldSymbolId).toBeTruthy();
-      const remembered = app.remember({
+      const remembered = await app.remember({
         content: "This note must remain attached after a source file rename.",
         topic: "provenance",
         type: "fact",
@@ -199,13 +199,13 @@ describe("long-term memory lifecycle", () => {
     }
   });
 
-  it("paginates deterministic recall results", () => {
+  it("paginates deterministic recall results", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);
     const app = new ContextMeshApp(root);
     try {
       for (const suffix of ["alpha", "beta", "gamma"]) {
-        app.remember({
+        await app.remember({
           content: `Pagination memory ${suffix}`,
           topic: "pagination",
           type: "fact",
@@ -214,11 +214,11 @@ describe("long-term memory lifecycle", () => {
           sourceSymbolIds: [],
         });
       }
-      const first = app.recall({ query: "Pagination memory", tokenBudget: 1000, limit: 1, offset: 0 }) as Envelope<{
+      const first = await app.recall({ query: "Pagination memory", tokenBudget: 1000, limit: 1, offset: 0 }) as Envelope<{
         fragments: MemoryFragmentRecord[];
         nextOffset: number | null;
       }>;
-      const second = app.recall({ query: "Pagination memory", tokenBudget: 1000, limit: 1, offset: 1 }) as Envelope<{
+      const second = await app.recall({ query: "Pagination memory", tokenBudget: 1000, limit: 1, offset: 1 }) as Envelope<{
         fragments: MemoryFragmentRecord[];
         nextOffset: number | null;
       }>;
@@ -230,13 +230,13 @@ describe("long-term memory lifecycle", () => {
     }
   });
 
-  it("expires TTL memories lazily and records the lifecycle event", () => {
+  it("expires TTL memories lazily and records the lifecycle event", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);
     let app: ContextMeshApp | null = new ContextMeshApp(root);
     const databasePath = path.join(root, ".contextmesh", "contextmesh.sqlite3");
     try {
-      const remembered = app.remember({
+      const remembered = await app.remember({
         content: "This temporary memory should expire.",
         topic: "ttl",
         type: "fact",
@@ -246,7 +246,7 @@ describe("long-term memory lifecycle", () => {
         sourceSymbolIds: [],
       }) as Envelope<{ fragment: MemoryFragmentRecord }>;
       const fragmentId = remembered.data.fragment.id;
-      app.close();
+      await app.close();
       app = null;
 
       const raw = new DatabaseSync(databasePath);
@@ -254,11 +254,11 @@ describe("long-term memory lifecycle", () => {
       raw.close();
 
       app = new ContextMeshApp(root);
-      const recall = app.recall({ query: "temporary memory", tokenBudget: 1000 }) as Envelope<{
+      const recall = await app.recall({ query: "temporary memory", tokenBudget: 1000 }) as Envelope<{
         fragments: MemoryFragmentRecord[];
       }>;
       expect(recall.data.fragments.some((fragment) => fragment.id === fragmentId)).toBe(false);
-      app.close();
+      await app.close();
       app = null;
 
       const audit = new DatabaseSync(databasePath, { readOnly: true });

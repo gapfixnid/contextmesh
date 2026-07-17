@@ -68,11 +68,21 @@ interface RankedMetric {
   recall: number;
   reciprocalRank: number;
   ndcg: number;
+  deterministic: boolean;
+}
+
+interface BaselineEvaluation {
+  baseline: { commit: string };
+  evaluation: {
+    code: { queries: RankedMetric[] };
+    context: { macroEvidenceCoverage: number; macroDuplicateWaste: number };
+  };
 }
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
 const FIXTURE_DIRECTORY = path.join(PROJECT_ROOT, "evaluation", "fixtures");
+const BASELINE_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "phase3-lexical-7b70d06.json");
 
 function argument(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -106,7 +116,7 @@ function percentile95(values: number[]): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0;
 }
 
-function rankedMetric(query: RankedQuery, returned: string[]): RankedMetric {
+function rankedMetric(query: RankedQuery, returned: string[], deterministic: boolean): RankedMetric {
   const grades = new Map(query.gold.map((entry) => [entry.key, entry.grade]));
   const relevant = query.gold.filter((entry) => entry.grade >= 2);
   const limited = returned.slice(0, query.k);
@@ -128,7 +138,12 @@ function rankedMetric(query: RankedQuery, returned: string[]): RankedMetric {
     recall: round(relevant.length === 0 ? 1 : relevantReturned / relevant.length),
     reciprocalRank: round(firstRelevant < 0 ? 0 : 1 / (firstRelevant + 1)),
     ndcg: round(ideal === 0 ? 1 : dcg / ideal),
+    deterministic,
   };
+}
+
+function average(values: number[]): number {
+  return round(values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length));
 }
 
 function aggregateRanked(metrics: RankedMetric[]): Record<string, number> {
@@ -197,6 +212,8 @@ async function measure(operation: () => Promise<void>): Promise<number> {
 }
 
 const selectedFixture = argument("--fixture", "acceptance-v1");
+const semanticModelPath = argument("--semantic-model", "");
+const lexicalBaseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineEvaluation;
 const { fixture, checksum } = loadFixture(selectedFixture);
 const corpus = fixture.corpus;
 if (!corpus) throw new Error("Evaluation corpus is missing");
@@ -221,7 +238,14 @@ for (const file of corpus.files) {
   writeFileSync(target, file.content, "utf8");
 }
 
-const app = new ContextMeshApp(root, ":memory:");
+let evaluationNow = new Date();
+const app = new ContextMeshApp(
+  root,
+  ":memory:",
+  semanticModelPath
+    ? { clock: () => evaluationNow, semantic: { modelPath: path.resolve(semanticModelPath) } }
+    : { clock: () => evaluationNow },
+);
 try {
   await app.indexWorkspace({ mode: "full" });
   const codeNodes = app.database.searchCode("", undefined, 10_000);
@@ -242,7 +266,17 @@ try {
     const result = await app.searchCode({ query: query.query, limit: query.k }) as Envelope<{
       results: CodeSearchResult[];
     }>;
-    codeMetrics.push(rankedMetric(query, result.data.results.map((node) => node.localKey)));
+    const signature = JSON.stringify(result.data.results.map((node) => [node.localKey, node.score]));
+    let deterministic = true;
+    for (let run = 1; run < 20; run += 1) {
+      const repeated = await app.searchCode({ query: query.query, limit: query.k }) as Envelope<{
+        results: CodeSearchResult[];
+      }>;
+      if (JSON.stringify(repeated.data.results.map((node) => [node.localKey, node.score])) !== signature) {
+        deterministic = false;
+      }
+    }
+    codeMetrics.push(rankedMetric(query, result.data.results.map((node) => node.localKey), deterministic));
   }
 
   const memoryMetrics: RankedMetric[] = [];
@@ -253,8 +287,28 @@ try {
       limit: query.k,
       tokenBudget: 4000,
     }) as Envelope<{ fragments: MemoryFragmentRecord[] }>;
+    const signature = JSON.stringify(result.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id));
+    let deterministic = true;
+    for (let run = 1; run < 20; run += 1) {
+      const repeated = await app.recall({
+        query: query.query,
+        includeAnchors: query.includeAnchors ?? false,
+        limit: query.k,
+        tokenBudget: 4000,
+      }) as Envelope<{ fragments: MemoryFragmentRecord[] }>;
+      if (
+        JSON.stringify(repeated.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id)) !==
+        signature
+      ) {
+        deterministic = false;
+      }
+    }
     memoryMetrics.push(
-      rankedMetric(query, result.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id)),
+      rankedMetric(
+        query,
+        result.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
+        deterministic,
+      ),
     );
   }
 
@@ -338,8 +392,133 @@ try {
   const status = await app.workspaceStatus() as Envelope<{
     counts: { files: number; nodes: number; memories: number };
   }>;
+
+  const inactiveIds: string[] = [];
+  const forgotten = await app.remember({
+    content: "Acceptance inactive forgotten marker cobalt-orchid.",
+    topic: "acceptance forgotten marker",
+    type: "fact",
+    keywords: ["cobalt-orchid"],
+    sourceSymbolIds: [],
+  }) as Envelope<{ fragment: MemoryFragmentRecord }>;
+  inactiveIds.push(forgotten.data.fragment.id);
+  app.forget({ fragmentId: forgotten.data.fragment.id, reason: "acceptance lifecycle gate" });
+  const superseded = await app.remember({
+    content: "Acceptance inactive superseded marker amber-river.",
+    topic: "acceptance superseded marker",
+    type: "decision",
+    keywords: ["amber-river"],
+    sourceSymbolIds: [],
+  }) as Envelope<{ fragment: MemoryFragmentRecord }>;
+  inactiveIds.push(superseded.data.fragment.id);
+  await app.remember({
+    content: "Replacement decision intentionally omits the prior marker.",
+    topic: "acceptance replacement",
+    type: "decision",
+    keywords: ["replacement"],
+    supersedesId: superseded.data.fragment.id,
+    sourceSymbolIds: [],
+  });
+  const expired = await app.remember({
+    content: "Acceptance inactive expired marker silver-pine.",
+    topic: "acceptance expired marker",
+    type: "fact",
+    keywords: ["silver-pine"],
+    ttlDays: 1,
+    sourceSymbolIds: [],
+  }) as Envelope<{ fragment: MemoryFragmentRecord }>;
+  inactiveIds.push(expired.data.fragment.id);
+  evaluationNow = new Date(evaluationNow.getTime() + 2 * 86_400_000);
+  const lifecycleQueries = ["cobalt-orchid", "amber-river", "silver-pine"];
+  const returnedInactiveIds = new Set<string>();
+  for (const query of lifecycleQueries) {
+    const recalled = await app.recall({ query, tokenBudget: 4000, limit: 100 }) as Envelope<{
+      fragments: MemoryFragmentRecord[];
+    }>;
+    for (const memory of recalled.data.fragments) {
+      if (inactiveIds.includes(memory.id)) returnedInactiveIds.add(memory.id);
+    }
+    const context = await app.getContext({
+      query,
+      include: ["memory"],
+      tokenBudget: 4000,
+    }) as Envelope<{ memories: MemoryFragmentRecord[] }>;
+    for (const memory of context.data.memories) {
+      if (inactiveIds.includes(memory.id)) returnedInactiveIds.add(memory.id);
+    }
+  }
   const gitCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" }).trim();
   const npmVersion = /(?:^|\s)npm\/([^\s]+)/.exec(process.env.npm_config_user_agent ?? "")?.[1] ?? "unknown";
+  const runtime = app.semantic?.runtimeDiagnostics() ?? null;
+  const baselineExact = lexicalBaseline.evaluation.code.queries.find((query) => query.id === "code-exact-authorize");
+  const currentExact = codeMetrics.find((query) => query.id === "code-exact-authorize");
+  const baselineChallenges = lexicalBaseline.evaluation.code.queries.filter((query) => query.id.startsWith("code-semantic-"));
+  const currentChallenges = codeMetrics.filter((query) => query.id.startsWith("code-semantic-"));
+  const baselineChallengeRecall = average(baselineChallenges.map((metric) => metric.recall));
+  const currentChallengeRecall = average(currentChallenges.map((metric) => metric.recall));
+  const baselineChallengeNdcg = average(baselineChallenges.map((metric) => metric.ndcg));
+  const currentChallengeNdcg = average(currentChallenges.map((metric) => metric.ndcg));
+  const macroEvidenceCoverage = round(
+    contextMetrics.reduce((sum, metric) => sum + Number(metric.evidenceCoverage), 0) /
+      Math.max(1, contextMetrics.length),
+  );
+  const macroDuplicateWaste = round(
+    contextMetrics.reduce((sum, metric) => sum + Number(metric.duplicateWaste), 0) /
+      Math.max(1, contextMetrics.length),
+  );
+  const deterministic = [
+    ...codeMetrics.map((metric) => metric.deterministic),
+    ...memoryMetrics.map((metric) => metric.deterministic),
+    ...contextMetrics.map((metric) => Boolean(metric.deterministic)),
+  ].every(Boolean);
+  const gateChecks = semanticModelPath
+    ? {
+        exactRecallAt5: { actual: currentExact?.recall ?? 0, minimum: 1, passed: currentExact?.recall === 1 },
+        exactMrrNoRegression: {
+          actual: currentExact?.reciprocalRank ?? 0,
+          baseline: baselineExact?.reciprocalRank ?? 0,
+          passed: (currentExact?.reciprocalRank ?? 0) >= (baselineExact?.reciprocalRank ?? 0),
+        },
+        semanticChallengeRecallAt10: {
+          actual: currentChallengeRecall,
+          baseline: baselineChallengeRecall,
+          minimum: 0.8,
+          minimumDelta: 0.15,
+          passed: currentChallengeRecall >= 0.8 && currentChallengeRecall - baselineChallengeRecall >= 0.15,
+        },
+        semanticChallengeNdcgAt10: {
+          actual: currentChallengeNdcg,
+          baseline: baselineChallengeNdcg,
+          minimumDelta: 0.08,
+          passed: currentChallengeNdcg - baselineChallengeNdcg >= 0.08,
+        },
+        contextEvidenceCoverageAt2000: {
+          actual: macroEvidenceCoverage,
+          baseline: lexicalBaseline.evaluation.context.macroEvidenceCoverage,
+          minimum: 0.8,
+          minimumDelta: 0.1,
+          passed:
+            macroEvidenceCoverage >= 0.8 &&
+            macroEvidenceCoverage - lexicalBaseline.evaluation.context.macroEvidenceCoverage >= 0.1,
+        },
+        inactiveMemoryReturned: { actual: returnedInactiveIds.size, maximum: 0, passed: returnedInactiveIds.size === 0 },
+        duplicateWaste: {
+          actual: macroDuplicateWaste,
+          baseline: lexicalBaseline.evaluation.context.macroDuplicateWaste,
+          maximum: 0.1,
+          minimumRelativeReduction:
+            lexicalBaseline.evaluation.context.macroDuplicateWaste >= 0.01 ? 0.3 : "not_applicable",
+          passed:
+            macroDuplicateWaste <= 0.1 &&
+            (lexicalBaseline.evaluation.context.macroDuplicateWaste < 0.01 ||
+              macroDuplicateWaste <= lexicalBaseline.evaluation.context.macroDuplicateWaste * 0.7),
+        },
+        deterministic20Runs: { actual: deterministic, expected: true, passed: deterministic },
+        warmSearchP95Ms: { actual: searchP95Ms, maximum: 250, passed: searchP95Ms <= 250 },
+        warmGetContextP95Ms: { actual: getContextP95Ms, maximum: 350, passed: getContextP95Ms <= 350 },
+      }
+    : {};
+  const gatesPassed = Object.values(gateChecks).every((check) => check.passed);
   const result = {
     schemaVersion: 1,
     fixture: {
@@ -349,9 +528,10 @@ try {
       sha256: checksum,
     },
     baseline: {
-      mode: "semantic-disabled",
+      mode: semanticModelPath ? "semantic-enabled" : "semantic-disabled",
       commit: gitCommit,
       generatedAt: new Date().toISOString(),
+      lexicalReferenceCommit: lexicalBaseline.baseline.commit,
     },
     environment: {
       platform: process.platform,
@@ -362,13 +542,13 @@ try {
       ramBytes: os.totalmem(),
       node: process.version,
       npm: npmVersion,
-      resolvedBackend: "disabled",
-      requestedSessionOptions: null,
-      requestedExecutionProviders: [],
-      effectiveExecutionProvider: "not_applicable",
-      effectiveIntraOpThreads: "not_applicable",
-      effectiveInterOpThreads: "not_applicable",
-      verificationMethod: ["semantic_disabled_control"],
+      resolvedBackend: runtime?.resolvedBackend ?? "disabled",
+      requestedSessionOptions: runtime?.requestedSessionOptions ?? null,
+      requestedExecutionProviders: runtime?.requestedExecutionProviders ?? [],
+      effectiveExecutionProvider: runtime?.effectiveExecutionProvider ?? "not_applicable",
+      effectiveIntraOpThreads: runtime?.effectiveIntraOpThreads ?? "not_applicable",
+      effectiveInterOpThreads: runtime?.effectiveInterOpThreads ?? "not_applicable",
+      verificationMethod: runtime?.verificationMethod ?? ["semantic_disabled_control"],
     },
     corpus: {
       checksum: sha256(corpus.files.map((file) => `${file.path}\0${file.content}`).join("\0")),
@@ -376,7 +556,14 @@ try {
       symbols: status.data.counts.nodes,
       memories: status.data.counts.memories,
       tokenEstimate: normalizedTokens(corpus.files.map((file) => file.content).join("\n")).length,
-      embeddingTokens: 0,
+      embeddingTokens: semanticModelPath
+        ? normalizedTokens(
+            [
+              ...corpus.files.map((file) => file.content),
+              ...corpus.memories.map((memory) => memory.draft.content),
+            ].join("\n"),
+          ).length
+        : 0,
     },
     evaluation: {
       relevanceThreshold: 2,
@@ -385,17 +572,11 @@ try {
       code: { aggregate: aggregateRanked(codeMetrics), queries: codeMetrics },
       memory: { aggregate: aggregateRanked(memoryMetrics), queries: memoryMetrics },
       context: {
-        macroEvidenceCoverage: round(
-          contextMetrics.reduce((sum, metric) => sum + Number(metric.evidenceCoverage), 0) /
-            Math.max(1, contextMetrics.length),
-        ),
+        macroEvidenceCoverage,
         microEvidenceCoverage: round(
           contextRelevantTotal === 0 ? 1 : contextRelevantCovered / contextRelevantTotal,
         ),
-        macroDuplicateWaste: round(
-          contextMetrics.reduce((sum, metric) => sum + Number(metric.duplicateWaste), 0) /
-            Math.max(1, contextMetrics.length),
-        ),
+        macroDuplicateWaste,
         queries: contextMetrics,
       },
     },
@@ -406,8 +587,14 @@ try {
       searchP95Ms,
       getContextP95Ms,
     },
+    gates: {
+      evaluated: Boolean(semanticModelPath),
+      passed: semanticModelPath ? gatesPassed : null,
+      checks: gateChecks,
+    },
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (semanticModelPath && !gatesPassed) throw new Error("Phase 4 acceptance quality gate failed");
 } finally {
   await app.close();
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });

@@ -48,6 +48,7 @@ function installNetworkDenyGuard(): () => void {
 const restoreNetwork = installNetworkDenyGuard();
 const started = performance.now();
 const backend = await createTransformersEmbeddingBackend(modelPathArgument());
+let report: Record<string, unknown> | null = null;
 try {
   const query = await backend.embedQuery("find code that retries a temporary upstream failure");
   const passages = await backend.embedPassages([
@@ -64,22 +65,18 @@ try {
   if (!Number.isFinite(relevantScore) || !Number.isFinite(unrelatedScore) || relevantScore <= unrelatedScore) {
     throw new Error(`Semantic smoke ranking failed: relevant=${relevantScore}, unrelated=${unrelatedScore}`);
   }
-  backend.diagnostics.verificationMethod.push("inference_smoke", "network_denied");
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        modelKey: APPROVED_MODEL_KEY,
-        dimensions: backend.dimensions,
-        loadAndInferenceMs: Math.round((performance.now() - started) * 100) / 100,
-        relevantScore,
-        unrelatedScore,
-        diagnostics: backend.diagnostics,
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  backend.diagnostics.verificationMethod.push("network_denied");
+  report = {
+    modelKey: APPROVED_MODEL_KEY,
+    dimensions: backend.dimensions,
+    loadAndInferenceMs: Math.round((performance.now() - started) * 100) / 100,
+    relevantScore,
+    unrelatedScore,
+    diagnostics: backend.diagnostics,
+  };
 } finally {
   await backend.dispose();
   restoreNetwork();
 }
+if (!report) throw new Error("Semantic smoke did not produce a report");
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
