@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "name": "phase4-development-v2",
+  "immutable": false,
+  "extends": "acceptance-v2",
+  "querySelection": {
+    "code": [
+      "code-v2-01",
+      "code-v2-02",
+      "code-v2-06",
+      "code-v2-07",
+      "code-v2-11",
+      "code-v2-12",
+      "code-v2-16",
+      "code-v2-21",
+      "code-v2-22",
+      "code-v2-26"
+    ],
+    "memory": [
+      "memory-v2-01",
+      "memory-v2-02",
+      "memory-v2-06",
+      "memory-v2-07",
+      "memory-v2-11",
+      "memory-v2-12",
+      "memory-v2-16",
+      "memory-v2-21",
+      "memory-v2-22",
+      "memory-v2-26"
+    ],
+    "context": [
+      "context-v2-01",
+      "context-v2-02",
+      "context-v2-06",
+      "context-v2-11",
+      "context-v2-12",
+      "context-v2-16"
+    ]
+  },
+  "queries": {
+    "code": [],
+    "memory": [],
+    "context": []
+  }
+}

@@ -1,0 +1,2057 @@
+{
+  "version": 2,
+  "name": "phase4-acceptance-v2",
+  "immutable": true,
+  "corpus": {
+    "files": [
+      {
+        "path": "src/case-01.ts",
+        "content": "/** Allows a privileged action only when the account carries the administrator role. */\nexport function authorizePrivilegedOperation(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-02.ts",
+        "content": "/** Shortens an actor identifier before a security outcome enters the compliance trail. */\nexport function redactAuditIdentity(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-03.ts",
+        "content": "/** Keeps a pricing response locally for five minutes before it becomes stale. */\nexport function cachePricingResponse(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-04.ts",
+        "content": "/** Repeats a gateway operation three times with exponentially increasing delays. */\nexport function retryTransientGateway(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-05.ts",
+        "content": "/** Replaces an aging encryption key while retaining the previous key for decryption. */\nexport function rotateEncryptionKeys(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-06.ts",
+        "content": "/** Rejects writes after a tenant consumes its configured storage allowance. */\nexport function enforceTenantQuota(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-07.ts",
+        "content": "/** Checks the signed digest on an incoming webhook before processing its payload. */\nexport function validateWebhookSignature(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-08.ts",
+        "content": "/** Queues a reminder seven days before an unpaid invoice becomes overdue. */\nexport function scheduleInvoiceReminder(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-09.ts",
+        "content": "/** Drops an event when its idempotency key was already processed. */\nexport function deduplicateEventDelivery(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-10.ts",
+        "content": "/** Canonicalizes whitespace and postal casing before an address is stored. */\nexport function normalizeCustomerAddress(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-11.ts",
+        "content": "/** Opens a circuit after consecutive downstream errors and probes recovery later. */\nexport function tripDependencyCircuit(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-12.ts",
+        "content": "/** Refreshes an access credential shortly before its expiry boundary. */\nexport function renewAccessCredential(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-13.ts",
+        "content": "/** Compares reserved stock with completed orders and releases abandoned holds. */\nexport function settleStockHolds(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-14.ts",
+        "content": "/** Replaces analytics user identifiers with stable non-reversible aliases. */\nexport function pseudonymizeTelemetryActor(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-15.ts",
+        "content": "/** Disables a feature toggle after its owner and review date are no longer valid. */\nexport function retireStaleToggle(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-16.ts",
+        "content": "/** Moves high-severity customer cases ahead of ordinary support work. */\nexport function escalateUrgentCase(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-17.ts",
+        "content": "/** Combines pending database mutations into one bounded transaction. */\nexport function flushWriteBundle(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-18.ts",
+        "content": "/** Restores the last healthy deployment when verification checks fail. */\nexport function revertBrokenRollout(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-19.ts",
+        "content": "/** Delays or rejects requests after a client exceeds its abuse allowance. */\nexport function paceHostileTraffic(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-20.ts",
+        "content": "/** Archives and removes sessions that remain inactive beyond retention. */\nexport function purgeDormantSession(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-21.ts",
+        "content": "/** Encrypts sensitive customer fields before durable storage. */\nexport function sealPersonalRecord(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-22.ts",
+        "content": "/** Returns a failed message to the queue with a later visibility time. */\nexport function requeueTemporaryMessage(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-23.ts",
+        "content": "/** Uses a merchant key to ensure the same charge is not captured twice. */\nexport function guardPaymentIdempotency(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-24.ts",
+        "content": "/** Chooses a responsive service replica using current health observations. */\nexport function routeHealthyReplica(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-25.ts",
+        "content": "/** Removes a cached document whenever its source version advances. */\nexport function evictChangedDocument(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-26.ts",
+        "content": "/** Checks an administrator grant before a protected maintenance command. */\nexport function requireAdminGrant(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-27.ts",
+        "content": "/** Records a decision code without persisting a full personal identifier. */\nexport function minimizeSecurityLog(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-28.ts",
+        "content": "/** Loads the latest verified snapshot and replays later journal entries. */\nexport function recoverSnapshotState(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-29.ts",
+        "content": "/** Prevents the scheduler from running more than the configured job count. */\nexport function capParallelWorkers(value: string): string {\n  return value.trim();\n}\n"
+      },
+      {
+        "path": "src/case-30.ts",
+        "content": "/** Notifies a customer before an automatic subscription renewal is charged. */\nexport function warnRenewalApproach(value: string): string {\n  return value.trim();\n}\n"
+      }
+    ],
+    "memories": [
+      {
+        "key": "memory:case-01",
+        "draft": {
+          "content": "Privileged actions require an administrator role.",
+          "topic": "administrator authorization",
+          "type": "fact",
+          "keywords": [
+            "administrator",
+            "authorization"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-01.ts:function:authorizePrivilegedOperation"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-02",
+        "draft": {
+          "content": "Audit records retain only a shortened actor identifier and outcome.",
+          "topic": "audit redaction",
+          "type": "decision",
+          "keywords": [
+            "audit",
+            "redaction"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-02.ts:function:redactAuditIdentity"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-03",
+        "draft": {
+          "content": "Pricing responses remain cached for five minutes.",
+          "topic": "pricing cache",
+          "type": "error",
+          "keywords": [
+            "pricing",
+            "cache"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-03.ts:function:cachePricingResponse"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-04",
+        "draft": {
+          "content": "Transient gateway failures use three exponential retries.",
+          "topic": "gateway retry",
+          "type": "preference",
+          "keywords": [
+            "gateway",
+            "retry"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-04.ts:function:retryTransientGateway"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-05",
+        "draft": {
+          "content": "Encryption keys rotate while the prior key remains available for reads.",
+          "topic": "key rotation",
+          "type": "procedure",
+          "keywords": [
+            "key",
+            "rotation"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-05.ts:function:rotateEncryptionKeys"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-06",
+        "draft": {
+          "content": "Tenant writes stop at the configured storage quota.",
+          "topic": "tenant quota",
+          "type": "relation",
+          "keywords": [
+            "tenant",
+            "quota"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-06.ts:function:enforceTenantQuota"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-07",
+        "draft": {
+          "content": "Incoming webhooks require a valid signed digest.",
+          "topic": "webhook security",
+          "type": "episode",
+          "keywords": [
+            "webhook",
+            "security"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-07.ts:function:validateWebhookSignature"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-08",
+        "draft": {
+          "content": "Unpaid invoices receive a reminder seven days before the due date.",
+          "topic": "invoice reminder",
+          "type": "fact",
+          "keywords": [
+            "invoice",
+            "reminder"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-08.ts:function:scheduleInvoiceReminder"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-09",
+        "draft": {
+          "content": "Processed idempotency keys prevent duplicate event delivery.",
+          "topic": "event deduplication",
+          "type": "decision",
+          "keywords": [
+            "event",
+            "deduplication"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-09.ts:function:deduplicateEventDelivery"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-10",
+        "draft": {
+          "content": "Customer addresses use canonical whitespace and postal casing.",
+          "topic": "address normalization",
+          "type": "error",
+          "keywords": [
+            "address",
+            "normalization"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-10.ts:function:normalizeCustomerAddress"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-11",
+        "draft": {
+          "content": "Repeated downstream errors open a circuit until a later recovery probe.",
+          "topic": "dependency circuit",
+          "type": "preference",
+          "keywords": [
+            "dependency",
+            "circuit"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-11.ts:function:tripDependencyCircuit"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-12",
+        "draft": {
+          "content": "Access credentials refresh shortly before expiration.",
+          "topic": "credential renewal",
+          "type": "procedure",
+          "keywords": [
+            "credential",
+            "renewal"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-12.ts:function:renewAccessCredential"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-13",
+        "draft": {
+          "content": "Abandoned order reservations are released during inventory reconciliation.",
+          "topic": "inventory reconciliation",
+          "type": "relation",
+          "keywords": [
+            "inventory",
+            "reconciliation"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-13.ts:function:settleStockHolds"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-14",
+        "draft": {
+          "content": "Telemetry uses stable pseudonyms instead of real user identifiers.",
+          "topic": "telemetry privacy",
+          "type": "episode",
+          "keywords": [
+            "telemetry",
+            "privacy"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-14.ts:function:pseudonymizeTelemetryActor"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-15",
+        "draft": {
+          "content": "Unowned feature toggles are retired after their review date.",
+          "topic": "feature flag hygiene",
+          "type": "fact",
+          "keywords": [
+            "feature",
+            "flag",
+            "hygiene"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-15.ts:function:retireStaleToggle"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-16",
+        "draft": {
+          "content": "Critical support cases receive priority over ordinary work.",
+          "topic": "support prioritization",
+          "type": "decision",
+          "keywords": [
+            "support",
+            "prioritization"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-16.ts:function:escalateUrgentCase"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-17",
+        "draft": {
+          "content": "Pending writes are flushed in a bounded database transaction.",
+          "topic": "write batching",
+          "type": "error",
+          "keywords": [
+            "write",
+            "batching"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-17.ts:function:flushWriteBundle"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-18",
+        "draft": {
+          "content": "Failed rollout verification restores the last healthy deployment.",
+          "topic": "deployment rollback",
+          "type": "preference",
+          "keywords": [
+            "deployment",
+            "rollback"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-18.ts:function:revertBrokenRollout"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-19",
+        "draft": {
+          "content": "Clients exceeding the abuse allowance are throttled.",
+          "topic": "abuse throttling",
+          "type": "procedure",
+          "keywords": [
+            "abuse",
+            "throttling"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-19.ts:function:paceHostileTraffic"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-20",
+        "draft": {
+          "content": "Dormant sessions are archived after the retention window.",
+          "topic": "session retention",
+          "type": "relation",
+          "keywords": [
+            "session",
+            "retention"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-20.ts:function:purgeDormantSession"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-21",
+        "draft": {
+          "content": "Sensitive customer fields are encrypted before storage.",
+          "topic": "personal data encryption",
+          "type": "episode",
+          "keywords": [
+            "personal",
+            "data",
+            "encryption"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-21.ts:function:sealPersonalRecord"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-22",
+        "draft": {
+          "content": "Temporary message failures are requeued with delayed visibility.",
+          "topic": "message recovery",
+          "type": "fact",
+          "keywords": [
+            "message",
+            "recovery"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-22.ts:function:requeueTemporaryMessage"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-23",
+        "draft": {
+          "content": "Merchant idempotency keys prevent duplicate payment capture.",
+          "topic": "payment idempotency",
+          "type": "decision",
+          "keywords": [
+            "payment",
+            "idempotency"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-23.ts:function:guardPaymentIdempotency"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-24",
+        "draft": {
+          "content": "Traffic is routed among replicas passing health checks.",
+          "topic": "healthy routing",
+          "type": "error",
+          "keywords": [
+            "healthy",
+            "routing"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-24.ts:function:routeHealthyReplica"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-25",
+        "draft": {
+          "content": "A source version change evicts the cached document.",
+          "topic": "cache invalidation",
+          "type": "preference",
+          "keywords": [
+            "cache",
+            "invalidation"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-25.ts:function:evictChangedDocument"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-26",
+        "draft": {
+          "content": "Protected maintenance commands require an administrator grant.",
+          "topic": "maintenance authorization",
+          "type": "procedure",
+          "keywords": [
+            "maintenance",
+            "authorization"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-26.ts:function:requireAdminGrant"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-27",
+        "draft": {
+          "content": "Security logs omit full personal identifiers.",
+          "topic": "security log minimization",
+          "type": "relation",
+          "keywords": [
+            "security",
+            "log",
+            "minimization"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-27.ts:function:minimizeSecurityLog"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-28",
+        "draft": {
+          "content": "Recovery restores a verified snapshot before replaying the journal.",
+          "topic": "snapshot recovery",
+          "type": "episode",
+          "keywords": [
+            "snapshot",
+            "recovery"
+          ],
+          "importance": 3,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-28.ts:function:recoverSnapshotState"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-29",
+        "draft": {
+          "content": "The scheduler enforces a maximum number of parallel workers.",
+          "topic": "worker concurrency",
+          "type": "fact",
+          "keywords": [
+            "worker",
+            "concurrency"
+          ],
+          "importance": 4,
+          "anchor": false,
+          "assertionStatus": "verified",
+          "sourceLocalKeys": [
+            "src/case-29.ts:function:capParallelWorkers"
+          ]
+        }
+      },
+      {
+        "key": "memory:case-30",
+        "draft": {
+          "content": "Customers are notified before automatic subscription renewal.",
+          "topic": "renewal notice",
+          "type": "decision",
+          "keywords": [
+            "renewal",
+            "notice"
+          ],
+          "importance": 5,
+          "anchor": false,
+          "assertionStatus": "observed",
+          "sourceLocalKeys": [
+            "src/case-30.ts:function:warnRenewalApproach"
+          ]
+        }
+      },
+      {
+        "key": "memory:distractor-31",
+        "draft": {
+          "content": "Privileged actions require an administrator role. This lower-priority observation restates the same operational intent.",
+          "topic": "administrator authorization observation",
+          "type": "preference",
+          "keywords": [
+            "administrator",
+            "authorization",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-32",
+        "draft": {
+          "content": "Audit records retain only a shortened actor identifier and outcome. This lower-priority observation restates the same operational intent.",
+          "topic": "audit redaction observation",
+          "type": "procedure",
+          "keywords": [
+            "audit",
+            "redaction",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-33",
+        "draft": {
+          "content": "Pricing responses remain cached for five minutes. This lower-priority observation restates the same operational intent.",
+          "topic": "pricing cache observation",
+          "type": "relation",
+          "keywords": [
+            "pricing",
+            "cache",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-34",
+        "draft": {
+          "content": "Transient gateway failures use three exponential retries. This lower-priority observation restates the same operational intent.",
+          "topic": "gateway retry observation",
+          "type": "episode",
+          "keywords": [
+            "gateway",
+            "retry",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-35",
+        "draft": {
+          "content": "Encryption keys rotate while the prior key remains available for reads. This lower-priority observation restates the same operational intent.",
+          "topic": "key rotation observation",
+          "type": "fact",
+          "keywords": [
+            "key",
+            "rotation",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-36",
+        "draft": {
+          "content": "Tenant writes stop at the configured storage quota. This lower-priority observation restates the same operational intent.",
+          "topic": "tenant quota observation",
+          "type": "decision",
+          "keywords": [
+            "tenant",
+            "quota",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-37",
+        "draft": {
+          "content": "Incoming webhooks require a valid signed digest. This lower-priority observation restates the same operational intent.",
+          "topic": "webhook security observation",
+          "type": "error",
+          "keywords": [
+            "webhook",
+            "security",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-38",
+        "draft": {
+          "content": "Unpaid invoices receive a reminder seven days before the due date. This lower-priority observation restates the same operational intent.",
+          "topic": "invoice reminder observation",
+          "type": "preference",
+          "keywords": [
+            "invoice",
+            "reminder",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-39",
+        "draft": {
+          "content": "Processed idempotency keys prevent duplicate event delivery. This lower-priority observation restates the same operational intent.",
+          "topic": "event deduplication observation",
+          "type": "procedure",
+          "keywords": [
+            "event",
+            "deduplication",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-40",
+        "draft": {
+          "content": "Customer addresses use canonical whitespace and postal casing. This lower-priority observation restates the same operational intent.",
+          "topic": "address normalization observation",
+          "type": "relation",
+          "keywords": [
+            "address",
+            "normalization",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-41",
+        "draft": {
+          "content": "Repeated downstream errors open a circuit until a later recovery probe. This lower-priority observation restates the same operational intent.",
+          "topic": "dependency circuit observation",
+          "type": "episode",
+          "keywords": [
+            "dependency",
+            "circuit",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      },
+      {
+        "key": "memory:distractor-42",
+        "draft": {
+          "content": "Access credentials refresh shortly before expiration. This lower-priority observation restates the same operational intent.",
+          "topic": "credential renewal observation",
+          "type": "fact",
+          "keywords": [
+            "credential",
+            "renewal",
+            "observation"
+          ],
+          "importance": 1,
+          "anchor": false,
+          "assertionStatus": "inferred",
+          "sourceLocalKeys": []
+        }
+      }
+    ]
+  },
+  "queries": {
+    "code": [
+      {
+        "id": "code-v2-01",
+        "gateGroup": "exact",
+        "query": "authorizePrivilegedOperation",
+        "k": 5,
+        "gold": [
+          {
+            "key": "src/case-01.ts:function:authorizePrivilegedOperation",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-02",
+        "gateGroup": "exact",
+        "query": "redactAuditIdentity",
+        "k": 5,
+        "gold": [
+          {
+            "key": "src/case-02.ts:function:redactAuditIdentity",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-03",
+        "gateGroup": "exact",
+        "query": "cachePricingResponse",
+        "k": 5,
+        "gold": [
+          {
+            "key": "src/case-03.ts:function:cachePricingResponse",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-04",
+        "gateGroup": "exact",
+        "query": "retryTransientGateway",
+        "k": 5,
+        "gold": [
+          {
+            "key": "src/case-04.ts:function:retryTransientGateway",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-05",
+        "gateGroup": "exact",
+        "query": "rotateEncryptionKeys",
+        "k": 5,
+        "gold": [
+          {
+            "key": "src/case-05.ts:function:rotateEncryptionKeys",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-06",
+        "gateGroup": "lexical",
+        "query": "tenant quota",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-06.ts:function:enforceTenantQuota",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-07",
+        "gateGroup": "lexical",
+        "query": "webhook security",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-07.ts:function:validateWebhookSignature",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-08",
+        "gateGroup": "lexical",
+        "query": "invoice reminder",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-08.ts:function:scheduleInvoiceReminder",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-09",
+        "gateGroup": "lexical",
+        "query": "event deduplication",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-09.ts:function:deduplicateEventDelivery",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-10",
+        "gateGroup": "lexical",
+        "query": "address normalization",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-10.ts:function:normalizeCustomerAddress",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-11",
+        "gateGroup": "semantic_challenge_en",
+        "query": "stop calling an unhealthy dependency until it recovers",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-11.ts:function:tripDependencyCircuit",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-12",
+        "gateGroup": "semantic_challenge_en",
+        "query": "obtain a fresh login credential before the current one becomes unusable",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-12.ts:function:renewAccessCredential",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-13",
+        "gateGroup": "semantic_challenge_en",
+        "query": "return inventory that was set aside for orders that never finished",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-13.ts:function:settleStockHolds",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-14",
+        "gateGroup": "semantic_challenge_en",
+        "query": "measure product usage without retaining a person's real identifier",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-14.ts:function:pseudonymizeTelemetryActor",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-15",
+        "gateGroup": "semantic_challenge_en",
+        "query": "remove an abandoned product switch that has passed its review date",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-15.ts:function:retireStaleToggle",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-16",
+        "gateGroup": "semantic_challenge_en",
+        "query": "put a critical customer problem at the front of the help queue",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-16.ts:function:escalateUrgentCase",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-17",
+        "gateGroup": "semantic_challenge_en",
+        "query": "send many small persistence changes together to reduce transaction overhead",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-17.ts:function:flushWriteBundle",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-18",
+        "gateGroup": "semantic_challenge_en",
+        "query": "return production to the previous working version after a bad release",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-18.ts:function:revertBrokenRollout",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-19",
+        "gateGroup": "semantic_challenge_en",
+        "query": "slow down a caller that sends too many harmful requests",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-19.ts:function:paceHostileTraffic",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-20",
+        "gateGroup": "semantic_challenge_en",
+        "query": "clean up login sessions nobody has used for a long time",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-20.ts:function:purgeDormantSession",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-21",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "저장된 개인정보를 암호화하여 보호하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-21.ts:function:sealPersonalRecord",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-22",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "일시적 오류가 난 메시지를 나중에 다시 처리하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-22.ts:function:requeueTemporaryMessage",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-23",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "반복 요청으로 같은 결제가 두 번 처리되지 않게 하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-23.ts:function:guardPaymentIdempotency",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-24",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "정상 상태인 서버로만 요청을 분산하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-24.ts:function:routeHealthyReplica",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-25",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "원본이 변경되면 캐시된 문서를 무효화하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-25.ts:function:evictChangedDocument",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-26",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "관리자 권한이 있어야 유지보수 명령을 실행하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-26.ts:function:requireAdminGrant",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-27",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "개인 식별자를 남기지 않고 보안 결정을 기록하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-27.ts:function:minimizeSecurityLog",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-28",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "장애 후 스냅샷을 사용해 데이터베이스를 복구하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-28.ts:function:recoverSnapshotState",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-29",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "동시에 실행되는 작업 수를 제한하는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-29.ts:function:capParallelWorkers",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "code-v2-30",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "구독 자동 갱신 전에 고객에게 미리 알리는 코드",
+        "k": 10,
+        "gold": [
+          {
+            "key": "src/case-30.ts:function:warnRenewalApproach",
+            "grade": 3
+          }
+        ]
+      }
+    ],
+    "memory": [
+      {
+        "id": "memory-v2-01",
+        "gateGroup": "exact",
+        "query": "administrator authorization",
+        "k": 5,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-01",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-02",
+        "gateGroup": "exact",
+        "query": "audit redaction",
+        "k": 5,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-02",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-03",
+        "gateGroup": "exact",
+        "query": "pricing cache",
+        "k": 5,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-03",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-04",
+        "gateGroup": "exact",
+        "query": "gateway retry",
+        "k": 5,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-04",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-05",
+        "gateGroup": "exact",
+        "query": "key rotation",
+        "k": 5,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-05",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-06",
+        "gateGroup": "lexical",
+        "query": "Tenant writes stop at the configured storage quota.",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-06",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-07",
+        "gateGroup": "lexical",
+        "query": "Incoming webhooks require a valid signed digest.",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-07",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-08",
+        "gateGroup": "lexical",
+        "query": "Unpaid invoices receive a reminder seven days before the due date.",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-08",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-09",
+        "gateGroup": "lexical",
+        "query": "Processed idempotency keys prevent duplicate event delivery.",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-09",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-10",
+        "gateGroup": "lexical",
+        "query": "Customer addresses use canonical whitespace and postal casing.",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-10",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-11",
+        "gateGroup": "semantic_challenge_en",
+        "query": "stop calling an unhealthy dependency until it recovers",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-11",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-12",
+        "gateGroup": "semantic_challenge_en",
+        "query": "obtain a fresh login credential before the current one becomes unusable",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-12",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-13",
+        "gateGroup": "semantic_challenge_en",
+        "query": "return inventory that was set aside for orders that never finished",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-13",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-14",
+        "gateGroup": "semantic_challenge_en",
+        "query": "measure product usage without retaining a person's real identifier",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-14",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-15",
+        "gateGroup": "semantic_challenge_en",
+        "query": "remove an abandoned product switch that has passed its review date",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-15",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-16",
+        "gateGroup": "semantic_challenge_en",
+        "query": "put a critical customer problem at the front of the help queue",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-16",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-17",
+        "gateGroup": "semantic_challenge_en",
+        "query": "send many small persistence changes together to reduce transaction overhead",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-17",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-18",
+        "gateGroup": "semantic_challenge_en",
+        "query": "return production to the previous working version after a bad release",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-18",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-19",
+        "gateGroup": "semantic_challenge_en",
+        "query": "slow down a caller that sends too many harmful requests",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-19",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-20",
+        "gateGroup": "semantic_challenge_en",
+        "query": "clean up login sessions nobody has used for a long time",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-20",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-21",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "저장된 개인정보를 암호화하여 보호하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-21",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-22",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "일시적 오류가 난 메시지를 나중에 다시 처리하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-22",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-23",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "반복 요청으로 같은 결제가 두 번 처리되지 않게 하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-23",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-24",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "정상 상태인 서버로만 요청을 분산하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-24",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-25",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "원본이 변경되면 캐시된 문서를 무효화하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-25",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-26",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "관리자 권한이 있어야 유지보수 명령을 실행하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-26",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-27",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "개인 식별자를 남기지 않고 보안 결정을 기록하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-27",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-28",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "장애 후 스냅샷을 사용해 데이터베이스를 복구하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-28",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-29",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "동시에 실행되는 작업 수를 제한하는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-29",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "memory-v2-30",
+        "gateGroup": "semantic_challenge_ko_en",
+        "query": "구독 자동 갱신 전에 고객에게 미리 알리는 코드",
+        "k": 10,
+        "includeAnchors": false,
+        "gold": [
+          {
+            "key": "memory:case-30",
+            "grade": 3
+          }
+        ]
+      }
+    ],
+    "context": [
+      {
+        "id": "context-v2-01",
+        "gateGroup": "context_en",
+        "query": "stop calling an unhealthy dependency until it recovers",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-11.ts:function:tripDependencyCircuit",
+            "grade": 3,
+            "span": {
+              "path": "src/case-11.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-11",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-02",
+        "gateGroup": "context_en",
+        "query": "obtain a fresh login credential before the current one becomes unusable",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-12.ts:function:renewAccessCredential",
+            "grade": 3,
+            "span": {
+              "path": "src/case-12.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-12",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-03",
+        "gateGroup": "context_en",
+        "query": "return inventory that was set aside for orders that never finished",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-13.ts:function:settleStockHolds",
+            "grade": 3,
+            "span": {
+              "path": "src/case-13.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-13",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-04",
+        "gateGroup": "context_en",
+        "query": "measure product usage without retaining a person's real identifier",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-14.ts:function:pseudonymizeTelemetryActor",
+            "grade": 3,
+            "span": {
+              "path": "src/case-14.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-14",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-05",
+        "gateGroup": "context_en",
+        "query": "remove an abandoned product switch that has passed its review date",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-15.ts:function:retireStaleToggle",
+            "grade": 3,
+            "span": {
+              "path": "src/case-15.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-15",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-06",
+        "gateGroup": "context_en",
+        "query": "put a critical customer problem at the front of the help queue",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-16.ts:function:escalateUrgentCase",
+            "grade": 3,
+            "span": {
+              "path": "src/case-16.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-16",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-07",
+        "gateGroup": "context_en",
+        "query": "send many small persistence changes together to reduce transaction overhead",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-17.ts:function:flushWriteBundle",
+            "grade": 3,
+            "span": {
+              "path": "src/case-17.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-17",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-08",
+        "gateGroup": "context_en",
+        "query": "return production to the previous working version after a bad release",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-18.ts:function:revertBrokenRollout",
+            "grade": 3,
+            "span": {
+              "path": "src/case-18.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-18",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-09",
+        "gateGroup": "context_en",
+        "query": "slow down a caller that sends too many harmful requests",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-19.ts:function:paceHostileTraffic",
+            "grade": 3,
+            "span": {
+              "path": "src/case-19.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-19",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-10",
+        "gateGroup": "context_en",
+        "query": "clean up login sessions nobody has used for a long time",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-20.ts:function:purgeDormantSession",
+            "grade": 3,
+            "span": {
+              "path": "src/case-20.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-20",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-11",
+        "gateGroup": "context_ko",
+        "query": "저장된 개인정보를 암호화하여 보호하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-21.ts:function:sealPersonalRecord",
+            "grade": 3,
+            "span": {
+              "path": "src/case-21.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-21",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-12",
+        "gateGroup": "context_ko",
+        "query": "일시적 오류가 난 메시지를 나중에 다시 처리하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-22.ts:function:requeueTemporaryMessage",
+            "grade": 3,
+            "span": {
+              "path": "src/case-22.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-22",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-13",
+        "gateGroup": "context_ko",
+        "query": "반복 요청으로 같은 결제가 두 번 처리되지 않게 하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-23.ts:function:guardPaymentIdempotency",
+            "grade": 3,
+            "span": {
+              "path": "src/case-23.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-23",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-14",
+        "gateGroup": "context_ko",
+        "query": "정상 상태인 서버로만 요청을 분산하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-24.ts:function:routeHealthyReplica",
+            "grade": 3,
+            "span": {
+              "path": "src/case-24.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-24",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-15",
+        "gateGroup": "context_ko",
+        "query": "원본이 변경되면 캐시된 문서를 무효화하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-25.ts:function:evictChangedDocument",
+            "grade": 3,
+            "span": {
+              "path": "src/case-25.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-25",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-16",
+        "gateGroup": "context_ko",
+        "query": "관리자 권한이 있어야 유지보수 명령을 실행하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-26.ts:function:requireAdminGrant",
+            "grade": 3,
+            "span": {
+              "path": "src/case-26.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-26",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-17",
+        "gateGroup": "context_ko",
+        "query": "개인 식별자를 남기지 않고 보안 결정을 기록하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-27.ts:function:minimizeSecurityLog",
+            "grade": 3,
+            "span": {
+              "path": "src/case-27.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-27",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-18",
+        "gateGroup": "context_ko",
+        "query": "장애 후 스냅샷을 사용해 데이터베이스를 복구하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-28.ts:function:recoverSnapshotState",
+            "grade": 3,
+            "span": {
+              "path": "src/case-28.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-28",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-19",
+        "gateGroup": "context_ko",
+        "query": "동시에 실행되는 작업 수를 제한하는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-29.ts:function:capParallelWorkers",
+            "grade": 3,
+            "span": {
+              "path": "src/case-29.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-29",
+            "grade": 3
+          }
+        ]
+      },
+      {
+        "id": "context-v2-20",
+        "gateGroup": "context_ko",
+        "query": "구독 자동 갱신 전에 고객에게 미리 알리는 코드",
+        "tokenBudget": 2000,
+        "gold": [
+          {
+            "key": "src/case-30.ts:function:warnRenewalApproach",
+            "grade": 3,
+            "span": {
+              "path": "src/case-30.ts",
+              "startLine": 1,
+              "endLine": 4
+            }
+          },
+          {
+            "key": "memory:case-30",
+            "grade": 3
+          }
+        ]
+      }
+    ]
+  }
+}
+
