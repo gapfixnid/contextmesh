@@ -9,6 +9,7 @@ import {
   APPROVED_MODEL_MANIFEST,
   canonicalJson,
   LOCAL_MODEL_MANIFEST_FILE,
+  modelMaterialFingerprint,
   SemanticModelValidationError,
   validateApprovedModelDirectory,
 } from "../src/semantic/manifest.js";
@@ -53,5 +54,16 @@ describe("approved semantic model contract", () => {
     const error = await validateApprovedModelDirectory(root).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(SemanticModelValidationError);
     expect(error).toMatchObject({ reason: "MANIFEST_INVALID" });
+  });
+
+  it("changes the material retry fingerprint when an approved file appears", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "contextmesh-model-fingerprint-"));
+    roots.push(root);
+    const missing = await modelMaterialFingerprint(root);
+    writeFileSync(path.join(root, LOCAL_MODEL_MANIFEST_FILE), "{}", "utf8");
+    const present = await modelMaterialFingerprint(root);
+    expect(missing).toMatch(/^[0-9a-f]{64}$/);
+    expect(present).toMatch(/^[0-9a-f]{64}$/);
+    expect(present).not.toBe(missing);
   });
 });

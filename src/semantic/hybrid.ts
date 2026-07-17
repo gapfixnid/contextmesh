@@ -6,6 +6,7 @@ import type {
 } from "../storage/database.js";
 import { fuseAndDiversify, type RankingItem } from "./ranking.js";
 import type { SemanticSearchResult } from "./service.js";
+import { APPROVED_MODEL_KEY } from "./manifest.js";
 
 const MAX_SOURCE_DEPTH = 10_100;
 
@@ -36,13 +37,16 @@ export function hybridCodeSearch(
     id: node.id,
     value: node,
     text: codeText(node),
-    ...(semanticById.get(node.id)?.vector ? { vector: semanticById.get(node.id)!.vector } : {}),
+    ...(semanticById.get(node.id)?.vector
+      ? { vector: semanticById.get(node.id)!.vector, vectorModelKey: APPROVED_MODEL_KEY }
+      : {}),
   }));
   const semanticItems: RankingItem<CodeSearchResult>[] = semanticNodes.map((node) => ({
     id: node.id,
     value: node,
     text: codeText(node),
     vector: semanticById.get(node.id)!.vector,
+    vectorModelKey: APPROVED_MODEL_KEY,
   }));
   const normalizedQuery = input.query.toLocaleLowerCase("en-US");
   const pinnedIds = lexical
@@ -84,13 +88,16 @@ export function hybridMemoryRecall(
     id: memory.id,
     value: memory,
     text: memoryText(memory),
-    ...(semanticById.get(memory.id)?.vector ? { vector: semanticById.get(memory.id)!.vector } : {}),
+    ...(semanticById.get(memory.id)?.vector
+      ? { vector: semanticById.get(memory.id)!.vector, vectorModelKey: APPROVED_MODEL_KEY }
+      : {}),
   }));
   const semanticItems: RankingItem<MemoryFragmentRecord>[] = semanticMemories.map((memory) => ({
     id: memory.id,
     value: memory,
     text: memoryText(memory),
     vector: semanticById.get(memory.id)!.vector,
+    vectorModelKey: APPROVED_MODEL_KEY,
   }));
   const query = input.query?.toLocaleLowerCase("en-US") ?? "";
   const pinnedIds = query

@@ -1,5 +1,17 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  rmdirSync,
+} from "node:fs";
+import os from "node:os";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +41,12 @@ import {
   type SemanticDocument,
 } from "../semantic/documents.js";
 import type { SemanticPlane } from "../semantic/backend.js";
+import { controlDigest } from "../semantic/control-json.js";
+import {
+  semanticFailureFingerprint,
+  type SemanticFailureClass,
+  type SemanticFailureDiagnostic,
+} from "../semantic/failures.js";
 import { validateEncodedVector, VECTOR_CODEC } from "../semantic/vector-codec.js";
 import {
   buildFtsQuery,
@@ -150,6 +168,36 @@ export interface MemoryCodeProvenance {
 
 export type SemanticStateStatus = "ready" | "partial" | "needs_backfill" | "unavailable";
 
+export interface SemanticReconciliationOwner {
+  ownerUuid: string;
+  ownerPid: number;
+  ownerHostname: string;
+}
+
+export interface SemanticReconciliationClaim extends SemanticReconciliationOwner {
+  plane: SemanticPlane;
+  attemptToken: string;
+  modelKey: string;
+  graphGeneration: number | null;
+  semanticRevision: number;
+  retryGeneration: number;
+  leaseExpiryEpoch: number;
+}
+
+export interface SemanticReconciliationClaimResult {
+  claim: SemanticReconciliationClaim | null;
+  reason: "acquired" | "completed" | "leased" | "backoff" | "state_changed" | "not_configured";
+}
+
+export interface SemanticClaimDiagnostics {
+  activeAttemptToken: string | null;
+  lastCompletedAttemptToken: string | null;
+  claimCount: number;
+  takeoverCount: number;
+  supersedeCount: number;
+  leaseExpiryEpoch: number | null;
+}
+
 export interface SemanticModelRegistration {
   modelKey: string;
   manifestDigest: string;
@@ -169,6 +217,14 @@ export interface SemanticStateRecord {
   validEmbeddingCount: number;
   coverage: number;
   lastError: string | null;
+  failureClass: SemanticFailureClass | "scale_limit" | null;
+  normalizedErrorCode: string | null;
+  failureFingerprint: string | null;
+  materialFingerprint: string | null;
+  diagnostics: Array<{ failureClass: string; code: string; detailCode: string }>;
+  retryGeneration: number;
+  retryCount: number;
+  nextRetryEpoch: number | null;
   updatedAt: string;
 }
 
@@ -180,6 +236,14 @@ export interface StoredSemanticEmbedding {
   vector: Uint8Array;
   dimensions: number;
   codec: string;
+}
+
+export interface HydratedSemanticMatrix {
+  matrix: Float32Array;
+  entityIdBytes: Uint8Array;
+  entityIdOffsets: Uint32Array;
+  sourceHashBytes: Uint8Array;
+  invalidRows: number;
 }
 
 export interface SemanticCommitEntry {
@@ -196,6 +260,9 @@ export interface SemanticPlaneCommit {
   entries: SemanticCommitEntry[];
   lastError?: string | null;
   unavailable?: boolean;
+  failure?: SemanticFailureDiagnostic;
+  diagnostics?: SemanticFailureDiagnostic[];
+  newVectorCount?: number;
 }
 
 export interface MemorySemanticCapture {
@@ -327,6 +394,14 @@ function mapSemanticState(row: SqlRow): SemanticStateRecord {
     validEmbeddingCount,
     coverage: eligibleEntityCount === 0 ? 1 : validEmbeddingCount / eligibleEntityCount,
     lastError: nullableString(row.last_error),
+    failureClass: nullableString(row.failure_class) as SemanticStateRecord["failureClass"],
+    normalizedErrorCode: nullableString(row.normalized_error_code),
+    failureFingerprint: nullableString(row.failure_fingerprint),
+    materialFingerprint: nullableString(row.material_fingerprint),
+    diagnostics: parseJson<SemanticStateRecord["diagnostics"]>(row.diagnostics_json, []),
+    retryGeneration: numberValue(row.retry_generation),
+    retryCount: numberValue(row.retry_count),
+    nextRetryEpoch: row.next_retry_epoch === null ? null : numberValue(row.next_retry_epoch),
     updatedAt: stringValue(row.updated_at),
   };
 }
@@ -395,18 +470,60 @@ export interface ContextMeshStorage {
   reflect(input: ReflectInput): ReflectResult;
   forget(input: ForgetInput): MemoryFragmentRecord;
   configureSemanticModel(model: SemanticModelRegistration): void;
-  backfillSemanticSourceHashes(): void;
+  backfillSemanticSourceHashes(repairMismatches?: boolean): void;
   getSemanticState(plane: SemanticPlane): SemanticStateRecord | null;
   getCurrentCodeSemanticDocuments(): SemanticDocument[];
   getCurrentMemorySemanticDocuments(timestamp?: string): SemanticDocument[];
+  iterateSemanticEmbeddings(
+    plane: SemanticPlane,
+    modelKey: string,
+    timestamp?: string,
+  ): Iterable<StoredSemanticEmbedding>;
+  hydrateSemanticMatrix(
+    plane: SemanticPlane,
+    modelKey: string,
+    dimensions: number,
+    timestamp?: string,
+  ): HydratedSemanticMatrix | null;
+  releaseTransientSemanticReadMemory(): void;
   loadSemanticEmbeddings(plane: SemanticPlane, modelKey: string, timestamp?: string): StoredSemanticEmbedding[];
   getEligibleSemanticEntityKeys(
     plane: SemanticPlane,
     timestamp?: string,
     filters?: { kinds?: CodeNodeKind[]; types?: MemoryType[]; topic?: string },
   ): Map<string, string>;
-  commitCodeSemanticBackfill(expectedGeneration: number, commit: SemanticPlaneCommit): boolean;
-  commitMemorySemanticBackfill(expectedRevision: number, commit: SemanticPlaneCommit, timestamp?: string): boolean;
+  updateSemanticFailure(
+    plane: SemanticPlane,
+    primary: SemanticFailureDiagnostic | null,
+    diagnostics: readonly SemanticFailureDiagnostic[],
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+    materialFingerprint?: string | null,
+  ): void;
+  claimSemanticReconciliation(
+    plane: SemanticPlane,
+    owner: SemanticReconciliationOwner,
+  ): SemanticReconciliationClaimResult;
+  heartbeatSemanticReconciliation(claim: SemanticReconciliationClaim): boolean;
+  completeSemanticReconciliationFailure(
+    claim: SemanticReconciliationClaim,
+    primary: SemanticFailureDiagnostic,
+    diagnostics: readonly SemanticFailureDiagnostic[],
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+  ): boolean;
+  getSemanticClaimDiagnostics(plane: SemanticPlane): SemanticClaimDiagnostics;
+  commitCodeSemanticBackfill(
+    expectedGeneration: number,
+    commit: SemanticPlaneCommit,
+    claim?: SemanticReconciliationClaim,
+  ): boolean;
+  commitMemorySemanticBackfill(
+    expectedRevision: number,
+    commit: SemanticPlaneCommit,
+    timestamp?: string,
+    claim?: SemanticReconciliationClaim,
+  ): boolean;
   casUpsertMemoryEmbedding(
     capture: MemorySemanticCapture,
     vector: Uint8Array,
@@ -971,6 +1088,238 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     return validEmbeddingCount > 0 ? "partial" : "needs_backfill";
   }
 
+  private databaseEpoch(): number {
+    return numberValue(this.db.prepare("SELECT unixepoch('now') AS epoch").get()?.epoch);
+  }
+
+  private databaseIso(): string {
+    return stringValue(
+      this.db.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AS timestamp").get()?.timestamp,
+    );
+  }
+
+  private ensureSemanticClaimRow(plane: SemanticPlane): void {
+    this.db
+      .prepare("INSERT OR IGNORE INTO semantic_reconciliation_claims(workspace_id, plane) VALUES (?, ?)")
+      .run(this.workspace.id, plane);
+  }
+
+  private semanticAttemptToken(state: SemanticStateRecord, retryGeneration = state.retryGeneration): string {
+    return controlDigest({
+      plane: state.plane,
+      modelKey: state.modelKey,
+      graphGeneration: state.graphGeneration,
+      semanticRevision: state.semanticRevision,
+      status: state.status,
+      eligibleEntityCount: state.eligibleEntityCount,
+      validEmbeddingCount: state.validEmbeddingCount,
+      failureClass: state.failureClass,
+      normalizedErrorCode: state.normalizedErrorCode,
+      failureFingerprint: state.failureFingerprint,
+      materialFingerprint: state.materialFingerprint,
+      retryGeneration,
+    });
+  }
+
+  /**
+   * Re-check time-sensitive eligibility and vector validity inside the same
+   * BEGIN IMMEDIATE transaction that will mint an attempt token. A changed
+   * snapshot is persisted but deliberately not claimed until the caller has
+   * rebuilt its detailed failure fingerprint from that new snapshot.
+   */
+  private refreshSemanticClaimCounts(plane: SemanticPlane, state: SemanticStateRecord): boolean {
+    if (!state.modelKey) return false;
+    const timestamp = this.databaseIso();
+    const eligible = this.getEligibleSemanticEntityKeys(plane, timestamp);
+    let valid = 0;
+    for (const row of this.loadSemanticEmbeddings(plane, state.modelKey, timestamp)) {
+      try {
+        if (row.codec !== VECTOR_CODEC || eligible.get(row.entityId) !== row.sourceHash) continue;
+        validateEncodedVector(row.vector, row.dimensions);
+        valid += 1;
+      } catch {
+        // Invalid rows cannot contribute to an attempt-token count.
+      }
+    }
+    if (eligible.size === state.eligibleEntityCount && valid === state.validEmbeddingCount) return false;
+    this.supersedeSemanticClaim(plane);
+    this.db
+      .prepare(
+        `UPDATE workspace_semantic_state SET status = ?, eligible_entity_count = ?,
+           valid_embedding_count = ?, updated_at = ?
+         WHERE workspace_id = ? AND plane = ? AND model_key = ?
+           AND graph_generation IS ? AND semantic_revision = ?`,
+      )
+      .run(
+        this.semanticStatusForFailure(state.failureClass, eligible.size, valid),
+        eligible.size,
+        valid,
+        this.nowIso(),
+        this.workspace.id,
+        plane,
+        state.modelKey,
+        state.graphGeneration,
+        state.semanticRevision,
+      );
+    return true;
+  }
+
+  private semanticStatusForFailure(
+    failureClass: SemanticFailureClass | null,
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+  ): SemanticStateStatus {
+    if (failureClass === "material_sticky" || failureClass === "scale_limit") return "unavailable";
+    if (failureClass === "runtime_retryable") return validEmbeddingCount > 0 ? "partial" : "unavailable";
+    return this.semanticStatusForCounts(eligibleEntityCount, validEmbeddingCount, false);
+  }
+
+  private safeDiagnostics(diagnostics: readonly SemanticFailureDiagnostic[]): string {
+    return JSON.stringify(
+      diagnostics.map((diagnostic) => ({
+        failureClass: diagnostic.failureClass,
+        code: diagnostic.code,
+        detailCode: diagnostic.detailCode,
+      })),
+    );
+  }
+
+  private applySemanticCommitDiagnostics(
+    plane: SemanticPlane,
+    commit: SemanticPlaneCommit,
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+  ): void {
+    if (!commit.failure) {
+      if (eligibleEntityCount === validEmbeddingCount) {
+        this.db
+          .prepare(
+            `UPDATE workspace_semantic_state SET failure_class = NULL, normalized_error_code = NULL,
+               failure_fingerprint = NULL, diagnostics_json = '[]', retry_count = 0, next_retry_epoch = NULL
+             WHERE workspace_id = ? AND plane = ?`,
+          )
+          .run(this.workspace.id, plane);
+      }
+      return;
+    }
+    const state = this.getSemanticState(plane);
+    if (!state) return;
+    const retryCount = commit.failure.failureClass === "runtime_retryable" ? state.retryCount + 1 : 0;
+    const delays = [30, 120, 600] as const;
+    const nextRetryEpoch = commit.failure.failureClass === "runtime_retryable"
+      ? this.databaseEpoch() + delays[Math.min(retryCount - 1, delays.length - 1)]!
+      : null;
+    this.db
+      .prepare(
+        `UPDATE workspace_semantic_state SET status = ?, last_error = ?, failure_class = ?,
+           normalized_error_code = ?, failure_fingerprint = ?, material_fingerprint = ?,
+           diagnostics_json = ?, retry_count = ?, next_retry_epoch = ?
+         WHERE workspace_id = ? AND plane = ?`,
+      )
+      .run(
+        this.semanticStatusForFailure(commit.failure.failureClass, eligibleEntityCount, validEmbeddingCount),
+        commit.failure.safeSummary,
+        commit.failure.failureClass,
+        commit.failure.code,
+        semanticFailureFingerprint(commit.failure),
+        commit.failure.materialFingerprint ?? state.materialFingerprint,
+        this.safeDiagnostics(commit.diagnostics ?? [commit.failure]),
+        retryCount,
+        nextRetryEpoch,
+        this.workspace.id,
+        plane,
+      );
+  }
+
+  private verifySemanticClaim(claim: SemanticReconciliationClaim, nowEpoch = this.databaseEpoch()): boolean {
+    const state = this.getSemanticState(claim.plane);
+    if (
+      !state ||
+      state.modelKey !== claim.modelKey ||
+      state.graphGeneration !== claim.graphGeneration ||
+      state.semanticRevision !== claim.semanticRevision ||
+      this.semanticAttemptToken(state) !== claim.attemptToken
+    ) {
+      return false;
+    }
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM semantic_reconciliation_claims
+         WHERE workspace_id = ? AND plane = ? AND active_attempt_token = ? AND owner_uuid = ?
+           AND target_model_key = ?
+           AND target_graph_generation IS ? AND target_semantic_revision = ?
+           AND lease_expiry_epoch > ?`,
+      )
+      .get(
+        this.workspace.id,
+        claim.plane,
+        claim.attemptToken,
+        claim.ownerUuid,
+        claim.modelKey,
+        claim.graphGeneration,
+        claim.semanticRevision,
+        nowEpoch,
+      );
+    return Boolean(row);
+  }
+
+  private completeSemanticClaim(
+    claim: SemanticReconciliationClaim,
+    outcome: "succeeded" | "failed",
+    stateMayHaveAdvanced = false,
+  ): boolean {
+    const nowEpoch = this.databaseEpoch();
+    if (!stateMayHaveAdvanced && !this.verifySemanticClaim(claim, nowEpoch)) return false;
+    if (stateMayHaveAdvanced) {
+      const active = this.db
+        .prepare(
+          `SELECT 1 FROM semantic_reconciliation_claims
+           WHERE workspace_id = ? AND plane = ? AND active_attempt_token = ? AND owner_uuid = ?
+             AND lease_expiry_epoch > ?`,
+        )
+        .get(this.workspace.id, claim.plane, claim.attemptToken, claim.ownerUuid, nowEpoch);
+      if (!active) return false;
+    }
+    const state = this.getSemanticState(claim.plane);
+    const completedToken = state ? this.semanticAttemptToken(state) : claim.attemptToken;
+    const result = this.db
+      .prepare(
+        `UPDATE semantic_reconciliation_claims SET
+           active_attempt_token = NULL, target_model_key = NULL, target_graph_generation = NULL,
+           target_semantic_revision = NULL, owner_uuid = NULL, owner_pid = NULL, owner_hostname = NULL,
+           heartbeat_epoch = NULL, lease_expiry_epoch = NULL,
+           last_completed_attempt_token = ?, completed_outcome = ?, completed_epoch = ?
+         WHERE workspace_id = ? AND plane = ? AND active_attempt_token = ? AND owner_uuid = ?`,
+      )
+      .run(
+        completedToken,
+        outcome,
+        nowEpoch,
+        this.workspace.id,
+        claim.plane,
+        claim.attemptToken,
+        claim.ownerUuid,
+      );
+    return Number(result.changes) === 1;
+  }
+
+  private supersedeSemanticClaim(plane: SemanticPlane, preservedAttemptToken?: string): void {
+    this.ensureSemanticClaimRow(plane);
+    const nowEpoch = this.databaseEpoch();
+    this.db
+      .prepare(
+        `UPDATE semantic_reconciliation_claims SET
+           last_completed_attempt_token = active_attempt_token, completed_outcome = 'superseded',
+           completed_epoch = ?, active_attempt_token = NULL, target_model_key = NULL,
+           target_graph_generation = NULL, target_semantic_revision = NULL, owner_uuid = NULL,
+           owner_pid = NULL, owner_hostname = NULL, heartbeat_epoch = NULL, lease_expiry_epoch = NULL,
+           supersede_count = supersede_count + 1
+         WHERE workspace_id = ? AND plane = ? AND active_attempt_token IS NOT NULL
+           AND (? IS NULL OR active_attempt_token <> ?)`,
+      )
+      .run(nowEpoch, this.workspace.id, plane, preservedAttemptToken ?? null, preservedAttemptToken ?? null);
+  }
+
   private semanticWorkspaceKey(): bigint {
     const digest = Buffer.from(sha256(this.workspace.id), "hex");
     return digest.readBigUInt64BE(0) & 0x7fff_ffff_ffff_ffffn;
@@ -1115,8 +1464,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            AND model_id = (SELECT model_id FROM semantic_models WHERE model_key = ?)
            AND (generation <> ? OR NOT EXISTS (
              SELECT 1 FROM code_nodes node
-             WHERE node.workspace_id = ? AND unhex(node.id) = semantic_embeddings.entity_key
-               AND unhex(node.semantic_source_hash) = semantic_embeddings.source_hash
+             WHERE node.workspace_id = ? AND node.id = lower(hex(semantic_embeddings.entity_key))
+               AND node.semantic_source_hash = lower(hex(semantic_embeddings.source_hash))
                AND node.generation = ?
            ))`,
       )
@@ -1128,8 +1477,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            WHERE workspace_id = ? AND generation = ? AND semantic_source_hash IS NOT NULL) AS eligible,
            (SELECT count(*) FROM semantic_embeddings embedding
             JOIN semantic_models model ON model.model_id = embedding.model_id
-            JOIN code_nodes node ON node.workspace_id = ? AND unhex(node.id) = embedding.entity_key
-              AND unhex(node.semantic_source_hash) = embedding.source_hash
+            JOIN code_nodes node ON node.workspace_id = ? AND node.id = lower(hex(embedding.entity_key))
+              AND node.semantic_source_hash = lower(hex(embedding.source_hash))
               AND node.generation = embedding.generation
             WHERE embedding.workspace_key = ? AND embedding.plane = 'code'
               AND model.model_key = ? AND embedding.generation = ?
@@ -1173,6 +1522,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         commit.lastError ?? null,
         timestamp,
       );
+    this.applySemanticCommitDiagnostics("code", commit, eligible, valid);
   }
 
   commitGraph(
@@ -1184,6 +1534,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   ): void {
     const timestamp = this.nowIso();
     this.transaction(() => {
+      this.supersedeSemanticClaim("code");
       this.db.prepare("DELETE FROM code_nodes_fts").run();
       this.db.prepare("DELETE FROM unresolved_refs WHERE workspace_id = ?").run(this.workspace.id);
       this.db.prepare("DELETE FROM code_edges WHERE workspace_id = ?").run(this.workspace.id);
@@ -1321,7 +1672,40 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            freshness_stale_at = NULL, freshness_reasons_json = '[]', updated_at = ? WHERE id = ?`,
         )
         .run(handle.generation, indexConfigHash, timestamp, this.workspace.id);
-      if (semantic) this.applyCodeSemanticCommit(handle.generation, semantic, timestamp);
+      if (semantic) {
+        this.applyCodeSemanticCommit(handle.generation, semantic, timestamp);
+      } else {
+        const semanticState = this.getSemanticState("code");
+        if (semanticState?.modelKey) {
+          this.db
+            .prepare(
+              `DELETE FROM semantic_embeddings
+               WHERE workspace_key = ? AND plane = 'code' AND generation <> ?`,
+            )
+            .run(this.semanticWorkspaceKey(), handle.generation);
+          const eligible = numberValue(
+            this.db
+              .prepare(
+                `SELECT count(*) AS count FROM code_nodes
+                 WHERE workspace_id = ? AND generation = ? AND semantic_source_hash IS NOT NULL`,
+              )
+              .get(this.workspace.id, handle.generation)?.count,
+          );
+          this.db
+            .prepare(
+              `UPDATE workspace_semantic_state SET graph_generation = ?,
+                 semantic_revision = semantic_revision + 1,
+                 status = CASE
+                   WHEN failure_class IN ('material_sticky', 'scale_limit') THEN 'unavailable'
+                   WHEN failure_class = 'runtime_retryable' THEN 'unavailable'
+                   ELSE 'needs_backfill'
+                 END,
+                 eligible_entity_count = ?, valid_embedding_count = 0, updated_at = ?
+               WHERE workspace_id = ? AND plane = 'code' AND model_key IS NOT NULL`,
+            )
+            .run(handle.generation, eligible, timestamp, this.workspace.id);
+        }
+      }
       this.db
         .prepare(
           `UPDATE index_runs SET status = ?, scanned_files = ?, changed_files = ?, deleted_files = ?,
@@ -1374,6 +1758,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         );
       const generation = this.getWorkspace().currentGeneration;
       for (const plane of ["code", "memory"] as const) {
+        this.ensureSemanticClaimRow(plane);
         const existing = this.getSemanticState(plane);
         if (!existing) {
           this.db
@@ -1387,6 +1772,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           continue;
         }
         if (existing.modelKey === model.modelKey) continue;
+        this.supersedeSemanticClaim(plane);
         this.db
           .prepare(
             `UPDATE workspace_semantic_state SET
@@ -1407,7 +1793,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     });
   }
 
-  backfillSemanticSourceHashes(): void {
+  backfillSemanticSourceHashes(repairMismatches = false): void {
     const timestamp = this.nowIso();
     this.transaction(() => {
       let codeChanges = 0;
@@ -1415,7 +1801,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         .prepare(
           `SELECT node.*, file.relative_path, file.content_hash AS file_content_hash, 0.0 AS score
            FROM code_nodes node LEFT JOIN source_files file ON file.id = node.file_id
-           WHERE node.workspace_id = ? ORDER BY node.id`,
+           WHERE node.workspace_id = ?${repairMismatches ? "" : " AND node.semantic_source_hash IS NULL"}
+           ORDER BY node.id`,
         )
         .all(this.workspace.id);
       const updateCode = this.db.prepare(
@@ -1429,7 +1816,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
       let memoryChanges = 0;
       const memoryRows = this.db
-        .prepare("SELECT * FROM memory_fragments WHERE workspace_id = ? ORDER BY id")
+        .prepare(
+          `SELECT * FROM memory_fragments WHERE workspace_id = ?${repairMismatches ? "" : " AND semantic_source_hash IS NULL"}
+           ORDER BY id`,
+        )
         .all(this.workspace.id);
       const updateMemory = this.db.prepare(
         "UPDATE memory_fragments SET semantic_source_hash = ? WHERE workspace_id = ? AND id = ? AND semantic_source_hash IS NOT ?",
@@ -1446,6 +1836,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         ["memory", memoryChanges],
       ] as const) {
         if (changes === 0) continue;
+        this.supersedeSemanticClaim(plane);
         this.db
           .prepare(
             `UPDATE workspace_semantic_state SET
@@ -1491,11 +1882,106 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       .map((row) => buildMemorySemanticDocument(mapMemory(row)));
   }
 
-  loadSemanticEmbeddings(
+  hydrateSemanticMatrix(
+    plane: SemanticPlane,
+    modelKey: string,
+    dimensions: number,
+    timestamp = this.nowIso(),
+  ): HydratedSemanticMatrix | null {
+    if (this.dbPath === ":memory:") return null;
+    const compiledHelper = fileURLToPath(new URL("../semantic/cache-hydration-child.js", import.meta.url));
+    const sourceHelper = compiledHelper.replace(/\.js$/u, ".ts");
+    const helperArguments = existsSync(compiledHelper)
+      ? [compiledHelper]
+      : existsSync(sourceHelper)
+        ? ["--import", "tsx", sourceHelper]
+        : null;
+    if (!helperArguments) throw new ContextMeshError("INTERNAL_ERROR", "Semantic hydration helper is missing");
+
+    const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "contextmesh-semantic-cache-"));
+    const outputPath = path.join(temporaryDirectory, "matrix.bin");
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          ...helperArguments,
+          this.dbPath,
+          this.workspace.id,
+          this.semanticWorkspaceKey().toString(),
+          plane,
+          modelKey,
+          timestamp,
+          String(dimensions),
+          outputPath,
+        ],
+        { timeout: 30_000, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+      );
+      const packed = readFileSync(outputPath);
+      const headerBytes = 48;
+      if (packed.byteLength < headerBytes || packed.subarray(0, 8).toString("ascii") !== "CMSH4C01") {
+        throw new ContextMeshError("INTERNAL_ERROR", "Semantic hydration helper returned an invalid header");
+      }
+      const packedDimensions = packed.readUInt32LE(8);
+      const capacity = packed.readUInt32LE(12);
+      const validCount = packed.readUInt32LE(16);
+      const invalidRows = packed.readUInt32LE(20);
+      const matrixOffset = packed.readUInt32LE(24);
+      const hashesOffset = packed.readUInt32LE(28);
+      const offsetsOffset = packed.readUInt32LE(32);
+      const idsOffset = packed.readUInt32LE(36);
+      const idBytes = packed.readUInt32LE(40);
+      const totalBytes = packed.readUInt32LE(44);
+      const expectedHashesOffset = headerBytes + capacity * dimensions * Float32Array.BYTES_PER_ELEMENT;
+      const expectedOffsetsOffset = expectedHashesOffset + capacity * 32;
+      const expectedIdsOffset = expectedOffsetsOffset + (capacity + 1) * Uint32Array.BYTES_PER_ELEMENT;
+      if (
+        packedDimensions !== dimensions ||
+        capacity > 50_000 ||
+        validCount > capacity ||
+        invalidRows > capacity ||
+        validCount + invalidRows > capacity ||
+        matrixOffset !== headerBytes ||
+        hashesOffset !== expectedHashesOffset ||
+        offsetsOffset !== expectedOffsetsOffset ||
+        idsOffset !== expectedIdsOffset ||
+        idsOffset + idBytes > totalBytes ||
+        totalBytes !== packed.byteLength ||
+        (packed.byteOffset + matrixOffset) % Float32Array.BYTES_PER_ELEMENT !== 0 ||
+        (packed.byteOffset + offsetsOffset) % Uint32Array.BYTES_PER_ELEMENT !== 0
+      ) {
+        throw new ContextMeshError("INTERNAL_ERROR", "Semantic hydration helper returned invalid metadata");
+      }
+      const matrix = new Float32Array(
+        packed.buffer,
+        packed.byteOffset + matrixOffset,
+        validCount * dimensions,
+      );
+      const sourceHashBytes = new Uint8Array(
+        packed.buffer,
+        packed.byteOffset + hashesOffset,
+        validCount * 32,
+      );
+      const entityIdOffsets = new Uint32Array(
+        packed.buffer,
+        packed.byteOffset + offsetsOffset,
+        validCount + 1,
+      );
+      if (entityIdOffsets[validCount] !== idBytes) {
+        throw new ContextMeshError("INTERNAL_ERROR", "Semantic hydration helper returned invalid entity offsets");
+      }
+      const entityIdBytes = new Uint8Array(packed.buffer, packed.byteOffset + idsOffset, idBytes);
+      return { matrix, sourceHashBytes, entityIdOffsets, entityIdBytes, invalidRows };
+    } finally {
+      rmSync(outputPath, { force: true });
+      if (existsSync(temporaryDirectory)) rmdirSync(temporaryDirectory);
+    }
+  }
+
+  *iterateSemanticEmbeddings(
     plane: SemanticPlane,
     modelKey: string,
     timestamp = this.nowIso(),
-  ): StoredSemanticEmbedding[] {
+  ): IterableIterator<StoredSemanticEmbedding> {
     const rows =
       plane === "code"
         ? this.db
@@ -1505,8 +1991,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
                       model.dimensions, model.vector_codec AS codec
                FROM semantic_embeddings embedding
                JOIN semantic_models model ON model.model_id = embedding.model_id
-               JOIN code_nodes node ON node.workspace_id = ? AND unhex(node.id) = embedding.entity_key
-                 AND unhex(node.semantic_source_hash) = embedding.source_hash
+               JOIN code_nodes node ON node.workspace_id = ? AND node.id = lower(hex(embedding.entity_key))
+                 AND node.semantic_source_hash = lower(hex(embedding.source_hash))
                  AND node.generation = embedding.generation
                JOIN workspaces workspace ON workspace.id = node.workspace_id
                  AND workspace.current_generation = node.generation
@@ -1514,7 +2000,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
                  AND model.model_key = ?
                ORDER BY embedding.entity_key`,
             )
-            .all(this.workspace.id, this.semanticWorkspaceKey(), modelKey)
+            .iterate(this.workspace.id, this.semanticWorkspaceKey(), modelKey)
         : this.db
             .prepare(
               `SELECT embedding.entity_key, embedding.source_hash, model.model_key,
@@ -1523,23 +2009,39 @@ export class ContextMeshDatabase implements ContextMeshStorage {
                FROM semantic_embeddings embedding
                JOIN semantic_models model ON model.model_id = embedding.model_id
                JOIN memory_fragments memory ON memory.workspace_id = ?
-                 AND CAST(memory.id AS BLOB) = embedding.entity_key
-                 AND unhex(memory.semantic_source_hash) = embedding.source_hash
+                 AND memory.id = CAST(embedding.entity_key AS TEXT)
+                 AND memory.semantic_source_hash = lower(hex(embedding.source_hash))
                WHERE embedding.workspace_key = ? AND embedding.plane = 'memory'
                  AND model.model_key = ? AND memory.state = 'active'
                  AND (memory.expires_at IS NULL OR memory.expires_at > ?)
                ORDER BY embedding.entity_key`,
             )
-            .all(this.workspace.id, this.semanticWorkspaceKey(), modelKey, timestamp);
-    return rows.map((row) => ({
-      entityId: this.semanticEntityId(plane, row.entity_key),
-      sourceHash: hexValue(row.source_hash),
-      modelKey: stringValue(row.model_key),
-      generation: row.generation === null ? null : numberValue(row.generation),
-      vector: row.vector instanceof Uint8Array ? row.vector : new Uint8Array(),
-      dimensions: numberValue(row.dimensions),
-      codec: stringValue(row.codec),
-    }));
+            .iterate(this.workspace.id, this.semanticWorkspaceKey(), modelKey, timestamp);
+    for (const row of rows) {
+      yield {
+        entityId: this.semanticEntityId(plane, row.entity_key),
+        sourceHash: hexValue(row.source_hash),
+        modelKey: stringValue(row.model_key),
+        generation: row.generation === null ? null : numberValue(row.generation),
+        vector: row.vector instanceof Uint8Array ? row.vector : new Uint8Array(),
+        dimensions: numberValue(row.dimensions),
+        codec: stringValue(row.codec),
+      };
+    }
+  }
+
+  loadSemanticEmbeddings(
+    plane: SemanticPlane,
+    modelKey: string,
+    timestamp = this.nowIso(),
+  ): StoredSemanticEmbedding[] {
+    return [...this.iterateSemanticEmbeddings(plane, modelKey, timestamp)];
+  }
+
+  releaseTransientSemanticReadMemory(): void {
+    // Hydration reads large BLOBs exactly once. Ask SQLite to return transient
+    // page/lookaside allocations after they have been copied into the warm matrix.
+    this.db.exec("PRAGMA shrink_memory");
   }
 
   getEligibleSemanticEntityKeys(
@@ -1574,6 +2076,262 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         ...(filters.topic ? [filters.topic] : []),
       );
     return new Map(rows.map((row) => [stringValue(row.id), stringValue(row.semantic_source_hash)]));
+  }
+
+  updateSemanticFailure(
+    plane: SemanticPlane,
+    primary: SemanticFailureDiagnostic | null,
+    diagnostics: readonly SemanticFailureDiagnostic[],
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+    materialFingerprint: string | null = primary?.materialFingerprint ?? null,
+  ): void {
+    const failureClass = primary?.failureClass ?? null;
+    const status = this.semanticStatusForFailure(failureClass, eligibleEntityCount, validEmbeddingCount);
+    const fingerprint = primary ? semanticFailureFingerprint(primary) : null;
+    this.db
+      .prepare(
+        `UPDATE workspace_semantic_state SET
+           status = ?, eligible_entity_count = ?, valid_embedding_count = ?,
+           last_error = ?, failure_class = ?, normalized_error_code = ?, failure_fingerprint = ?,
+           material_fingerprint = ?, diagnostics_json = ?,
+           retry_count = CASE WHEN ? = 'runtime_retryable' THEN retry_count ELSE 0 END,
+           next_retry_epoch = CASE WHEN ? = 'runtime_retryable' THEN next_retry_epoch ELSE NULL END,
+           updated_at = ?
+         WHERE workspace_id = ? AND plane = ?`,
+      )
+      .run(
+        status,
+        eligibleEntityCount,
+        validEmbeddingCount,
+        primary?.safeSummary ?? null,
+        failureClass,
+        primary?.code ?? null,
+        fingerprint,
+        materialFingerprint,
+        this.safeDiagnostics(diagnostics),
+        failureClass,
+        failureClass,
+        this.nowIso(),
+        this.workspace.id,
+        plane,
+      );
+  }
+
+  claimSemanticReconciliation(
+    plane: SemanticPlane,
+    owner: SemanticReconciliationOwner,
+  ): SemanticReconciliationClaimResult {
+    return this.transaction(() => {
+      this.ensureSemanticClaimRow(plane);
+      const state = this.getSemanticState(plane);
+      if (!state?.modelKey) return { claim: null, reason: "not_configured" };
+      if (this.refreshSemanticClaimCounts(plane, state)) {
+        return { claim: null, reason: "state_changed" };
+      }
+      const nowEpoch = this.databaseEpoch();
+      const retryDue =
+        state.failureClass === "runtime_retryable" &&
+        state.nextRetryEpoch !== null &&
+        state.nextRetryEpoch <= nowEpoch;
+      if (
+        state.failureClass === "runtime_retryable" &&
+        state.nextRetryEpoch !== null &&
+        !retryDue
+      ) {
+        return { claim: null, reason: "backoff" };
+      }
+      const retryGeneration = retryDue ? state.retryGeneration + 1 : state.retryGeneration;
+      const attemptToken = this.semanticAttemptToken(state, retryGeneration);
+      const row = this.db
+        .prepare("SELECT * FROM semantic_reconciliation_claims WHERE workspace_id = ? AND plane = ?")
+        .get(this.workspace.id, plane);
+      const activeToken = nullableString(row?.active_attempt_token);
+      const activeOwner = nullableString(row?.owner_uuid);
+      const leaseExpiry = row?.lease_expiry_epoch === null ? null : numberValue(row?.lease_expiry_epoch);
+      const completedToken = nullableString(row?.last_completed_attempt_token);
+      const makeClaim = (expiry: number): SemanticReconciliationClaim => ({
+        plane,
+        attemptToken,
+        modelKey: state.modelKey!,
+        graphGeneration: state.graphGeneration,
+        semanticRevision: state.semanticRevision,
+        retryGeneration,
+        leaseExpiryEpoch: expiry,
+        ...owner,
+      });
+
+      if (activeToken === attemptToken && activeOwner === owner.ownerUuid && completedToken !== attemptToken) {
+        const expiry = nowEpoch + 30;
+        const renewed = this.db
+          .prepare(
+            `UPDATE semantic_reconciliation_claims SET heartbeat_epoch = ?, lease_expiry_epoch = ?
+             WHERE workspace_id = ? AND plane = ? AND active_attempt_token = ? AND owner_uuid = ?`,
+          )
+          .run(nowEpoch, expiry, this.workspace.id, plane, attemptToken, owner.ownerUuid);
+        return Number(renewed.changes) === 1
+          ? { claim: makeClaim(expiry), reason: "acquired" }
+          : { claim: null, reason: "state_changed" };
+      }
+      if (activeToken && leaseExpiry !== null && leaseExpiry > nowEpoch) {
+        return { claim: null, reason: "leased" };
+      }
+      if (activeToken === attemptToken && completedToken !== attemptToken) {
+        const expiry = nowEpoch + 30;
+        const taken = this.db
+          .prepare(
+            `UPDATE semantic_reconciliation_claims SET
+               owner_uuid = ?, owner_pid = ?, owner_hostname = ?, heartbeat_epoch = ?, lease_expiry_epoch = ?,
+               takeover_count = takeover_count + 1
+             WHERE workspace_id = ? AND plane = ? AND active_attempt_token = ?
+               AND lease_expiry_epoch <= ? AND last_completed_attempt_token IS NOT ?`,
+          )
+          .run(
+            owner.ownerUuid,
+            owner.ownerPid,
+            owner.ownerHostname,
+            nowEpoch,
+            expiry,
+            this.workspace.id,
+            plane,
+            attemptToken,
+            nowEpoch,
+            attemptToken,
+          );
+        return Number(taken.changes) === 1
+          ? { claim: makeClaim(expiry), reason: "acquired" }
+          : { claim: null, reason: "state_changed" };
+      }
+      if (completedToken === attemptToken) return { claim: null, reason: "completed" };
+
+      const expiry = nowEpoch + 30;
+      const acquired = this.db
+        .prepare(
+          `UPDATE semantic_reconciliation_claims SET
+             active_attempt_token = ?, target_model_key = ?, target_graph_generation = ?,
+             target_semantic_revision = ?, owner_uuid = ?, owner_pid = ?, owner_hostname = ?,
+             heartbeat_epoch = ?, lease_expiry_epoch = ?, claim_count = claim_count + 1,
+             supersede_count = supersede_count + CASE WHEN active_attempt_token IS NULL THEN 0 ELSE 1 END
+           WHERE workspace_id = ? AND plane = ?
+             AND (active_attempt_token IS NULL OR lease_expiry_epoch <= ?)
+             AND last_completed_attempt_token IS NOT ?`,
+        )
+        .run(
+          attemptToken,
+          state.modelKey,
+          state.graphGeneration,
+          state.semanticRevision,
+          owner.ownerUuid,
+          owner.ownerPid,
+          owner.ownerHostname,
+          nowEpoch,
+          expiry,
+          this.workspace.id,
+          plane,
+          nowEpoch,
+          attemptToken,
+        );
+      if (Number(acquired.changes) !== 1) return { claim: null, reason: "state_changed" };
+      if (retryDue) {
+        const advanced = this.db
+          .prepare(
+            `UPDATE workspace_semantic_state SET retry_generation = ?, next_retry_epoch = NULL
+             WHERE workspace_id = ? AND plane = ? AND retry_generation = ?
+               AND next_retry_epoch IS NOT NULL AND next_retry_epoch <= ?`,
+          )
+          .run(retryGeneration, this.workspace.id, plane, state.retryGeneration, nowEpoch);
+        if (Number(advanced.changes) !== 1) throw new ContextMeshError("INTERNAL_ERROR", "Semantic retry claim lost its state fence");
+      }
+      return { claim: makeClaim(expiry), reason: "acquired" };
+    });
+  }
+
+  heartbeatSemanticReconciliation(claim: SemanticReconciliationClaim): boolean {
+    return this.transaction(() => {
+      const nowEpoch = this.databaseEpoch();
+      if (!this.verifySemanticClaim(claim, nowEpoch)) return false;
+      const expiry = nowEpoch + 30;
+      const result = this.db
+        .prepare(
+          `UPDATE semantic_reconciliation_claims SET heartbeat_epoch = ?, lease_expiry_epoch = ?
+           WHERE workspace_id = ? AND plane = ? AND active_attempt_token = ? AND owner_uuid = ?`,
+        )
+        .run(nowEpoch, expiry, this.workspace.id, claim.plane, claim.attemptToken, claim.ownerUuid);
+      return Number(result.changes) === 1;
+    });
+  }
+
+  completeSemanticReconciliationFailure(
+    claim: SemanticReconciliationClaim,
+    primary: SemanticFailureDiagnostic,
+    diagnostics: readonly SemanticFailureDiagnostic[],
+    eligibleEntityCount: number,
+    validEmbeddingCount: number,
+  ): boolean {
+    return this.transaction(() => {
+      const nowEpoch = this.databaseEpoch();
+      const current = this.getSemanticState(claim.plane);
+      if (!current || this.refreshSemanticClaimCounts(claim.plane, current)) return false;
+      if (
+        current.eligibleEntityCount !== eligibleEntityCount ||
+        current.validEmbeddingCount !== validEmbeddingCount
+      ) {
+        return false;
+      }
+      if (!this.verifySemanticClaim(claim, nowEpoch)) return false;
+      const state = this.getSemanticState(claim.plane);
+      if (!state) return false;
+      const retryCount = primary.failureClass === "runtime_retryable" ? state.retryCount + 1 : 0;
+      const delays = [30, 120, 600] as const;
+      const nextRetryEpoch = primary.failureClass === "runtime_retryable"
+        ? nowEpoch + delays[Math.min(retryCount - 1, delays.length - 1)]!
+        : null;
+      const status = this.semanticStatusForFailure(primary.failureClass, eligibleEntityCount, validEmbeddingCount);
+      this.db
+        .prepare(
+          `UPDATE workspace_semantic_state SET
+             status = ?, eligible_entity_count = ?, valid_embedding_count = ?, last_error = ?,
+             failure_class = ?, normalized_error_code = ?, failure_fingerprint = ?,
+             material_fingerprint = ?, diagnostics_json = ?, retry_count = ?, next_retry_epoch = ?, updated_at = ?
+           WHERE workspace_id = ? AND plane = ? AND model_key = ?
+             AND graph_generation IS ? AND semantic_revision = ?`,
+        )
+        .run(
+          status,
+          eligibleEntityCount,
+          validEmbeddingCount,
+          primary.safeSummary,
+          primary.failureClass,
+          primary.code,
+          semanticFailureFingerprint(primary),
+          primary.materialFingerprint ?? state.materialFingerprint,
+          this.safeDiagnostics(diagnostics),
+          retryCount,
+          nextRetryEpoch,
+          this.nowIso(),
+          this.workspace.id,
+          claim.plane,
+          claim.modelKey,
+          claim.graphGeneration,
+          claim.semanticRevision,
+        );
+      return this.completeSemanticClaim(claim, "failed", true);
+    });
+  }
+
+  getSemanticClaimDiagnostics(plane: SemanticPlane): SemanticClaimDiagnostics {
+    this.ensureSemanticClaimRow(plane);
+    const row = this.db
+      .prepare("SELECT * FROM semantic_reconciliation_claims WHERE workspace_id = ? AND plane = ?")
+      .get(this.workspace.id, plane);
+    return {
+      activeAttemptToken: nullableString(row?.active_attempt_token),
+      lastCompletedAttemptToken: nullableString(row?.last_completed_attempt_token),
+      claimCount: numberValue(row?.claim_count),
+      takeoverCount: numberValue(row?.takeover_count),
+      supersedeCount: numberValue(row?.supersede_count),
+      leaseExpiryEpoch: row?.lease_expiry_epoch === null ? null : numberValue(row?.lease_expiry_epoch),
+    };
   }
 
   getCodeNodesByIds(ids: string[]): CodeSearchResult[] {
@@ -1616,16 +2374,29 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     });
   }
 
-  commitCodeSemanticBackfill(expectedGeneration: number, commit: SemanticPlaneCommit): boolean {
+  commitCodeSemanticBackfill(
+    expectedGeneration: number,
+    commit: SemanticPlaneCommit,
+    claim?: SemanticReconciliationClaim,
+  ): boolean {
     const timestamp = this.nowIso();
     return this.transaction(() => {
       if (this.getWorkspace().currentGeneration !== expectedGeneration) return false;
+      if (claim && !this.verifySemanticClaim(claim)) return false;
       this.applyCodeSemanticCommit(expectedGeneration, commit, timestamp);
+      if (claim && !this.completeSemanticClaim(claim, commit.failure ? "failed" : "succeeded", true)) {
+        throw new ContextMeshError("INTERNAL_ERROR", "Semantic code claim could not be completed");
+      }
       return true;
     });
   }
 
-  private refreshMemorySemanticState(commit: SemanticPlaneCommit, timestamp: string): void {
+  private refreshMemorySemanticState(
+    commit: SemanticPlaneCommit,
+    timestamp: string,
+    preservedAttemptToken?: string,
+  ): void {
+    this.supersedeSemanticClaim("memory", preservedAttemptToken);
     this.db
       .prepare(
         `DELETE FROM semantic_embeddings
@@ -1634,8 +2405,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            AND NOT EXISTS (
              SELECT 1 FROM memory_fragments memory
              WHERE memory.workspace_id = ?
-               AND CAST(memory.id AS BLOB) = semantic_embeddings.entity_key
-               AND unhex(memory.semantic_source_hash) = semantic_embeddings.source_hash
+               AND memory.id = CAST(semantic_embeddings.entity_key AS TEXT)
+               AND memory.semantic_source_hash = lower(hex(semantic_embeddings.source_hash))
                AND memory.state = 'active'
                AND (memory.expires_at IS NULL OR memory.expires_at > ?)
            )`,
@@ -1650,8 +2421,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            (SELECT count(*) FROM semantic_embeddings embedding
             JOIN semantic_models model ON model.model_id = embedding.model_id
             JOIN memory_fragments memory ON memory.workspace_id = ?
-              AND CAST(memory.id AS BLOB) = embedding.entity_key
-              AND unhex(memory.semantic_source_hash) = embedding.source_hash
+              AND memory.id = CAST(embedding.entity_key AS TEXT)
+              AND memory.semantic_source_hash = lower(hex(embedding.source_hash))
             WHERE embedding.workspace_key = ? AND embedding.plane = 'memory'
               AND model.model_key = ? AND memory.state = 'active'
               AND (memory.expires_at IS NULL OR memory.expires_at > ?)
@@ -1685,23 +2456,33 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         this.workspace.id,
         commit.modelKey,
       );
+    this.applySemanticCommitDiagnostics("memory", commit, eligible, valid);
   }
 
   commitMemorySemanticBackfill(
     expectedRevision: number,
     commit: SemanticPlaneCommit,
     timestamp = this.nowIso(),
+    claim?: SemanticReconciliationClaim,
   ): boolean {
     return this.transaction(() => {
+      const eligibilityTimestamp = claim ? this.databaseIso() : timestamp;
       const state = this.getSemanticState("memory");
       if (!state || state.modelKey !== commit.modelKey || state.semanticRevision !== expectedRevision) return false;
+      if (claim && !this.verifySemanticClaim(claim)) return false;
       const check = this.db.prepare(
         `SELECT id FROM memory_fragments
          WHERE workspace_id = ? AND id = ? AND semantic_source_hash = ? AND state = 'active'
            AND (expires_at IS NULL OR expires_at > ?)`,
       );
       for (const entry of commit.entries) {
-        if (!check.get(this.workspace.id, entry.entityId, entry.sourceHash, timestamp)) return false;
+        if (!check.get(this.workspace.id, entry.entityId, entry.sourceHash, eligibilityTimestamp)) {
+          // Time-based expiry does not itself change semantic_revision. Fence the
+          // stale owner immediately so a new DB-time snapshot need not wait for
+          // the crash-recovery lease to expire.
+          if (claim) this.supersedeSemanticClaim("memory");
+          return false;
+        }
       }
       const existingIds = this.semanticEmbeddingIds("memory", commit.modelKey);
       for (const entry of commit.entries) {
@@ -1713,7 +2494,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           existingIds.get(this.semanticEntityMapKey("memory", entry.entityId)),
         );
       }
-      this.refreshMemorySemanticState(commit, timestamp);
+      this.refreshMemorySemanticState(commit, eligibilityTimestamp, claim?.attemptToken);
+      if (claim && !this.completeSemanticClaim(claim, commit.failure ? "failed" : "succeeded", true)) {
+        throw new ContextMeshError("INTERNAL_ERROR", "Semantic memory claim could not be completed");
+      }
       return true;
     });
   }

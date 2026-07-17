@@ -94,6 +94,8 @@ export class ContextMeshApp {
   readonly context: ContextAssembler;
   readonly semantic: SemanticService | null;
   private activeIndex: Promise<Envelope<unknown>> | null = null;
+  private closePromise: Promise<void> | null = null;
+  private closing = false;
 
   constructor(
     rootPath: string,
@@ -115,6 +117,7 @@ export class ContextMeshApp {
   }
 
   async initialize(autoIndex = false): Promise<void> {
+    this.assertOpen();
     if (!autoIndex) {
       await this.code.indexer.verifyStartup();
       return;
@@ -127,12 +130,21 @@ export class ContextMeshApp {
   }
 
   async close(): Promise<void> {
-    this.code.indexer.dispose();
-    try {
-      if (this.semantic) await this.semantic.dispose();
-    } finally {
-      this.database.close();
-    }
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
+    this.closePromise = (async () => {
+      this.code.indexer.dispose();
+      try {
+        if (this.semantic) await this.semantic.dispose();
+      } finally {
+        this.database.close();
+      }
+    })();
+    return this.closePromise;
+  }
+
+  private assertOpen(): void {
+    if (this.closing) throw new ContextMeshError("INTERNAL_ERROR", "ContextMeshApp is closing or closed");
   }
 
   private scope(generation = this.database.getWorkspace().currentGeneration): EnvelopeScope {
@@ -188,6 +200,7 @@ export class ContextMeshApp {
   }
 
   async indexWorkspace(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<IndexWorkspaceInput>(indexWorkspaceSchema, input);
     if (this.activeIndex) return this.activeIndex;
     this.activeIndex = Promise.resolve().then(async () => {
@@ -202,6 +215,7 @@ export class ContextMeshApp {
   }
 
   async workspaceStatus(): Promise<Envelope<unknown>> {
+    this.assertOpen();
     return this.envelope({ ...(await this.code.status()), semantic: this.semantic?.status() ?? { enabled: false } });
   }
 
@@ -237,6 +251,7 @@ export class ContextMeshApp {
   }
 
   async searchCode(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<SearchCodeInput>(searchCodeSchema, input);
     const sourceDepth = Math.min(10_100, parsed.offset + parsed.limit + 1);
     if (this.semantic) await this.code.reconcileSemantic();
@@ -279,6 +294,7 @@ export class ContextMeshApp {
   }
 
   async traceCode(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<TraceCodeInput>(traceCodeSchema, input);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const read = await this.graphReadAttempt(() => this.code.trace(parsed));
@@ -301,12 +317,14 @@ export class ContextMeshApp {
   }
 
   async remember(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<RememberInput>(rememberSchema, input);
     const result = await this.memory.remember(parsed);
     return this.envelope({ fragment: result.fragment, duplicate: result.duplicate }, { warnings: result.warnings });
   }
 
   async recall(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<RecallInput>(recallSchema, input);
     const scope = this.scope();
     const semanticQuery = [parsed.query ?? "", ...(parsed.keywords ?? [])].filter(Boolean).join(" ");
@@ -378,7 +396,6 @@ export class ContextMeshApp {
         tokenBudget: parsed.tokenBudget,
       });
     }
-
     let anchorOmitted = false;
     for (const candidate of anchorCandidates) {
       const tentative = { ...data, fragments: [...data.fragments, candidate] };
@@ -500,6 +517,7 @@ export class ContextMeshApp {
   }
 
   async getContext(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<GetContextInput>(getContextSchema, input);
     if (this.semantic && parsed.include.includes("code")) await this.code.reconcileSemantic();
     let semanticContext = this.semantic
@@ -605,12 +623,31 @@ export class ContextMeshApp {
     let data: ContextData = { query: "", code: [], memories: [], relationships: [] };
     const selectedTexts: string[] = [];
     const selectedPlanes = new Set<"code" | "memory">();
-    let warnings = [...new Set([...staleWarnings, QUERY_TRUNCATED_WARNING])];
+    // Reserve required diagnostics before candidate packing so a full token
+    // budget cannot silently displace SEMANTIC_PARTIAL/UNAVAILABLE.
+    let warnings = [...new Set([...staleWarnings, QUERY_TRUNCATED_WARNING, ...result.warnings])];
     if (!envelopeFits(scope, data, warnings, false, parsed.tokenBudget)) {
       throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum response envelope", {
         tokenBudget: parsed.tokenBudget,
       });
     }
+    const withReservedRelationships = (candidateData: ContextData): ContextData => {
+      const codeIds = new Set(candidateData.code.map((item) => item.id));
+      return {
+        ...candidateData,
+        relationships: result.relationships.filter(
+          (relationship) => codeIds.has(relationship.sourceId) && codeIds.has(relationship.targetId),
+        ),
+      };
+    };
+    const fitsWithReservedRelationships = (candidateData: ContextData): boolean =>
+      envelopeFits(
+        scope,
+        withReservedRelationships(candidateData),
+        warnings,
+        false,
+        parsed.tokenBudget,
+      );
 
     let candidateOmitted = false;
     for (const candidate of result.candidates) {
@@ -622,12 +659,16 @@ export class ContextMeshApp {
       if (candidate.kind === "code") {
         const code = candidate.value as ContextCodeItem;
         const candidateText = code.snippet ?? `${code.signature}\n${code.doc}`;
-        if (candidate.priority >= 2 && selectedTexts.some((selected) => nearDuplicateText(candidateText, selected))) {
+        if (
+          candidate.priority >= 2 &&
+          !candidate.hasVector &&
+          selectedTexts.some((selected) => nearDuplicateText(candidateText, selected))
+        ) {
           candidateOmitted = true;
           continue;
         }
         const tentative = { ...data, code: [...data.code, code] };
-        if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) {
+        if (fitsWithReservedRelationships(tentative)) {
           data = tentative;
           selectedTexts.push(candidateText);
           selectedPlanes.add("code");
@@ -647,12 +688,16 @@ export class ContextMeshApp {
           codeLinksOmitted: links.length,
         },
       };
-      if (candidate.priority >= 2 && selectedTexts.some((selected) => nearDuplicateText(prepared.content, selected))) {
+      if (
+        candidate.priority >= 2 &&
+        !candidate.hasVector &&
+        selectedTexts.some((selected) => nearDuplicateText(prepared.content, selected))
+      ) {
         candidateOmitted = true;
         continue;
       }
       const tentative = { ...data, memories: [...data.memories, prepared] };
-      if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) {
+      if (fitsWithReservedRelationships(tentative)) {
         data = tentative;
         selectedTexts.push(prepared.content);
         selectedPlanes.add("memory");
@@ -675,7 +720,7 @@ export class ContextMeshApp {
         const updatedMemories = [...data.memories];
         updatedMemories[memoryIndex] = updatedMemory;
         const tentative = { ...data, memories: updatedMemories };
-        if (envelopeFits(scope, tentative, warnings, false, parsed.tokenBudget)) {
+        if (fitsWithReservedRelationships(tentative)) {
           data = tentative;
           Object.assign(memory, updatedMemory);
         }
@@ -738,6 +783,7 @@ export class ContextMeshApp {
   }
 
   async reflect(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
     const parsed = validate<ReflectInput>(reflectSchema, input);
     const result = await this.memory.reflect(parsed);
     return this.envelope(
@@ -747,11 +793,13 @@ export class ContextMeshApp {
   }
 
   forget(input: unknown): Envelope<unknown> {
+    this.assertOpen();
     const parsed = validate<ForgetInput>(forgetSchema, input);
     return this.envelope({ fragment: this.memory.forget(parsed) });
   }
 
   doctor(): Envelope<unknown> {
+    this.assertOpen();
     return this.envelope({
       ...this.database.doctor(),
       semantic: this.semantic?.status() ?? { enabled: false },

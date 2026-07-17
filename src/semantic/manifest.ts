@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+
+import { canonicalControlJson, controlDigest, type ControlJsonValue } from "./control-json.js";
 
 export const LOCAL_MODEL_MANIFEST_FILE = "contextmesh-model-manifest.json";
 
@@ -123,20 +125,8 @@ export const APPROVED_MODEL_MANIFEST: ApprovedModelManifest = {
   ],
 };
 
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalValue(child)]),
-    );
-  }
-  return value;
-}
-
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalValue(value));
+  return canonicalControlJson(value as ControlJsonValue);
 }
 
 export const APPROVED_MODEL_KEY = createHash("sha256")
@@ -151,7 +141,8 @@ export class SemanticModelValidationError extends Error {
     | "MODEL_FILE_MISSING"
     | "MODEL_FILE_OUTSIDE_ROOT"
     | "MODEL_FILE_SIZE_MISMATCH"
-    | "MODEL_FILE_HASH_MISMATCH";
+    | "MODEL_FILE_HASH_MISMATCH"
+    | "MODULE_RESOLUTION";
 
   constructor(reason: SemanticModelValidationError["reason"], message: string) {
     super(message);
@@ -177,6 +168,82 @@ export interface ValidatedModelDirectory {
   manifestDigest: string;
   modelPath: string;
   verifiedFiles: Array<{ path: string; canonicalPath: string; sizeBytes: number; sha256: string }>;
+}
+
+interface MaterialFileIdentity {
+  expectedRelativePath: string;
+  expectedKind: "manifest" | "model_material";
+  exists: boolean;
+  canonicalPath: string | null;
+  sizeBytes: string | null;
+  mtimeNanoseconds: string | null;
+  device: string | null;
+  inode: string | null;
+  fileKind: "file" | "directory" | "symlink" | "other" | null;
+}
+
+async function materialFileIdentity(
+  rootPath: string,
+  expectedRelativePath: string,
+  expectedKind: MaterialFileIdentity["expectedKind"],
+): Promise<MaterialFileIdentity> {
+  const requestedPath = path.resolve(rootPath, expectedRelativePath);
+  try {
+    const link = await lstat(requestedPath, { bigint: true });
+    let canonicalPath: string | null = null;
+    let target = link;
+    try {
+      canonicalPath = await realpath(requestedPath);
+      target = await stat(canonicalPath, { bigint: true });
+    } catch {
+      // A broken link still has a stable link identity and an absent target.
+    }
+    const fileKind = link.isSymbolicLink()
+      ? "symlink"
+      : target.isFile()
+        ? "file"
+        : target.isDirectory()
+          ? "directory"
+          : "other";
+    return {
+      expectedRelativePath,
+      expectedKind,
+      exists: true,
+      canonicalPath,
+      sizeBytes: target.size.toString(),
+      mtimeNanoseconds: target.mtimeNs.toString(),
+      device: target.dev.toString(),
+      inode: target.ino.toString(),
+      fileKind,
+    };
+  } catch {
+    return {
+      expectedRelativePath,
+      expectedKind,
+      exists: false,
+      canonicalPath: null,
+      sizeBytes: null,
+      mtimeNanoseconds: null,
+      device: null,
+      inode: null,
+      fileKind: null,
+    };
+  }
+}
+
+/** Cheap retry identity. Full content hashes are still verified before loading. */
+export async function modelMaterialFingerprint(modelDirectory: string): Promise<string> {
+  const requestedRoot = path.resolve(modelDirectory);
+  const identities = await Promise.all([
+    materialFileIdentity(requestedRoot, LOCAL_MODEL_MANIFEST_FILE, "manifest"),
+    ...APPROVED_MODEL_MANIFEST.files.map((file) =>
+      materialFileIdentity(requestedRoot, file.path, "model_material"),
+    ),
+  ]);
+  return controlDigest({
+    requestedRoot,
+    files: identities,
+  } as unknown as ControlJsonValue);
 }
 
 export async function validateApprovedModelDirectory(modelDirectory: string): Promise<ValidatedModelDirectory> {

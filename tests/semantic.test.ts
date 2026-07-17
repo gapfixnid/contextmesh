@@ -8,7 +8,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ContextMeshApp } from "../src/app.js";
 import type { Envelope, MemoryFragmentRecord } from "../src/contracts.js";
 import type { EmbeddingBackend, SemanticRuntimeDiagnostics } from "../src/semantic/backend.js";
-import { APPROVED_MODEL_KEY, APPROVED_MODEL_MANIFEST } from "../src/semantic/manifest.js";
+import {
+  APPROVED_MODEL_KEY,
+  APPROVED_MODEL_MANIFEST,
+  SemanticModelValidationError,
+} from "../src/semantic/manifest.js";
 import type { CodeSearchResult } from "../src/storage/database.js";
 import { createFixtureWorkspace, removeFixtureWorkspace, writeWorkspaceFile } from "./helpers.js";
 
@@ -89,7 +93,7 @@ class FakeEmbeddingBackend implements EmbeddingBackend {
 }
 
 describe("semantic indexing and retrieval", () => {
-  it("migrates a Phase 3 database through 004 after creating a recoverable backup", async () => {
+  it("migrates a Phase 3 database directly through 005 after creating a recoverable backup", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);
     const databasePath = path.join(root, "phase3.sqlite3");
@@ -118,7 +122,7 @@ describe("semantic indexing and retrieval", () => {
 
     const app = new ContextMeshApp(root, databasePath);
     const doctor = app.doctor() as Envelope<{ schemaVersions: number[] }>;
-    expect(doctor.data.schemaVersions).toEqual([1, 2, 3, 4]);
+    expect(doctor.data.schemaVersions).toEqual([1, 2, 3, 4, 5]);
     expect(
       readdirSync(root).filter((name) => name.startsWith("phase3.sqlite3.backup-")),
     ).toHaveLength(1);
@@ -127,6 +131,80 @@ describe("semantic indexing and retrieval", () => {
     migrated.close();
     expect(pageSize.page_size).toBe(8192);
     await app.close();
+  });
+
+  it("migrates 004 to 005 without changing existing semantic BLOBs or state", async () => {
+    const root = createFixtureWorkspace();
+    workspaces.push(root);
+    const databasePath = path.join(root, "phase4-004.sqlite3");
+    const raw = new DatabaseSync(databasePath);
+    raw.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+    `);
+    for (const name of [
+      "001_initial.sql",
+      "002_workspace_index_config.sql",
+      "003_workspace_freshness.sql",
+      "004_semantic_retrieval.sql",
+    ]) {
+      raw.exec(readFileSync(path.join(process.cwd(), "migrations", name), "utf8"));
+      raw.prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)").run(
+        Number.parseInt(name.slice(0, 3), 10),
+        name,
+        "2026-01-01T00:00:00.000Z",
+      );
+    }
+    raw.prepare(
+      `INSERT INTO workspaces(
+         id, name, root_path, root_path_key, current_generation, created_at, updated_at,
+         index_config_hash, freshness_stale, freshness_reasons_json
+       ) VALUES ('workspace-004', 'fixture', ?, 'legacy-key', 1, ?, ?, NULL, 0, '[]')`,
+    ).run(root, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
+    raw.prepare(
+      `INSERT INTO semantic_models(model_id, model_key, manifest_digest, manifest_json, dimensions, vector_codec, created_at)
+       VALUES (1, 'legacy-model', 'legacy-digest', '{}', 2, 'f32le-v1', ?)`,
+    ).run("2026-01-01T00:00:00.000Z");
+    raw.prepare("INSERT INTO semantic_workspaces(workspace_key, workspace_id) VALUES (42, 'workspace-004')").run();
+    raw.prepare(
+      `INSERT INTO workspace_semantic_state(
+         workspace_id, plane, model_key, graph_generation, semantic_revision, status,
+         eligible_entity_count, valid_embedding_count, last_error, updated_at
+       ) VALUES ('workspace-004', 'code', 'legacy-model', 1, 7, 'partial', 2, 1, 'legacy-safe-error', ?)`,
+    ).run("2026-01-01T00:00:00.000Z");
+    const legacyVector = new Uint8Array([0, 0, 128, 63, 0, 0, 0, 0]);
+    raw.prepare(
+      `INSERT INTO semantic_embeddings(
+         embedding_id, workspace_key, plane, entity_key, source_hash, model_id, generation, vector
+       ) VALUES (9, 42, 'code', ?, ?, 1, 1, ?)`,
+    ).run(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2), legacyVector);
+    raw.close();
+
+    let app = new ContextMeshApp(root, databasePath);
+    expect((app.doctor() as Envelope<{ schemaVersions: number[] }>).data.schemaVersions).toEqual([1, 2, 3, 4, 5]);
+    await app.close();
+    app = new ContextMeshApp(root, databasePath);
+    await app.close();
+
+    const verified = new DatabaseSync(databasePath, { readOnly: true });
+    const stored = verified.prepare("SELECT vector FROM semantic_embeddings WHERE embedding_id = 9").get() as {
+      vector: Uint8Array;
+    };
+    const state = verified.prepare(
+      "SELECT semantic_revision, status, eligible_entity_count, valid_embedding_count, failure_class FROM workspace_semantic_state WHERE plane = 'code'",
+    ).get() as Record<string, unknown>;
+    verified.close();
+    expect([...stored.vector]).toEqual([...legacyVector]);
+    expect(state).toMatchObject({
+      semantic_revision: 7,
+      status: "partial",
+      eligible_entity_count: 2,
+      valid_embedding_count: 1,
+      failure_class: null,
+    });
   });
 
   it("indexes and reuses generation-stamped vectors without loading the backend on a ready no-op restart", async () => {
@@ -242,6 +320,47 @@ export interface NumericOperation {
     await app.close();
   });
 
+  it("latches an unchanged material failure without repeated factory, revision, or claim work", async () => {
+    const root = createFixtureWorkspace();
+    workspaces.push(root);
+    let factoryCalls = 0;
+    const app = new ContextMeshApp(root, undefined, {
+      semantic: {
+        modelPath: "unchanged-missing-model",
+        backendFactory: async () => {
+          factoryCalls += 1;
+          throw new SemanticModelValidationError(
+            "MODEL_FILE_HASH_MISMATCH",
+            "local path must remain private",
+          );
+        },
+      },
+    });
+    await app.indexWorkspace({ mode: "full" });
+    // The first request completes and records the DB attempt token. Subsequent
+    // requests are the configured-unavailable steady state measured by CI.
+    await app.searchCode({ query: "Calculator", limit: 5 });
+    const before = {
+      factoryCalls,
+      revision: app.database.getSemanticState("code")!.semanticRevision,
+      embeddings: app.database.loadSemanticEmbeddings("code", APPROVED_MODEL_KEY).length,
+      claims: app.database.getSemanticClaimDiagnostics("code").claimCount,
+    };
+    for (let index = 0; index < 20; index += 1) {
+      const result = await app.searchCode({ query: "Calculator", limit: 5 });
+      expect(result.warnings).toContainEqual(expect.stringContaining("SEMANTIC_UNAVAILABLE"));
+    }
+    expect({
+      factoryCalls,
+      revision: app.database.getSemanticState("code")!.semanticRevision,
+      embeddings: app.database.loadSemanticEmbeddings("code", APPROVED_MODEL_KEY).length,
+      claims: app.database.getSemanticClaimDiagnostics("code").claimCount,
+    }).toEqual(before);
+    const status = await app.workspaceStatus();
+    expect(JSON.stringify(status)).not.toContain(root);
+    await app.close();
+  });
+
   it("discards a remembered-memory embedding when forget wins the CAS race", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);
@@ -281,6 +400,46 @@ export interface NumericOperation {
     expect(remembered.data.fragment.id).toBe(pending!.id);
     expect(app.database.loadSemanticEmbeddings("memory", APPROVED_MODEL_KEY)).toHaveLength(0);
     expect(app.database.getSemanticState("memory")!.semanticRevision).toBe(revisionAfterForget);
+    await app.close();
+  });
+
+  it("rejects a bulk memory commit when DB time expires an entity during inference", async () => {
+    const root = createFixtureWorkspace();
+    workspaces.push(root);
+    let app = new ContextMeshApp(root);
+    const remembered = await app.remember({
+      content: "Expire this memory while bulk reconciliation is calculating it.",
+      topic: "bulk expiry fence",
+      type: "fact",
+      keywords: ["expiry", "bulk"],
+      ttlDays: 10,
+      sourceSymbolIds: [],
+    }) as Envelope<{ fragment: MemoryFragmentRecord }>;
+    const databasePath = app.database.dbPath;
+    await app.close();
+
+    const backend = new FakeEmbeddingBackend();
+    let releasePassage!: () => void;
+    backend.passageGate = new Promise<void>((resolve) => {
+      releasePassage = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      backend.passageStarted = resolve;
+    });
+    app = new ContextMeshApp(root, databasePath, {
+      semantic: { modelPath: "fake", backendFactory: async () => backend },
+    });
+    const recalling = app.recall({ query: "bulk expiry fence", tokenBudget: 1000 });
+    await started;
+    const raw = new DatabaseSync(databasePath);
+    raw.prepare("UPDATE memory_fragments SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+      .run(remembered.data.fragment.id);
+    raw.close();
+    releasePassage();
+    const result = await recalling as Envelope<{ fragments: MemoryFragmentRecord[] }>;
+    expect(result.data.fragments.some((memory) => memory.id === remembered.data.fragment.id)).toBe(false);
+    expect(app.database.loadSemanticEmbeddings("memory", APPROVED_MODEL_KEY)).toHaveLength(0);
+    expect(app.database.getSemanticClaimDiagnostics("memory").activeAttemptToken).toBeNull();
     await app.close();
   });
 

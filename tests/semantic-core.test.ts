@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { encodeEntityIds, scanNormalizedMatrix, writeSha256Hex } from "../src/semantic/exact-scan.js";
-import { fuseAndDiversify } from "../src/semantic/ranking.js";
+import {
+  fuseAndDiversify,
+  rankScore,
+  rankingRedundancy,
+  textRedundancy,
+} from "../src/semantic/ranking.js";
+import { PipelineCooldownError, PipelineLifecycle } from "../src/semantic/pipeline-lifecycle.js";
 import { MAX_EXACT_SCAN_ENTITIES, SemanticService } from "../src/semantic/service.js";
 import { decodeVector, encodeVector } from "../src/semantic/vector-codec.js";
 import type { ContextMeshStorage, SemanticStateRecord } from "../src/storage/database.js";
@@ -45,6 +51,29 @@ describe("hybrid ranking", () => {
     expect(ranked[0]).toMatchObject({ id: "b", relevance: 1, mmrScore: 1 });
     expect(ranked[1]?.relevance).toBeGreaterThan(0);
   });
+
+  it("uses the versioned short-text fallback and keeps distinct empty entities non-duplicates", () => {
+    expect(textRedundancy("", "", false)).toBe(0);
+    expect(textRedundancy("Alpha beta", "alpha beta", false)).toBe(1);
+    expect(textRedundancy("alpha beta", "alpha gamma", false)).toBeCloseTo(1 / 3);
+  });
+
+  it("uses cosine only for same-model vectors and lets pinned text remove a later vectorless duplicate", () => {
+    const left = { id: "left", value: null, text: "alpha beta", vector: new Float32Array([1, 0]), vectorModelKey: "a" };
+    const right = { id: "right", value: null, text: "alpha gamma", vector: new Float32Array([1, 0]), vectorModelKey: "b" };
+    expect(rankingRedundancy(left, right)).toBeCloseTo(1 / 3);
+    const ranked = fuseAndDiversify(
+      [{ weight: 1, items: [{ id: "duplicate", value: "duplicate", text: "alpha beta" }] }],
+      ["pinned"],
+      [{ id: "pinned", value: "pinned", text: "alpha beta" }],
+    );
+    expect(ranked.map((candidate) => candidate.id)).toEqual(["pinned"]);
+  });
+
+  it("uses a 1e-5 internal ordering bucket while preserving 1e-6 public score precision", () => {
+    expect(rankScore(0.500001)).toBe(rankScore(0.500004));
+    expect(rankScore(0.500006)).toBeGreaterThan(rankScore(0.500004));
+  });
 });
 
 describe("semantic exact scan", () => {
@@ -87,6 +116,14 @@ describe("semantic scale gate", () => {
       validEmbeddingCount: eligible.size,
       coverage: 1,
       lastError: null,
+      failureClass: null,
+      normalizedErrorCode: null,
+      failureFingerprint: null,
+      materialFingerprint: null,
+      diagnostics: [],
+      retryGeneration: 0,
+      retryCount: 0,
+      nextRetryEpoch: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
     let backendFactoryCalls = 0;
@@ -99,8 +136,8 @@ describe("semantic scale gate", () => {
       getSemanticState: () => state,
       getWorkspace: () => ({ currentGeneration: 1 }),
       getEligibleSemanticEntityKeys: () => eligible,
-      markSemanticUnavailable: (_plane: string, message: string) => {
-        unavailable = message;
+      updateSemanticFailure: (_plane: string, failure: { code: string }) => {
+        unavailable = failure.code;
       },
     } as unknown as ContextMeshStorage;
     const service = new SemanticService(storage, {
@@ -117,5 +154,42 @@ describe("semantic scale gate", () => {
     expect(backendFactoryCalls).toBe(0);
     expect(unavailable).toContain("SCALE_LIMIT");
     await service.dispose();
+  });
+});
+
+describe("semantic pipeline lifecycle", () => {
+  it("retires by generation and waits for all active references before disposal", async () => {
+    let now = 0;
+    let factoryCalls = 0;
+    const disposed: number[] = [];
+    const lifecycle = new PipelineLifecycle(
+      async () => {
+        const id = ++factoryCalls;
+        return { id, dispose: async () => void disposed.push(id) };
+      },
+      5_000,
+      () => now,
+    );
+    const first = await lifecycle.acquire();
+    const concurrent = await lifecycle.acquire();
+    expect(first.generation).toBe(concurrent.generation);
+    first.retire();
+    const firstRelease = first.release();
+    expect(disposed).toEqual([]);
+    await expect(lifecycle.acquire({ respectCooldown: true })).rejects.toBeInstanceOf(PipelineCooldownError);
+    await concurrent.release();
+    await firstRelease;
+    expect(disposed).toEqual([1]);
+
+    now = 5_001;
+    const replacement = await lifecycle.acquire({ respectCooldown: true });
+    expect(replacement.generation).toBeGreaterThan(first.generation);
+    expect(factoryCalls).toBe(2);
+    const closing = lifecycle.close();
+    expect(disposed).toEqual([1]);
+    await replacement.release();
+    await closing;
+    expect(disposed).toEqual([1, 2]);
+    await expect(lifecycle.acquire()).rejects.toThrow(/closed/);
   });
 });

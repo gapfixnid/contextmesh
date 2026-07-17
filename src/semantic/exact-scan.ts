@@ -1,4 +1,4 @@
-import { quantizeScore } from "./ranking.js";
+import { quantizeScore, rankScore } from "./ranking.js";
 
 export interface ExactScanRow {
   id: string;
@@ -141,7 +141,7 @@ export function scanNormalizedMatrix(
   }
   scored.sort(
     (left, right) =>
-      right.score - left.score || compareEncodedRows(entityIds, left.row, right.row),
+      rankScore(right.score) - rankScore(left.score) || compareEncodedRows(entityIds, left.row, right.row),
   );
   return {
     validEmbeddingCount: scored.length,

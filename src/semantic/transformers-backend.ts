@@ -11,9 +11,11 @@ import { AsyncMutex } from "../concurrency.js";
 import {
   APPROVED_MODEL_KEY,
   APPROVED_MODEL_MANIFEST,
+  SemanticModelValidationError,
   type ApprovedModelManifest,
   validateApprovedModelDirectory,
 } from "./manifest.js";
+import { SemanticRuntimeError } from "./failures.js";
 
 const require = createRequire(import.meta.url);
 let runtimeLoaded = false;
@@ -84,7 +86,16 @@ export class TransformersEmbeddingBackend implements EmbeddingBackend {
 
   private static async createExclusive(modelDirectory: string): Promise<TransformersEmbeddingBackend> {
     const validated = await validateApprovedModelDirectory(modelDirectory);
-    const ortModule = await import("onnxruntime-node");
+    const ortModule = await (async () => {
+      try {
+        return await import("onnxruntime-node");
+      } catch (error) {
+        throw new SemanticModelValidationError(
+          "MODULE_RESOLUTION",
+          `Could not resolve the approved onnxruntime-node module: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
     const instrumentedSession = ortModule.InferenceSession as unknown as {
       create: (...arguments_: unknown[]) => Promise<unknown>;
     };
@@ -103,17 +114,38 @@ export class TransformersEmbeddingBackend implements EmbeddingBackend {
     };
     let extractor: FeatureExtractionPipeline | null = null;
     try {
-      const { env, pipeline } = await import("@huggingface/transformers");
+      const transformers = await (async () => {
+        try {
+          return await import("@huggingface/transformers");
+        } catch (error) {
+          throw new SemanticModelValidationError(
+            "MODULE_RESOLUTION",
+            `Could not resolve the approved Transformers.js module: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      })();
+      const { env, pipeline } = transformers;
       runtimeLoaded = true;
-      const transformersVersion = resolvedPackageVersion("@huggingface/transformers", "@huggingface/transformers");
-      const ortVersion = resolvedPackageVersion("onnxruntime-node", "onnxruntime-node");
+      let transformersVersion: string;
+      let ortVersion: string;
+      try {
+        transformersVersion = resolvedPackageVersion("@huggingface/transformers", "@huggingface/transformers");
+        ortVersion = resolvedPackageVersion("onnxruntime-node", "onnxruntime-node");
+      } catch (error) {
+        throw new SemanticModelValidationError(
+          "MODULE_RESOLUTION",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       if (transformersVersion !== APPROVED_MODEL_MANIFEST.backend.version) {
-        throw new Error(
+        throw new SemanticModelValidationError(
+          "MODULE_RESOLUTION",
           `Transformers.js version mismatch: expected ${APPROVED_MODEL_MANIFEST.backend.version}, received ${transformersVersion}`,
         );
       }
       if (ortVersion !== APPROVED_MODEL_MANIFEST.backend.moduleVersion) {
-        throw new Error(
+        throw new SemanticModelValidationError(
+          "MODULE_RESOLUTION",
           `onnxruntime-node version mismatch: expected ${APPROVED_MODEL_MANIFEST.backend.moduleVersion}, received ${ortVersion}`,
         );
       }
@@ -121,7 +153,10 @@ export class TransformersEmbeddingBackend implements EmbeddingBackend {
         typeof ortModule.InferenceSession?.create !== "function" ||
         typeof ortModule.listSupportedBackends !== "function"
       ) {
-        throw new Error("onnxruntime-node did not expose the expected Node inference API");
+        throw new SemanticModelValidationError(
+          "MODULE_RESOLUTION",
+          "onnxruntime-node did not expose the expected Node inference API",
+        );
       }
 
       env.allowRemoteModels = false;
@@ -137,33 +172,49 @@ export class TransformersEmbeddingBackend implements EmbeddingBackend {
         ...APPROVED_MODEL_MANIFEST.backend.requestedSessionOptions,
         executionProviders: [...APPROVED_MODEL_MANIFEST.backend.requestedExecutionProviders],
       };
-      extractor = await pipeline("feature-extraction", validated.rootPath, {
-        local_files_only: true,
-        revision: APPROVED_MODEL_MANIFEST.model.revision,
-        device: "cpu",
-        dtype: "q8",
-        subfolder: "onnx",
-        model_file_name: "model",
-        session_options: requestedSessionOptions,
-      });
+      try {
+        extractor = await pipeline("feature-extraction", validated.rootPath, {
+          local_files_only: true,
+          revision: APPROVED_MODEL_MANIFEST.model.revision,
+          device: "cpu",
+          dtype: "q8",
+          subfolder: "onnx",
+          model_file_name: "model",
+          session_options: requestedSessionOptions,
+        });
+      } catch (error) {
+        throw new SemanticRuntimeError(
+          "SESSION_CREATION",
+          "TRANSFORMERS_PIPELINE_CREATE",
+          "Approved local model session creation failed",
+          { cause: error },
+        );
+      }
       if (extractor.tokenizer.model_max_length !== APPROVED_MODEL_MANIFEST.preprocessing.maxLength) {
-        throw new Error(
+        throw new SemanticModelValidationError(
+          "MANIFEST_INVALID",
           `Tokenizer maximum length mismatch: expected ${APPROVED_MODEL_MANIFEST.preprocessing.maxLength}, received ${String(extractor.tokenizer.model_max_length)}`,
         );
       }
       const modelFile = APPROVED_MODEL_MANIFEST.files.find(
         (file) => file.path === APPROVED_MODEL_MANIFEST.model.modelFile,
       );
-      if (!modelFile) throw new Error("Approved model manifest does not identify the ONNX file");
+      if (!modelFile) {
+        throw new SemanticModelValidationError("MANIFEST_INVALID", "Approved model manifest does not identify the ONNX file");
+      }
       if (observations.length !== 1) {
-        throw new Error(`Expected one observed ONNX session, received ${observations.length}`);
+        throw new SemanticModelValidationError(
+          "MANIFEST_INVALID",
+          `Expected one observed ONNX session, received ${observations.length}`,
+        );
       }
       const observation = observations[0]!;
       if (
         observation.canonicalModelPath !== validated.modelPath ||
         observation.modelSha256 !== modelFile.sha256
       ) {
-        throw new Error(
+        throw new SemanticModelValidationError(
+          "MODEL_FILE_HASH_MISMATCH",
           `Transformers.js selected an unapproved ONNX file: path=${observation.canonicalModelPath ?? "buffer"}, sha256=${observation.modelSha256 ?? "not_observable"}`,
         );
       }
@@ -176,7 +227,10 @@ export class TransformersEmbeddingBackend implements EmbeddingBackend {
         observedProviders.length !== 1 ||
         observedProviders[0] !== "cpu"
       ) {
-        throw new Error("Transformers.js did not pass the approved CPU session options to onnxruntime-node");
+        throw new SemanticModelValidationError(
+          "MANIFEST_INVALID",
+          "Transformers.js did not pass the approved CPU session options to onnxruntime-node",
+        );
       }
       return new TransformersEmbeddingBackend(extractor, {
         requestedSessionOptions: APPROVED_MODEL_MANIFEST.backend.requestedSessionOptions,
@@ -207,43 +261,61 @@ export class TransformersEmbeddingBackend implements EmbeddingBackend {
     }
   }
 
-  private async embed(texts: string[], prefix: string): Promise<Float32Array[]> {
-    if (this.disposed) throw new Error("Semantic embedding backend has been disposed");
+  private async embed(
+    texts: string[],
+    prefix: string,
+    failureCode: "QUERY_INFERENCE" | "PASSAGE_INFERENCE",
+  ): Promise<Float32Array[]> {
+    if (this.disposed) {
+      throw new SemanticRuntimeError(failureCode, "PIPELINE_DISPOSED", "Semantic embedding backend is retired");
+    }
     if (texts.length === 0) return [];
-    const output = await this.extractor(
-      texts.map((text) => `${prefix}${text.normalize("NFC")}`),
-      {
-        pooling: APPROVED_MODEL_MANIFEST.preprocessing.pooling,
-        normalize: APPROVED_MODEL_MANIFEST.preprocessing.normalize,
-      },
-    );
-    const expectedLength = texts.length * this.dimensions;
-    if (output.type !== "float32" || output.data.length !== expectedLength) {
-      throw new Error(
-        `Unexpected embedding output: type=${output.type}, length=${output.data.length}, expected=${expectedLength}`,
+    try {
+      const output = await this.extractor(
+        texts.map((text) => `${prefix}${text.normalize("NFC")}`),
+        {
+          pooling: APPROVED_MODEL_MANIFEST.preprocessing.pooling,
+          normalize: APPROVED_MODEL_MANIFEST.preprocessing.normalize,
+        },
+      );
+      const expectedLength = texts.length * this.dimensions;
+      if (output.type !== "float32" || output.data.length !== expectedLength) {
+        throw new Error(
+          `Unexpected embedding output: type=${output.type}, length=${output.data.length}, expected=${expectedLength}`,
+        );
+      }
+      const result: Float32Array[] = [];
+      const data = output.data as Float32Array;
+      for (let index = 0; index < texts.length; index += 1) {
+        const vector = data.slice(index * this.dimensions, (index + 1) * this.dimensions);
+        validateVector(vector, this.dimensions);
+        result.push(vector);
+      }
+      if (!this.diagnostics.verificationMethod.includes("inference_smoke")) {
+        this.diagnostics.verificationMethod.push("inference_smoke");
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof SemanticRuntimeError) throw error;
+      throw new SemanticRuntimeError(
+        failureCode,
+        "TRANSFORMERS_FEATURE_EXTRACTION",
+        `${failureCode} failed`,
+        { cause: error },
       );
     }
-    const result: Float32Array[] = [];
-    const data = output.data as Float32Array;
-    for (let index = 0; index < texts.length; index += 1) {
-      const vector = data.slice(index * this.dimensions, (index + 1) * this.dimensions);
-      validateVector(vector, this.dimensions);
-      result.push(vector);
-    }
-    if (!this.diagnostics.verificationMethod.includes("inference_smoke")) {
-      this.diagnostics.verificationMethod.push("inference_smoke");
-    }
-    return result;
   }
 
   async embedQuery(text: string): Promise<Float32Array> {
-    const vector = (await this.embed([text], APPROVED_MODEL_MANIFEST.preprocessing.queryPrefix))[0];
+    const vector = (
+      await this.embed([text], APPROVED_MODEL_MANIFEST.preprocessing.queryPrefix, "QUERY_INFERENCE")
+    )[0];
     if (!vector) throw new Error("Query embedding did not return a vector");
     return vector;
   }
 
   embedPassages(texts: string[]): Promise<Float32Array[]> {
-    return this.embed(texts, APPROVED_MODEL_MANIFEST.preprocessing.passagePrefix);
+    return this.embed(texts, APPROVED_MODEL_MANIFEST.preprocessing.passagePrefix, "PASSAGE_INFERENCE");
   }
 
   async dispose(): Promise<void> {
