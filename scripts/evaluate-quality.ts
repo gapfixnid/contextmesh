@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -10,6 +10,18 @@ import { ContextMeshApp } from "../src/app.js";
 import type { Envelope, MemoryFragmentRecord } from "../src/contracts.js";
 import type { ContextCodeItem, ContextMemoryItem } from "../src/context/assembler.js";
 import type { CodeSearchResult } from "../src/storage/database.js";
+import {
+  addBaselineDigest,
+  canonicalControlJson,
+  metricsForGateGroup,
+  requiredChallengeRecall,
+  requiredNdcg,
+  runEvaluationContractSelfTest,
+  serializeCanonicalArtifact,
+  sha256Bytes,
+  sourceDateEpochIso,
+  type CanonicalJsonValue,
+} from "./evaluation-contract.js";
 
 interface GoldEntry {
   key: string;
@@ -21,6 +33,7 @@ interface RankedQuery {
   id: string;
   query: string;
   k: number;
+  gateGroup?: string;
   gold: GoldEntry[];
   includeAnchors?: boolean;
 }
@@ -29,6 +42,7 @@ interface ContextQuery {
   id: string;
   query: string;
   tokenBudget: number;
+  gateGroup?: string;
   gold: GoldEntry[];
 }
 
@@ -62,6 +76,7 @@ interface EvaluationFixture {
 
 interface RankedMetric {
   id: string;
+  gateGroup: string;
   returned: string[];
   relevantReturned: number;
   relevantTotal: number;
@@ -72,9 +87,10 @@ interface RankedMetric {
 }
 
 interface BaselineEvaluation {
-  baseline: { commit: string };
+  baseline: { commit?: string; phase3SourceCommit?: string };
   evaluation: {
     code: { queries: RankedMetric[] };
+    memory?: { queries: RankedMetric[] };
     context: { macroEvidenceCoverage: number; macroDuplicateWaste: number };
   };
 }
@@ -93,6 +109,38 @@ function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function legacyGateGroup(id: string): string {
+  if (id.includes("exact")) return "exact";
+  if (id.includes("semantic")) return "semantic_challenge_en";
+  return "lexical";
+}
+
+function validateV2Fixture(fixture: EvaluationFixture): void {
+  if (fixture.version !== 2 || !fixture.immutable || !fixture.corpus) {
+    throw new Error("Acceptance-v2 must be immutable, version 2, and contain a corpus");
+  }
+  const { files, memories } = fixture.corpus;
+  if (files.length !== 30 || memories.length !== 42) {
+    throw new Error(`Acceptance-v2 corpus must contain 30 files and 42 memories; received ${files.length}/${memories.length}`);
+  }
+  if (fixture.queries.code.length !== 30 || fixture.queries.memory.length !== 30 || fixture.queries.context.length !== 20) {
+    throw new Error("Acceptance-v2 must contain 30 code, 30 memory, and 20 context queries");
+  }
+  for (const [plane, queries] of [
+    ["code", fixture.queries.code],
+    ["memory", fixture.queries.memory],
+    ["context", fixture.queries.context],
+  ] as const) {
+    if (queries.some((query) => !query.gateGroup)) throw new Error(`Every acceptance-v2 ${plane} query needs gateGroup`);
+  }
+  for (const plane of [fixture.queries.code, fixture.queries.memory]) {
+    const challengeCount = plane.filter((query) =>
+      query.gateGroup === "semantic_challenge_en" || query.gateGroup === "semantic_challenge_ko_en"
+    ).length;
+    if (challengeCount !== 20) throw new Error("Each ranked plane must contain exactly 20 semantic challenge queries");
+  }
+}
+
 function loadFixture(name: string): { fixture: EvaluationFixture; checksum: string } {
   const fileName = name.endsWith(".json") ? name : `${name}.json`;
   const fixturePath = path.join(FIXTURE_DIRECTORY, fileName);
@@ -104,6 +152,7 @@ function loadFixture(name: string): { fixture: EvaluationFixture; checksum: stri
     fixture.corpus = base.corpus;
   }
   if (!fixture.corpus) throw new Error(`Fixture ${name} has no corpus`);
+  if (fixture.version === 2) validateV2Fixture(fixture);
   return { fixture, checksum: sha256(raw) };
 }
 
@@ -132,6 +181,7 @@ function rankedMetric(query: RankedQuery, returned: string[], deterministic: boo
     .reduce((sum, entry, index) => sum + (2 ** entry.grade - 1) / Math.log2(index + 2), 0);
   return {
     id: query.id,
+    gateGroup: query.gateGroup ?? legacyGateGroup(query.id),
     returned: limited,
     relevantReturned,
     relevantTotal: relevant.length,
@@ -211,9 +261,19 @@ async function measure(operation: () => Promise<void>): Promise<number> {
   return round(percentile95(durations));
 }
 
+if (process.argv.includes("--self-test-v2")) {
+  runEvaluationContractSelfTest();
+  process.stdout.write("acceptance-v2 evaluation contract: ok\n");
+} else {
 const selectedFixture = argument("--fixture", "acceptance-v1");
 const semanticModelPath = argument("--semantic-model", "");
-const lexicalBaseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineEvaluation;
+const baselinePath = path.resolve(argument("--baseline", BASELINE_PATH));
+const lexicalBaseline = existsSync(baselinePath)
+  ? JSON.parse(readFileSync(baselinePath, "utf8")) as BaselineEvaluation
+  : null;
+if (semanticModelPath && !lexicalBaseline) {
+  throw new Error(`Semantic quality evaluation requires a lexical baseline: ${baselinePath}`);
+}
 const { fixture, checksum } = loadFixture(selectedFixture);
 const corpus = fixture.corpus;
 if (!corpus) throw new Error("Evaluation corpus is missing");
@@ -450,14 +510,48 @@ try {
   const gitCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" }).trim();
   const npmVersion = /(?:^|\s)npm\/([^\s]+)/.exec(process.env.npm_config_user_agent ?? "")?.[1] ?? "unknown";
   const runtime = app.semantic?.runtimeDiagnostics() ?? null;
-  const baselineExact = lexicalBaseline.evaluation.code.queries.find((query) => query.id === "code-exact-authorize");
-  const currentExact = codeMetrics.find((query) => query.id === "code-exact-authorize");
-  const baselineChallenges = lexicalBaseline.evaluation.code.queries.filter((query) => query.id.startsWith("code-semantic-"));
-  const currentChallenges = codeMetrics.filter((query) => query.id.startsWith("code-semantic-"));
-  const baselineChallengeRecall = average(baselineChallenges.map((metric) => metric.recall));
-  const currentChallengeRecall = average(currentChallenges.map((metric) => metric.recall));
-  const baselineChallengeNdcg = average(baselineChallenges.map((metric) => metric.ndcg));
-  const currentChallengeNdcg = average(currentChallenges.map((metric) => metric.ndcg));
+  const withGateGroups = (metrics: RankedMetric[]): RankedMetric[] =>
+    metrics.map((metric) => ({ ...metric, gateGroup: metric.gateGroup ?? legacyGateGroup(metric.id) }));
+  const challengeMetrics = (metrics: RankedMetric[]): RankedMetric[] =>
+    withGateGroups(metrics).filter(
+      (metric) => metric.gateGroup === "semantic_challenge_en" || metric.gateGroup === "semantic_challenge_ko_en",
+    );
+  const baselineCode = withGateGroups(lexicalBaseline?.evaluation.code.queries ?? []);
+  const baselineMemory = withGateGroups(lexicalBaseline?.evaluation.memory?.queries ?? []);
+  const currentExact = metricsForGateGroup(codeMetrics, "exact");
+  const baselineExact = metricsForGateGroup(baselineCode, "exact");
+  const currentCodeChallenges = challengeMetrics(codeMetrics);
+  const currentMemoryChallenges = challengeMetrics(memoryMetrics);
+  const baselineCodeChallenges = challengeMetrics(baselineCode);
+  const baselineMemoryChallenges = challengeMetrics(baselineMemory);
+  const rankedGate = (current: RankedMetric[], baseline: RankedMetric[]) => {
+    const baselineRecall = average(baseline.map((metric) => metric.recall));
+    const actualRecall = average(current.map((metric) => metric.recall));
+    const baselineNdcg = average(baseline.map((metric) => metric.ndcg));
+    const actualNdcg = average(current.map((metric) => metric.ndcg));
+    return {
+      recall: {
+        baseline: baselineRecall,
+        required: requiredChallengeRecall(baselineRecall),
+        actual: actualRecall,
+        absoluteImprovement: round(actualRecall - baselineRecall),
+        passed: actualRecall >= requiredChallengeRecall(baselineRecall),
+      },
+      ndcg: {
+        baseline: baselineNdcg,
+        required: requiredNdcg(baselineNdcg),
+        actual: actualNdcg,
+        absoluteImprovement: round(actualNdcg - baselineNdcg),
+        passed: actualNdcg >= requiredNdcg(baselineNdcg),
+      },
+    };
+  };
+  const codeChallengeGate = rankedGate(currentCodeChallenges, baselineCodeChallenges);
+  const memoryChallengeGate = rankedGate(currentMemoryChallenges, baselineMemoryChallenges);
+  const combinedChallengeGate = rankedGate(
+    [...currentCodeChallenges, ...currentMemoryChallenges],
+    [...baselineCodeChallenges, ...baselineMemoryChallenges],
+  );
   const macroEvidenceCoverage = round(
     contextMetrics.reduce((sum, metric) => sum + Number(metric.evidenceCoverage), 0) /
       Math.max(1, contextMetrics.length),
@@ -471,47 +565,46 @@ try {
     ...memoryMetrics.map((metric) => metric.deterministic),
     ...contextMetrics.map((metric) => Boolean(metric.deterministic)),
   ].every(Boolean);
+  const baselineContext = lexicalBaseline?.evaluation.context;
   const gateChecks = semanticModelPath
     ? {
-        exactRecallAt5: { actual: currentExact?.recall ?? 0, minimum: 1, passed: currentExact?.recall === 1 },
+        exactRecallAt5: {
+          actual: average(currentExact.map((metric) => metric.recall)),
+          minimum: 1,
+          passed: currentExact.length > 0 && currentExact.every((metric) => metric.recall === 1),
+        },
         exactMrrNoRegression: {
-          actual: currentExact?.reciprocalRank ?? 0,
-          baseline: baselineExact?.reciprocalRank ?? 0,
-          passed: (currentExact?.reciprocalRank ?? 0) >= (baselineExact?.reciprocalRank ?? 0),
+          actual: average(currentExact.map((metric) => metric.reciprocalRank)),
+          baseline: average(baselineExact.map((metric) => metric.reciprocalRank)),
+          passed:
+            average(currentExact.map((metric) => metric.reciprocalRank)) >=
+            average(baselineExact.map((metric) => metric.reciprocalRank)),
         },
-        semanticChallengeRecallAt10: {
-          actual: currentChallengeRecall,
-          baseline: baselineChallengeRecall,
-          minimum: 0.8,
-          minimumDelta: 0.15,
-          passed: currentChallengeRecall >= 0.8 && currentChallengeRecall - baselineChallengeRecall >= 0.15,
-        },
-        semanticChallengeNdcgAt10: {
-          actual: currentChallengeNdcg,
-          baseline: baselineChallengeNdcg,
-          minimumDelta: 0.08,
-          passed: currentChallengeNdcg - baselineChallengeNdcg >= 0.08,
-        },
+        codeSemanticChallengeRecallAt10: codeChallengeGate.recall,
+        codeSemanticChallengeNdcgAt10: codeChallengeGate.ndcg,
+        memorySemanticChallengeRecallAt10: memoryChallengeGate.recall,
+        memorySemanticChallengeNdcgAt10: memoryChallengeGate.ndcg,
+        combinedSemanticChallengeNdcgAt10: combinedChallengeGate.ndcg,
         contextEvidenceCoverageAt2000: {
           actual: macroEvidenceCoverage,
-          baseline: lexicalBaseline.evaluation.context.macroEvidenceCoverage,
+          baseline: baselineContext?.macroEvidenceCoverage ?? 0,
           minimum: 0.8,
           minimumDelta: 0.1,
           passed:
             macroEvidenceCoverage >= 0.8 &&
-            macroEvidenceCoverage - lexicalBaseline.evaluation.context.macroEvidenceCoverage >= 0.1,
+            macroEvidenceCoverage - (baselineContext?.macroEvidenceCoverage ?? 0) >= 0.1,
         },
         inactiveMemoryReturned: { actual: returnedInactiveIds.size, maximum: 0, passed: returnedInactiveIds.size === 0 },
         duplicateWaste: {
           actual: macroDuplicateWaste,
-          baseline: lexicalBaseline.evaluation.context.macroDuplicateWaste,
+          baseline: baselineContext?.macroDuplicateWaste ?? 0,
           maximum: 0.1,
           minimumRelativeReduction:
-            lexicalBaseline.evaluation.context.macroDuplicateWaste >= 0.01 ? 0.3 : "not_applicable",
+            (baselineContext?.macroDuplicateWaste ?? 0) >= 0.01 ? 0.3 : "not_applicable",
           passed:
             macroDuplicateWaste <= 0.1 &&
-            (lexicalBaseline.evaluation.context.macroDuplicateWaste < 0.01 ||
-              macroDuplicateWaste <= lexicalBaseline.evaluation.context.macroDuplicateWaste * 0.7),
+            ((baselineContext?.macroDuplicateWaste ?? 0) < 0.01 ||
+              macroDuplicateWaste <= (baselineContext?.macroDuplicateWaste ?? 0) * 0.7),
         },
         deterministic20Runs: { actual: deterministic, expected: true, passed: deterministic },
         warmSearchP95Ms: { actual: searchP95Ms, maximum: 250, passed: searchP95Ms <= 250 },
@@ -519,19 +612,31 @@ try {
       }
     : {};
   const gatesPassed = Object.values(gateChecks).every((check) => check.passed);
+  const generatedAt = fixture.version === 2
+    ? sourceDateEpochIso(process.env.SOURCE_DATE_EPOCH)
+    : new Date().toISOString();
+  const goldDigest = sha256Bytes(
+    Buffer.from(canonicalControlJson(fixture.queries as unknown as CanonicalJsonValue), "utf8"),
+  );
   const result = {
-    schemaVersion: 1,
+    schemaVersion: fixture.version === 2 ? 2 : 1,
+    evaluatorVersion: fixture.version === 2 ? "acceptance-v2@1" : "acceptance-v1@1",
     fixture: {
       name: fixture.name,
       version: fixture.version,
       immutable: fixture.immutable,
       sha256: checksum,
+      goldDigest,
     },
     baseline: {
       mode: semanticModelPath ? "semantic-enabled" : "semantic-disabled",
       commit: gitCommit,
-      generatedAt: new Date().toISOString(),
-      lexicalReferenceCommit: lexicalBaseline.baseline.commit,
+      generatedAt,
+      phase3SourceCommit:
+        lexicalBaseline?.baseline.phase3SourceCommit ?? lexicalBaseline?.baseline.commit ?? null,
+      lexicalReferenceCommit: lexicalBaseline?.baseline.commit ?? null,
+      lexicalReferenceDigest:
+        (lexicalBaseline as (BaselineEvaluation & { baselineDigest?: string }) | null)?.baselineDigest ?? null,
     },
     environment: {
       platform: process.platform,
@@ -593,9 +698,15 @@ try {
       checks: gateChecks,
     },
   };
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (fixture.version === 2) {
+    const digested = addBaselineDigest(result as unknown as Record<string, CanonicalJsonValue>);
+    process.stdout.write(serializeCanonicalArtifact(digested));
+  } else {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  }
   if (semanticModelPath && !gatesPassed) throw new Error("Phase 4 acceptance quality gate failed");
 } finally {
   await app.close();
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+}
 }
