@@ -286,6 +286,7 @@ const selectedFixture = argument("--fixture", "acceptance-v1");
 const semanticModelPath = argument("--semantic-model", "");
 const baselineToolCommit = argument("--baseline-tool-commit", "");
 const fixtureCommit = argument("--fixture-commit", "");
+const explicitSourceCommit = argument("--source-commit", "");
 const outputPath = argument("--output", "");
 const defaultBaselinePath = selectedFixture.includes("v2") ? BASELINE_V2_PATH : BASELINE_V1_PATH;
 const baselinePath = path.resolve(argument("--baseline", defaultBaselinePath));
@@ -540,7 +541,9 @@ try {
       if (inactiveIds.includes(memory.id)) returnedInactiveIds.add(memory.id);
     }
   }
-  const gitCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" }).trim();
+  const gitCommit = explicitSourceCommit ||
+    execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" }).trim();
+  if (!/^[0-9a-f]{40}$/u.test(gitCommit)) throw new Error("Evaluation source commit must be a full Git SHA");
   const npmVersion = /(?:^|\s)npm\/([^\s]+)/.exec(process.env.npm_config_user_agent ?? "")?.[1] ?? "unknown";
   const runtime = app.semantic?.runtimeDiagnostics() ?? null;
   const withGateGroups = (metrics: RankedMetric[]): RankedMetric[] =>

@@ -21,6 +21,7 @@ function walk(root: string, current = root): string[] {
 const project = process.cwd();
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" }).trim();
 if (dirty) throw new Error("Source ZIP verification requires a clean worktree");
+const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
 const temporary = mkdtempSync(path.join(os.tmpdir(), "contextmesh-source-zip-"));
 if (
   path.dirname(path.resolve(temporary)) !== path.resolve(os.tmpdir()) ||
@@ -80,6 +81,8 @@ try {
         "acceptance-v2",
         "--semantic-model",
         modelPath,
+        "--source-commit",
+        sourceCommit,
       ],
       {
         cwd: extracted,
