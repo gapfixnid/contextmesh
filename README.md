@@ -14,6 +14,9 @@ npm install
 npm run check
 npm run benchmark
 npm run benchmark:semantic
+npm run benchmark:hydration
+npm run benchmark:unavailable
+npm run verify:package
 ```
 
 The local database is created at `.contextmesh/contextmesh.sqlite3` and is ignored by Git and the indexer. Override it with `--db-path` when needed.

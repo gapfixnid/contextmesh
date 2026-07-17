@@ -178,12 +178,13 @@ if (configuredModelPath) {
     }),
     "utf8",
   );
-  for (let fileIndex = 0; fileIndex < 64; fileIndex += 1) {
-    const declarations = Array.from({ length: 16 }, (_, functionIndex) => {
-      const id = fileIndex * 16 + functionIndex;
-      return `/** Computes cached pricing value ${id}. */\nexport function computeValue${id}(input: number): number { return input + ${id}; }`;
-    });
-    writeFileSync(path.join(sourceDirectory, `values-${fileIndex}.ts`), `${declarations.join("\n\n")}\n`, "utf8");
+  for (let fileIndex = 0; fileIndex < 1_000; fileIndex += 1) {
+    const content = fileIndex === 0
+      ? "/** Computes the root cached pricing value. */\nexport function computeValue0(input: number): number { return input; }\n"
+      : `import { computeValue${fileIndex - 1} } from "./values-${fileIndex - 1}.js";\n` +
+        `/** Computes cached pricing value ${fileIndex} through the dependency chain. */\n` +
+        `export function computeValue${fileIndex}(input: number): number { return computeValue${fileIndex - 1}(input) + 1; }\n`;
+    writeFileSync(path.join(sourceDirectory, `values-${fileIndex}.ts`), content, "utf8");
   }
 
   const lexicalDb = path.join(workspace, "lexical.sqlite3");
@@ -206,6 +207,7 @@ if (configuredModelPath) {
   let warmGetContextP95Ms = 0;
   let embeddingCount = 0;
   let semanticDbBytes = 0;
+  let crossPlaneWorkload: Record<string, unknown> | null = null;
   const coldIndexStarted = performance.now();
   let semanticApp = new ContextMeshApp(workspace, semanticDb, {
     semantic: { modelPath: configuredModelPath },
@@ -226,13 +228,23 @@ if (configuredModelPath) {
     semantic: { modelPath: configuredModelPath },
   });
   try {
-    await semanticApp.remember({
-      content: "Cached pricing values are retained for this semantic context benchmark.",
-      topic: "semantic benchmark memory",
-      type: "fact",
-      keywords: ["cached", "pricing"],
-      sourceSymbolIds: [],
-    });
+    const terminal = semanticApp.database.searchCode("computeValue999", ["function"], 1)[0];
+    if (!terminal) throw new Error("Cross-plane benchmark could not find computeValue999");
+    const crossPlaneQuery =
+      "how does computeValue998 supply computeValue999 cached pricing retained dependency values";
+    const memoryTypes = ["fact", "decision", "error", "preference", "procedure", "relation", "episode"] as const;
+    for (let index = 0; index < 64; index += 1) {
+      const type = memoryTypes[index % memoryTypes.length]!;
+      await semanticApp.remember({
+        content: index % 2 === 0
+          ? `Cached pricing dependency values are retained by ${type} policy variant ${index}.`
+          : `The ${type} record ${index} preserves retained values for the cached pricing chain.`,
+        topic: `semantic benchmark ${type}`,
+        type,
+        keywords: ["cached", "pricing", "retained", type],
+        sourceSymbolIds: [terminal.id],
+      });
+    }
 
     const searchDurations: number[] = [];
     const contextDurations: number[] = [];
@@ -244,14 +256,83 @@ if (configuredModelPath) {
     for (let index = 0; index < 55; index += 1) {
       const contextStarted = performance.now();
       await semanticApp.getContext({
-        query: "how are cached pricing values retained",
-        include: ["memory"],
-        tokenBudget: 2000,
+        query: crossPlaneQuery,
+        symbolId: terminal.id,
+        include: ["code", "memory"],
+        tokenBudget: 8000,
       });
       if (index >= 5) contextDurations.push(performance.now() - contextStarted);
     }
     warmSemanticSearchP95Ms = percentile95(searchDurations);
     warmGetContextP95Ms = percentile95(contextDurations);
+    const semanticCandidates = await semanticApp.semantic!.searchContext(
+      crossPlaneQuery,
+      true,
+      true,
+      100,
+    );
+    const assembled = semanticApp.context.assembleDatabase(
+      {
+        query: crossPlaneQuery,
+        symbolId: terminal.id,
+        include: ["code", "memory"],
+        tokenBudget: 8000,
+      },
+      semanticCandidates.code,
+      semanticCandidates.memory,
+    );
+    const packed = await semanticApp.getContext({
+      query: crossPlaneQuery,
+      symbolId: terminal.id,
+      include: ["code", "memory"],
+      tokenBudget: 8000,
+    }) as { data: { code: Array<{ snippet: string | null }>; memories: unknown[]; relationships: unknown[] } };
+    const workspaceStatus = await semanticApp.workspaceStatus() as {
+      data: { counts: { files: number; nodes: number; edges: number; memories: number } };
+    };
+    const memoryVectorCount = semanticApp.database.loadSemanticEmbeddings("memory", APPROVED_MODEL_KEY).length;
+    const finalPlanes = new Set(assembled.candidates.map((candidate) => candidate.kind));
+    const observedWorkload = {
+      files: workspaceStatus.data.counts.files,
+      memoryVectorCount,
+      finalPlanes: [...finalPlanes].sort(),
+      packedCode: packed.data.code.length,
+      packedMemory: packed.data.memories.length,
+      packedRelationships: packed.data.relationships.length,
+      assembledCandidates: assembled.candidates.length,
+    };
+    if (
+      workspaceStatus.data.counts.files !== 1_000 ||
+      memoryVectorCount < 64 ||
+      !finalPlanes.has("code") ||
+      !finalPlanes.has("memory") ||
+      packed.data.code.length === 0 ||
+      packed.data.memories.length === 0 ||
+      packed.data.relationships.length === 0
+    ) {
+      throw new Error(
+        `Cross-plane get_context benchmark did not exercise its required workload: ${JSON.stringify(observedWorkload)}`,
+      );
+    }
+    crossPlaneWorkload = {
+      files: workspaceStatus.data.counts.files,
+      codeNodes: workspaceStatus.data.counts.nodes,
+      codeVectors: semanticApp.database.loadSemanticEmbeddings("code", APPROVED_MODEL_KEY).length,
+      graphEdges: workspaceStatus.data.counts.edges,
+      ftsCandidates: semanticApp.database.searchCode("computeValue999 cached pricing", undefined, 100).length,
+      memoryVectors: memoryVectorCount,
+      memoryTypes: memoryTypes.length,
+      codeMemoryRelationships: 64,
+      unifiedMmrCandidates: assembled.candidates.length,
+      unifiedMmrPlanes: [...finalPlanes].sort(),
+      snippetHydrationCount: packed.data.code.filter((node) => node.snippet !== null).length,
+      resultCodeCount: packed.data.code.length,
+      resultMemoryCount: packed.data.memories.length,
+      resultRelationshipCount: packed.data.relationships.length,
+      semanticParaphrases: true,
+      nearDuplicateCandidates: true,
+      softReservationQueryEvaluated: true,
+    };
   } finally {
     await semanticApp.close();
   }
@@ -287,6 +368,7 @@ if (configuredModelPath) {
     semanticStorage,
     embeddingCount,
     embeddingDbBytesPerEntity: rounded(embeddingDbBytesPerEntity),
+    crossPlaneWorkload,
   };
   actualModelGateFailed ||=
     coldSemanticIndexMs > limits.coldSemanticIndexMs ||

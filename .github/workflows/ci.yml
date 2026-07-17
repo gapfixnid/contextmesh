@@ -3,12 +3,26 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      verify_source_zip:
+        description: Re-run acceptance and offline smoke from a clean source ZIP
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+env:
+  MODEL_REVISION: 761b726dd34fb83930e26aab4e9ac3899aa1fa78
+  MODEL_MANIFEST_DIGEST: 264b845823877533ec6e3d1ce7f35100e79f75dda6a6b35d7bfe1280650f6ffa
+  TRANSFORMERS_VERSION: 4.2.0
+  ORT_VERSION: 1.24.3
+  SOURCE_DATE_EPOCH: 1784246400
+
 jobs:
-  test:
+  hosted-quality:
     strategy:
       fail-fast: false
       matrix:
@@ -22,13 +36,168 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run verify:package
+        if: matrix.os == 'ubuntu-latest'
+
+  actual-model-smoke:
+    needs: hosted-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - name: Restore approved model cache (online staging)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/contextmesh-approved-model
+          key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
+      - name: Download and verify approved revision
+        run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
+      - name: Runtime-offline session, inference, and dispose smoke
+        run: npm run smoke:semantic -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
+
+  acceptance-parity-artifact:
+    needs: actual-model-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
       - uses: actions/cache@v4
         with:
-          path: .semantic-smoke-model
-          key: semantic-smoke-${{ runner.os }}-761b726dd34fb839
-      - run: npm run fetch:semantic-smoke-model -- --output .semantic-smoke-model
-      - run: npm run smoke:semantic -- --model-path .semantic-smoke-model
-      - run: npm run benchmark:semantic -- --model-path .semantic-smoke-model
-        if: matrix.os == 'windows-latest'
+          path: ${{ runner.temp }}/contextmesh-approved-model
+          key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
+      - run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
+      - name: Acceptance-v2 quality gate
+        run: >-
+          npm run evaluate:quality --
+          --fixture acceptance-v2
+          --semantic-model "${{ runner.temp }}/contextmesh-approved-model"
+          --output "artifacts/acceptance-${{ runner.os }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-${{ runner.os }}-${{ github.sha }}
+          path: artifacts/acceptance-${{ runner.os }}.json
+          if-no-files-found: error
+
+  ubuntu-windows-parity:
+    needs: acceptance-parity-artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: acceptance-Windows-${{ github.sha }}
+          path: parity/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: acceptance-Linux-${{ github.sha }}
+          path: parity/ubuntu
+      - name: Exact ordered IDs and scoreMicro tolerance gate
+        run: >-
+          npm run compare:parity --
+          --windows parity/windows/acceptance-Windows.json
+          --ubuntu parity/ubuntu/acceptance-Linux.json
+          --diagnostic-output parity/parity-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-diagnostics-${{ github.sha }}
+          path: parity
+
+  hosted-windows-performance-informational:
+    needs: hosted-quality
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      CONTEXTMESH_RUNNER_CLASS: github-hosted-informational
+      CONTEXTMESH_POWER_MODE: not_controlled
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
       - run: npm run benchmark
-        if: matrix.os == 'windows-latest'
+      - run: npm run benchmark:unavailable
+
+  fixed-windows-performance:
+    if: vars.CONTEXTMESH_PERF_RUNNER_ENABLED == 'true'
+    needs: actual-model-smoke
+    runs-on: [self-hosted, Windows, X64, contextmesh-performance]
+    concurrency:
+      group: contextmesh-fixed-windows-performance
+      cancel-in-progress: false
+    env:
+      CONTEXTMESH_RUNNER_CLASS: fixed-self-hosted-blocking
+      CONTEXTMESH_POWER_MODE: ${{ vars.CONTEXTMESH_PERF_POWER_MODE }}
+      CONTEXTMESH_PERF_CPU: ${{ vars.CONTEXTMESH_PERF_CPU }}
+      CONTEXTMESH_PERF_LOGICAL_CPUS: ${{ vars.CONTEXTMESH_PERF_LOGICAL_CPUS }}
+      CONTEXTMESH_PERF_MIN_RAM_BYTES: ${{ vars.CONTEXTMESH_PERF_MIN_RAM_BYTES }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - id: runner
+        run: npx tsx scripts/assert-performance-runner.ts
+      - uses: actions/cache@v4
+        if: steps.runner.outputs.eligible == 'true'
+        with:
+          path: ${{ runner.temp }}/contextmesh-approved-model
+          key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
+      - if: steps.runner.outputs.eligible == 'true'
+        run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
+      - if: steps.runner.outputs.eligible == 'true'
+        run: npm run benchmark
+      - if: steps.runner.outputs.eligible == 'true'
+        run: npm run benchmark:unavailable
+      - if: steps.runner.outputs.eligible == 'true'
+        run: npm run benchmark:hydration
+      - if: steps.runner.outputs.eligible == 'true'
+        run: npm run benchmark:semantic -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixed-windows-performance-${{ github.sha }}
+          path: performance-runner.json
+
+  clean-source-zip-release-gate:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_source_zip
+    needs: [ubuntu-windows-parity, actual-model-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/contextmesh-approved-model
+          key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
+      - run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
+      - run: npm run verify:source-zip -- --model-path "${{ runner.temp }}/contextmesh-approved-model"

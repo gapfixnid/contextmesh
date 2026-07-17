@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { ContextMeshApp } from "../src/app.js";
 import type { Envelope, MemoryFragmentRecord } from "../src/contracts.js";
 import type { ContextCodeItem, ContextMemoryItem } from "../src/context/assembler.js";
+import { APPROVED_MODEL_KEY, APPROVED_MODEL_MANIFEST } from "../src/semantic/manifest.js";
 import type { CodeSearchResult } from "../src/storage/database.js";
 import {
   addBaselineDigest,
@@ -85,6 +86,7 @@ interface RankedMetric {
   reciprocalRank: number;
   ndcg: number;
   deterministic: boolean;
+  scoreMicro: number[];
 }
 
 interface BaselineEvaluation {
@@ -99,7 +101,8 @@ interface BaselineEvaluation {
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
 const FIXTURE_DIRECTORY = path.join(PROJECT_ROOT, "evaluation", "fixtures");
-const BASELINE_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "phase3-lexical-7b70d06.json");
+const BASELINE_V1_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "phase3-lexical-7b70d06.json");
+const BASELINE_V2_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "phase3-lexical-v2.json");
 
 function argument(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -173,7 +176,12 @@ function percentile95(values: number[]): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0;
 }
 
-function rankedMetric(query: RankedQuery, returned: string[], deterministic: boolean): RankedMetric {
+function rankedMetric(
+  query: RankedQuery,
+  returned: string[],
+  deterministic: boolean,
+  scores: readonly number[] = [],
+): RankedMetric {
   const grades = new Map(query.gold.map((entry) => [entry.key, entry.grade]));
   const relevant = query.gold.filter((entry) => entry.grade >= 2);
   const limited = returned.slice(0, query.k);
@@ -197,6 +205,7 @@ function rankedMetric(query: RankedQuery, returned: string[], deterministic: boo
     reciprocalRank: round(firstRelevant < 0 ? 0 : 1 / (firstRelevant + 1)),
     ndcg: round(ideal === 0 ? 1 : dcg / ideal),
     deterministic,
+    scoreMicro: scores.slice(0, query.k).map((score) => Math.round(score * 1_000_000)),
   };
 }
 
@@ -277,7 +286,9 @@ const selectedFixture = argument("--fixture", "acceptance-v1");
 const semanticModelPath = argument("--semantic-model", "");
 const baselineToolCommit = argument("--baseline-tool-commit", "");
 const fixtureCommit = argument("--fixture-commit", "");
-const baselinePath = path.resolve(argument("--baseline", BASELINE_PATH));
+const outputPath = argument("--output", "");
+const defaultBaselinePath = selectedFixture.includes("v2") ? BASELINE_V2_PATH : BASELINE_V1_PATH;
+const baselinePath = path.resolve(argument("--baseline", defaultBaselinePath));
 const lexicalBaseline = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8")) as BaselineEvaluation
   : null;
@@ -346,7 +357,14 @@ try {
         deterministic = false;
       }
     }
-    codeMetrics.push(rankedMetric(query, result.data.results.map((node) => node.localKey), deterministic));
+    codeMetrics.push(
+      rankedMetric(
+        query,
+        result.data.results.map((node) => node.localKey),
+        deterministic,
+        result.data.results.map((node) => node.score),
+      ),
+    );
   }
 
   const memoryMetrics: RankedMetric[] = [];
@@ -435,6 +453,11 @@ try {
       duplicateWaste: duplicateWaste(texts),
       deterministic,
       returned: [...returned],
+      orderedCode: result.data.code.map((node) => ({
+        id: node.localKey,
+        scoreMicro: Math.round(node.score * 1_000_000),
+      })),
+      orderedMemory: result.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
     });
   }
 
@@ -630,7 +653,7 @@ try {
   );
   const result = {
     schemaVersion: fixture.version === 2 ? 2 : 1,
-    evaluatorVersion: fixture.version === 2 ? "acceptance-v2@1" : "acceptance-v1@1",
+    evaluatorVersion: fixture.version === 2 ? "acceptance-v2@2" : "acceptance-v1@1",
     fixture: {
       name: fixture.name,
       version: fixture.version,
@@ -668,6 +691,9 @@ try {
       effectiveIntraOpThreads: runtime?.effectiveIntraOpThreads ?? "not_applicable",
       effectiveInterOpThreads: runtime?.effectiveInterOpThreads ?? "not_applicable",
       verificationMethod: runtime?.verificationMethod ?? ["semantic_disabled_control"],
+      modelManifestDigest: semanticModelPath ? APPROVED_MODEL_KEY : null,
+      transformersVersion: semanticModelPath ? APPROVED_MODEL_MANIFEST.backend.version : null,
+      onnxruntimeNodeVersion: semanticModelPath ? APPROVED_MODEL_MANIFEST.backend.moduleVersion : null,
     },
     corpus: {
       checksum: sha256(corpus.files.map((file) => `${file.path}\0${file.content}`).join("\0")),
@@ -687,7 +713,7 @@ try {
     evaluation: {
       relevanceThreshold: 2,
       ndcgGain: "2^grade-1",
-      tieBreak: "canonical-id-ascending",
+      tieBreak: "rankScore(round(score*1e5)), then canonical-id-ascending; public scoreMicro=round(score*1e6)",
       code: { aggregate: aggregateRanked(codeMetrics), queries: codeMetrics },
       memory: { aggregate: aggregateRanked(memoryMetrics), queries: memoryMetrics },
       context: {
@@ -714,9 +740,21 @@ try {
   };
   if (fixture.version === 2) {
     const digested = addBaselineDigest(result as unknown as Record<string, CanonicalJsonValue>);
-    process.stdout.write(serializeCanonicalArtifact(digested));
+    const serialized = serializeCanonicalArtifact(digested);
+    if (outputPath) {
+      mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
+      writeFileSync(path.resolve(outputPath), serialized);
+    } else {
+      process.stdout.write(serialized);
+    }
   } else {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const serialized = `${JSON.stringify(result, null, 2)}\n`;
+    if (outputPath) {
+      mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
+      writeFileSync(path.resolve(outputPath), serialized, "utf8");
+    } else {
+      process.stdout.write(serialized);
+    }
   }
   if (semanticModelPath && !gatesPassed) throw new Error("Phase 4 acceptance quality gate failed");
 } finally {

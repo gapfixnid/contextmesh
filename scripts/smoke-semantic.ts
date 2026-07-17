@@ -51,10 +51,17 @@ const backend = await createTransformersEmbeddingBackend(modelPathArgument());
 let report: Record<string, unknown> | null = null;
 try {
   const query = await backend.embedQuery("find code that retries a temporary upstream failure");
-  const passages = await backend.embedPassages([
+  const passageBatch = [
     "Retries a transient gateway operation three times with exponential delay.",
     "Formats a customer display name.",
-  ]);
+    ...Array.from({ length: 14 }, (_, index) => `Unrelated local formatting utility ${index}.`),
+  ];
+  const batchStarted = performance.now();
+  const passages = await backend.embedPassages(passageBatch);
+  const boundedBatchInferenceMs = performance.now() - batchStarted;
+  if (boundedBatchInferenceMs >= 25_000) {
+    throw new Error(`A 16-passage heartbeat batch exceeded the 25 second safety gate: ${boundedBatchInferenceMs}`);
+  }
   const dot = (left: Float32Array, right: Float32Array): number => {
     let value = 0;
     for (let index = 0; index < left.length; index += 1) value += (left[index] ?? 0) * (right[index] ?? 0);
@@ -72,6 +79,8 @@ try {
     loadAndInferenceMs: Math.round((performance.now() - started) * 100) / 100,
     relevantScore,
     unrelatedScore,
+    boundedBatchSize: passageBatch.length,
+    boundedBatchInferenceMs,
     diagnostics: backend.diagnostics,
   };
 } finally {
