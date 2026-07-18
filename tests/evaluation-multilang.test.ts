@@ -48,9 +48,19 @@ describe("mixed-language evaluation artifact", () => {
     expect(artifact.samples).toEqual({ cold: 5, warm: 20, incremental: 5 });
     expect(artifact.providers.typescript).toMatch(/^\d+\.\d+/);
     expect(Object.values(artifact.thresholds).every(Boolean)).toBe(true);
-    expect(() => execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], {
-      cwd: process.cwd(), stdio: "pipe",
-    })).not.toThrow();
+    let gitWorktree = false;
+    try {
+      gitWorktree = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+        cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      }).trim() === "true";
+    } catch {
+      // Source ZIP verification intentionally runs without repository metadata.
+    }
+    if (gitWorktree) {
+      expect(() => execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], {
+        cwd: process.cwd(), stdio: "pipe",
+      })).not.toThrow();
+    }
     for (const timing of Object.values(artifact.performanceMs)) expect(timing.p95).toBeGreaterThanOrEqual(timing.p50);
   });
 });
