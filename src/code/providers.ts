@@ -29,7 +29,7 @@ export interface SyntaxGraphBatch {
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
   diagnostics: string[];
-  providerMetrics?: { filesParsed: number; mode: string };
+  providerMetrics?: { filesParsed: number; mode: string; kernelRssBytes?: number };
 }
 
 export interface SyntaxProvider {

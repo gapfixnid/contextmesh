@@ -126,6 +126,7 @@ export class ContextMeshApp {
       async () => { await this.indexWorkspace({ mode: "incremental" }); },
       (diagnostic) => this.code.recordOperationalFailure(diagnostic),
       typeof options.watcher === "object" ? options.watcher : {},
+      () => this.code.recordOperationalRecovery("watcher"),
     ) : null;
   }
 
@@ -152,8 +153,8 @@ export class ContextMeshApp {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
     this.closePromise = (async () => {
-      this.code.indexer.dispose();
       if (this.watcher) await this.watcher.close();
+      this.code.indexer.dispose();
       try {
         if (this.semantic) await this.semantic.dispose();
       } finally {
@@ -252,8 +253,11 @@ export class ContextMeshApp {
     const adapterStats = this.code.indexer.adapterStats();
     const statsByLanguage = new Map(adapterStats.map((item) => [item.language, item]));
     const codeStatus = await this.code.status();
-    const lastRun = codeStatus.lastRun as { status?: string; diagnostics?: string[] } | null | undefined;
-    const kernelFailure = lastRun?.status === "failed" ? lastRun.diagnostics?.find((item) => /(?:KERNEL|WATCH)_/.test(item)) : undefined;
+    const operational = codeStatus.operational as {
+      graph_kernel?: { status: string; diagnostic: string | null; updatedAt: string } | null;
+      watcher?: { status: string; diagnostic: string | null; updatedAt: string } | null;
+    };
+    const kernelFailure = operational.graph_kernel?.status === "failed" ? operational.graph_kernel.diagnostic : null;
     return this.envelope({
       ...codeStatus,
       adapters: this.code.indexer.coordinator.capabilities().map((capability) => ({
@@ -273,7 +277,10 @@ export class ContextMeshApp {
         runtimeNetwork: 0,
       },
       queryCache: this.code.cacheStats(),
-      watcher: { enabled: this.watcher !== null, mode: this.watcher ? "native-opt-in" : "manual" },
+      watcher: {
+        ...(this.watcher?.status() ?? { enabled: false, mode: "manual", state: "disabled", lastDiagnostic: null }),
+        durable: operational.watcher ?? null,
+      },
       semantic: this.semantic?.status() ?? { enabled: false },
     });
   }

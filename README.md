@@ -6,6 +6,7 @@ ContextMesh is a local-first MCP server that combines a structural TypeScript/Ja
 
 - Node.js 24.18.x
 - npm 11.x
+- Rust 1.85+ for source builds (`cargo build --locked`); installed host packages include the matching sidecar binary
 
 ## Install and build
 

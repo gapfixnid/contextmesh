@@ -3,13 +3,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
-import { extractPythonKernelFacts } from "../src/code/native-kernel.js";
+import { extractPythonKernelFacts, type GraphKernelLaunch } from "../src/code/native-kernel.js";
 import { GraphWatchCoordinator, NativeWatchEventSource, type WatchClock, type WatchEvent, type WatchEventSource } from "../src/code/watcher.js";
 import { createFixtureWorkspace, removeFixtureWorkspace, writeWorkspaceFile } from "./helpers.js";
 
 const roots: string[] = [];
 afterEach(() => {
   delete process.env.CONTEXTMESH_GRAPH_KERNEL_PATH;
+  delete process.env.CONTEXTMESH_GRAPH_KERNEL_ARGS_JSON;
+  delete process.env.CONTEXTMESH_GRAPH_KERNEL_TIMEOUT_MS;
+  delete process.env.CONTEXTMESH_GRAPH_KERNEL_MAX_RESPONSE_BYTES;
   delete process.env.CONTEXTMESH_KERNEL_POLICY;
   for (const root of roots.splice(0)) removeFixtureWorkspace(root);
 });
@@ -36,6 +39,12 @@ class FakeClock implements WatchClock {
   setTimeout(callback: () => void): unknown { this.tasks.push(callback); return callback; }
   clearTimeout(handle: unknown): void { this.tasks = this.tasks.filter((item) => item !== handle); }
   flush(): void { this.tasks.shift()?.(); }
+}
+
+class FailingSource implements WatchEventSource {
+  starts = 0;
+  async start(): Promise<void> { this.starts += 1; throw new Error("synthetic-source-failure"); }
+  async close(): Promise<void> {}
 }
 
 async function generationAfter(app: ContextMeshApp, generation: number): Promise<void> {
@@ -68,6 +77,33 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
     } finally { await app.close(); }
   });
 
+  it("preserves async metadata and multiline signatures across native and portable providers", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const content = "@decorator\nasync def calculate(\n    left,\n    right,\n):\n    return helper(left, right)\n";
+    const scan = { ...pythonScan(root), content, contentHash: "async-multiline" };
+    const native = await extractPythonKernelFacts([scan], "native-required", true);
+    const portable = await extractPythonKernelFacts([scan], "portable", true);
+    expect(native.files).toEqual(portable.files);
+    expect(native.files[0]?.declarations[0]).toMatchObject({ isAsync: true, signature: "async def calculate(\n    left,\n    right,\n)" });
+  });
+
+  it.each([
+    ["missing executable", "KERNEL_SPAWN_FAILED", { executable: "Z:/contextmesh-missing-kernel.exe", timeoutMs: 100 }],
+    ["malformed response", "KERNEL_PROTOCOL_INVALID", null],
+    ["hung response", "KERNEL_TIMEOUT", null],
+  ] as const)("fails closed with a stable diagnostic for %s", async (behavior, code, staticLaunch) => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    let launch: GraphKernelLaunch | undefined = staticLaunch ?? undefined;
+    if (!launch) {
+      const script = behavior === "hung response"
+        ? "process.stdin.resume(); setInterval(() => {}, 1000);\n"
+        : "process.stdin.once('data', () => process.stdout.write('not-json\\n'));\n";
+      writeWorkspaceFile(root, "fake-kernel.mjs", script);
+      launch = { executable: process.execPath, args: [path.join(root, "fake-kernel.mjs")], timeoutMs: 100 };
+    }
+    await expect(extractPythonKernelFacts([pythonScan(root)], "native-required", true, launch)).rejects.toThrow(code);
+  });
+
   it("preserves the committed generation and cache after a kernel failure", async () => {
     const root = createFixtureWorkspace(); roots.push(root);
     writeWorkspaceFile(root, "src/only.py", "def ready():\n    return 1\n");
@@ -95,12 +131,78 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
     }, () => {}, { eventSource: source, clock, debounceMs: 10 });
     await coordinator.start();
     expect(calls).toBe(1);
-    source.emit("b.py", "a.py"); source.emit("a.py"); clock.flush();
+    source.emit("C:/fixture/b.py", "C:/fixture/a.py"); source.emit("C:/fixture/a.py"); clock.flush();
     await Promise.resolve(); expect(calls).toBe(2);
-    source.emit("c.py"); pending.release?.(); await Promise.resolve(); await Promise.resolve();
+    source.emit("C:/fixture/c.py"); pending.release?.(); await Promise.resolve(); await Promise.resolve();
     clock.flush(); await Promise.resolve();
     expect(calls).toBe(3);
     await coordinator.close();
+  });
+
+  it("persists and clears graph-kernel health across process restarts", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    writeWorkspaceFile(root, "src/durable.py", "def durable_kernel():\n    return 1\n");
+    let app = new ContextMeshApp(root);
+    await app.indexWorkspace({ mode: "full" });
+    writeWorkspaceFile(root, "src/durable.py", "def durable_kernel():\n    return 2\n");
+    process.env.CONTEXTMESH_GRAPH_KERNEL_PATH = path.join(root, "missing-kernel.exe");
+    await expect(app.indexWorkspace({ mode: "incremental" })).rejects.toThrow("KERNEL_UNAVAILABLE");
+    await app.close();
+
+    app = new ContextMeshApp(root);
+    let status = (await app.workspaceStatus()).data as { graphKernel: { status: string; diagnostics: Array<{ code: string }> } };
+    expect(status.graphKernel.status).toBe("failed"); expect(status.graphKernel.diagnostics[0]?.code).toBe("KERNEL_UNAVAILABLE");
+    delete process.env.CONTEXTMESH_GRAPH_KERNEL_PATH;
+    await app.indexWorkspace({ mode: "full" });
+    status = (await app.workspaceStatus()).data as typeof status;
+    expect(status.graphKernel.status).toBe("ready"); expect(status.graphKernel.diagnostics).toEqual([]);
+    await app.close();
+  });
+
+  it("does not schedule reconciliation for ignored database and build events", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const source = new FakeSource(); const clock = new FakeClock(); let calls = 0;
+    const coordinator = new GraphWatchCoordinator(root, async () => { calls += 1; }, () => {}, { eventSource: source, clock });
+    await coordinator.start();
+    source.emit(path.join(root, ".contextmesh", "contextmesh.sqlite3-wal"), path.join(root, "dist", "generated.js"));
+    clock.flush(); await Promise.resolve();
+    expect(calls).toBe(1);
+    await coordinator.close();
+  });
+
+  it("serves the last generation and bounds retries when watcher startup fails", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    let app = new ContextMeshApp(root);
+    await app.indexWorkspace({ mode: "full" }); const generation = app.database.getWorkspace().currentGeneration; await app.close();
+    const source = new FailingSource(); const clock = new FakeClock();
+    app = new ContextMeshApp(root, undefined, { watcher: { eventSource: source, clock, maxRetries: 2 } });
+    try {
+      await expect(app.initialize(false)).resolves.toBeUndefined();
+      expect(app.database.getWorkspace().currentGeneration).toBe(generation);
+      expect(((await app.searchCode({ query: "Calculator" })).data as { results: unknown[] }).results.length).toBeGreaterThan(0);
+      for (let attempt = 0; attempt < 4; attempt += 1) { clock.flush(); await Promise.resolve(); await Promise.resolve(); }
+      expect(source.starts).toBe(3);
+      const watcher = ((await app.workspaceStatus()).data as { watcher: { state: string; lastDiagnostic: string } }).watcher;
+      expect(watcher.state).toBe("failed"); expect(watcher.lastDiagnostic).toContain("WATCH_SOURCE_FAILED");
+    } finally { await app.close(); }
+  });
+
+  it("persists watcher failure and clears it only after native source recovery", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const failing = new FailingSource(); const failedClock = new FakeClock();
+    let app = new ContextMeshApp(root, undefined, { watcher: { eventSource: failing, clock: failedClock, maxRetries: 0 } });
+    await app.initialize(false); await app.close();
+
+    app = new ContextMeshApp(root);
+    let status = (await app.workspaceStatus()).data as { watcher: { durable: { status: string; diagnostic: string } | null } };
+    expect(status.watcher.durable?.status).toBe("failed"); expect(status.watcher.durable?.diagnostic).toContain("WATCH_SOURCE_FAILED");
+    await app.close();
+
+    app = new ContextMeshApp(root, undefined, { watcher: { eventSource: new FakeSource(), clock: new FakeClock() } });
+    await app.initialize(false);
+    status = (await app.workspaceStatus()).data as typeof status;
+    expect(status.watcher.durable?.status).toBe("ready");
+    await app.close();
   });
 
   it("observes an actual native OS watcher event in a separate smoke", async () => {
@@ -157,5 +259,32 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
         expect(data.trace.fileReads).toBeGreaterThan(0);
       }
     } finally { await app.close(); }
+  });
+
+  it("keeps cached payloads immutable, trace-compatible, and generation-current across readers", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    writeWorkspaceFile(root, "src/cache.ts", "export function cachedAlpha(){ return 1 }\nexport function cachedCaller(){ return cachedAlpha() }\n");
+    const reader = new ContextMeshApp(root);
+    try {
+      await reader.indexWorkspace({ mode: "full" });
+      const first = await reader.searchCode({ query: "cachedAlpha" });
+      const firstData = first.data as { results: Array<{ id: string; name: string }> };
+      const symbolId = firstData.results[0]!.id;
+      expect(reader.code.trace({ symbolId, direction: "both", depth: 2, limit: 100 }))
+        .toEqual(reader.database.traceCode(symbolId, "both", undefined, 2, 100));
+      firstData.results[0]!.name = "caller-mutated";
+      const repeated = (await reader.searchCode({ query: "cachedAlpha" })).data as { results: Array<{ name: string }> };
+      expect(repeated.results[0]?.name).toBe("cachedAlpha");
+
+      writeWorkspaceFile(root, "src/cache.ts", "export function cachedBeta(){ return 2 }\n");
+      const writer = new ContextMeshApp(root);
+      try { await writer.indexWorkspace({ mode: "full" }); }
+      finally { await writer.close(); }
+      const staleQuery = await reader.searchCode({ query: "cachedAlpha" });
+      const freshQuery = await reader.searchCode({ query: "cachedBeta" });
+      expect(staleQuery.generation).toBe(reader.database.getWorkspace().currentGeneration);
+      expect((staleQuery.data as { results: unknown[] }).results).toHaveLength(0);
+      expect((freshQuery.data as { results: unknown[] }).results).toHaveLength(1);
+    } finally { await reader.close(); }
   });
 });

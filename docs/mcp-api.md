@@ -43,6 +43,8 @@ MCP input schemas are unchanged in 0.2.0. `search_code.data.results[].score` is 
 
 `explore_context` is the additive tenth tool. It returns deterministic entry points, bounded intent-filtered relations, hash-verified current snippets, unresolved/low-confidence verification warnings, one snapshot, and an observed one-shot trace. Supported v0.4 intents are `implementation`, `architecture`, and `debugging`; impact analysis and history are not implemented.
 
+`workspace_status.data.graphKernel` and `workspace_status.data.watcher.durable` report migration-008 component health. A watcher startup failure is therefore visible after restart even when the graph's last committed generation remains readable; a verified component recovery clears only its own durable failure.
+
 The server does not expose arbitrary SQL, Cypher, filesystem reads, or natural-language-to-query execution.
 
 ## Error codes

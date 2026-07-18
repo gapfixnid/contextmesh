@@ -163,6 +163,13 @@ export interface StoredGraphPartition {
   unresolvedReferences: UnresolvedReferenceRecord[];
 }
 
+export interface OperationalStatusRecord {
+  component: "graph_kernel" | "watcher";
+  status: "ready" | "failed";
+  diagnostic: string | null;
+  updatedAt: string;
+}
+
 export interface MemoryCodeProvenance {
   memoryId: string;
   codeNodeId: string | null;
@@ -463,6 +470,8 @@ export interface ContextMeshStorage {
   close(): void;
   recoverInterruptedRuns(): number;
   getWorkspace(): WorkspaceRecord;
+  setOperationalStatus(component: OperationalStatusRecord["component"], status: OperationalStatusRecord["status"], diagnostic?: string | null): void;
+  getOperationalStatus(): Record<OperationalStatusRecord["component"], OperationalStatusRecord | null>;
   getFileHashes(): Map<string, string>;
   getIndexedFileBaseline(): IndexedFileBaseline[];
   getIndexConfigHash(): string | null;
@@ -797,6 +806,39 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const row = this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(this.workspace.id);
     if (!row) throw new ContextMeshError("INTERNAL_ERROR", "Workspace record is missing");
     return mapWorkspace(row);
+  }
+
+  setOperationalStatus(
+    component: OperationalStatusRecord["component"],
+    status: OperationalStatusRecord["status"],
+    diagnostic: string | null = null,
+  ): void {
+    this.db.prepare(
+      `INSERT INTO operational_status(workspace_id, component, status, diagnostic, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(workspace_id, component) DO UPDATE SET
+         status = excluded.status, diagnostic = excluded.diagnostic, updated_at = excluded.updated_at`,
+    ).run(this.workspace.id, component, status, diagnostic, this.nowIso());
+  }
+
+  getOperationalStatus(): Record<OperationalStatusRecord["component"], OperationalStatusRecord | null> {
+    const result: Record<OperationalStatusRecord["component"], OperationalStatusRecord | null> = {
+      graph_kernel: null,
+      watcher: null,
+    };
+    const rows = this.db.prepare(
+      "SELECT component, status, diagnostic, updated_at FROM operational_status WHERE workspace_id = ? ORDER BY component",
+    ).all(this.workspace.id);
+    for (const row of rows) {
+      const component = stringValue(row.component) as OperationalStatusRecord["component"];
+      result[component] = {
+        component,
+        status: stringValue(row.status) as OperationalStatusRecord["status"],
+        diagnostic: nullableString(row.diagnostic),
+        updatedAt: stringValue(row.updated_at),
+      };
+    }
+    return result;
   }
 
   getFileHashes(): Map<string, string> {
@@ -3019,6 +3061,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
             completedAt: nullableString(lastRun.completed_at),
           }
         : null,
+      operational: this.getOperationalStatus(),
     };
   }
 

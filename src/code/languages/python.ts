@@ -293,7 +293,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
           } else addUnresolved(entry.file, sourceId, "CALLS", callable.rawName, callable.span, 0.5);
       }
     }
-    return { files, nodes: [...nodes.values()], edges: [...edges.values()], unresolvedReferences: [...unresolved.values()], diagnostics: [...input.project.diagnostics, ...kernel.diagnostics, `GRAPH_KERNEL_MODE: ${kernel.mode}`], providerMetrics: { filesParsed: kernel.filesParsed, mode: kernel.mode } };
+    return { files, nodes: [...nodes.values()], edges: [...edges.values()], unresolvedReferences: [...unresolved.values()], diagnostics: [...input.project.diagnostics, ...kernel.diagnostics, `GRAPH_KERNEL_MODE: ${kernel.mode}`], providerMetrics: { filesParsed: kernel.filesParsed, mode: kernel.mode, kernelRssBytes: kernel.kernelRssBytes } };
   }
 }
 

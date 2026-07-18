@@ -612,6 +612,7 @@ export class CodeIndexer {
               language: "python", ecosystem: "pypi", syntaxProvider: "contextmesh_graph_kernel", precisionProvider: null,
               analysisLevel: "syntax" as const, files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: 0,
               filesReparsed: pythonGraph.providerMetrics?.filesParsed ?? pythonFiles.length,
+              kernelRssBytes: pythonGraph.providerMetrics?.kernelRssBytes ?? 0,
               configHash: project.pythonProject.configHash,
               providerVersions: { ...PYTHON_PROVIDER_VERSIONS }, status: "ready" as const,
               coverage: 1, diagnostics: [

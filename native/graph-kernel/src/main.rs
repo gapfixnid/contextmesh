@@ -45,11 +45,14 @@ struct Grammar { language: &'static str, provider: &'static str, version: &'stat
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TypeScriptProbe { declarations: usize, imports: usize, calls: usize, nodes: usize, has_error: bool, rss_bytes: u64 }
+struct TypeScriptProbe {
+    declarations: usize, imports: usize, calls: usize, nodes: usize, has_error: bool, rss_bytes: u64,
+    declaration_names: Vec<String>, import_specifiers: Vec<String>, call_names: Vec<String>,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PythonBatch { files: Vec<PythonFacts> }
+struct PythonBatch { files: Vec<PythonFacts>, rss_bytes: u64 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +116,19 @@ fn import_name(node: Node, source: &[u8]) -> Option<ImportedName> {
     (!name.is_empty()).then_some(ImportedName { name, alias: None })
 }
 
+fn declaration_signature(content: &str) -> String {
+    for (index, character) in content.char_indices() {
+        if character != ':' { continue; }
+        let tail = &content[index + 1..];
+        let Some(line_end) = tail.find('\n') else { continue; };
+        let after_colon = tail[..line_end].trim_end_matches('\r').trim();
+        if after_colon.is_empty() || after_colon.starts_with('#') {
+            return content[..index].chars().take(1_000).collect();
+        }
+    }
+    content.chars().take(1_000).collect()
+}
+
 fn walk(node: Node, source: &[u8], names: &[String], container_kind: &str, owner: Option<usize>, facts: &mut PythonFacts) {
     if node.kind() == "decorated_definition" {
         if let Some(definition) = unwrap_definition(node) { walk(definition, source, names, container_kind, owner, facts); }
@@ -127,10 +143,10 @@ fn walk(node: Node, source: &[u8], names: &[String], container_kind: &str, owner
             active_names.push(name.clone());
             let kind = if node.kind() == "class_definition" { "class" } else if container_kind == "class" { "method" } else { "function" };
             let content = text(node, source).to_string();
-            let signature = content.split_once("\n").map(|pair| pair.0).unwrap_or(&content).trim_end_matches(':').to_string();
+            let signature = declaration_signature(&content);
             facts.declarations.push(Declaration {
                 native_kind: node.kind().to_string(), name, symbol_path: active_names.join("."), container_kind: kind.to_string(),
-                container_start_byte: owner, is_async: named_children(node).iter().any(|child| child.kind() == "async"),
+                container_start_byte: owner, is_async: content.trim_start().starts_with("async "),
                 signature, content, span: span(node),
             });
             active_kind = kind.to_string();
@@ -183,20 +199,37 @@ fn probe_typescript(content: &str) -> Result<TypeScriptProbe, String> {
     parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()).map_err(|error| error.to_string())?;
     let tree = parser.parse(content, None).ok_or_else(|| "tree-sitter returned no TypeScript tree".to_string())?;
     let root = tree.root_node();
-    let mut probe = TypeScriptProbe { declarations: 0, imports: 0, calls: 0, nodes: 0, has_error: root.has_error(), rss_bytes: 0 };
+    let mut probe = TypeScriptProbe {
+        declarations: 0, imports: 0, calls: 0, nodes: 0, has_error: root.has_error(), rss_bytes: 0,
+        declaration_names: vec![], import_specifiers: vec![], call_names: vec![],
+    };
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         probe.nodes += 1;
         match node.kind() {
-            "function_declaration" | "class_declaration" | "method_definition" | "interface_declaration" | "type_alias_declaration" => probe.declarations += 1,
-            "import_statement" => probe.imports += 1,
-            "call_expression" | "new_expression" => probe.calls += 1,
+            "function_declaration" | "class_declaration" | "method_definition" | "interface_declaration" | "type_alias_declaration" => {
+                probe.declarations += 1;
+                if let Some(name) = node.child_by_field_name("name") { probe.declaration_names.push(text(name, content.as_bytes()).to_string()); }
+            }
+            "import_statement" => {
+                probe.imports += 1;
+                if let Some(source) = node.child_by_field_name("source") {
+                    probe.import_specifiers.push(text(source, content.as_bytes()).trim_matches(|character| character == '\"' || character == '\'').to_string());
+                }
+            }
+            "call_expression" | "new_expression" => {
+                probe.calls += 1;
+                if let Some(function) = node.child_by_field_name("function").or_else(|| node.child_by_field_name("constructor")) {
+                    probe.call_names.push(text(function, content.as_bytes()).to_string());
+                }
+            }
             _ => {}
         }
         stack.extend(named_children(node));
     }
     let system = sysinfo::System::new_all();
     probe.rss_bytes = sysinfo::get_current_pid().ok().and_then(|pid| system.process(pid)).map(|process| process.memory()).unwrap_or(0);
+    probe.declaration_names.sort(); probe.import_specifiers.sort(); probe.call_names.sort();
     Ok(probe)
 }
 
@@ -242,7 +275,9 @@ fn main() {
                 for result in results { match result { Ok(facts) => data.push(facts), Err(diagnostic) => diagnostics.push(diagnostic) } }
                 data.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
                 let status = if diagnostics.is_empty() { "ok" } else { "error" };
-                emit(&Response { protocol: PROTOCOL, request_id, status, data: PythonBatch { files: data }, diagnostics });
+                let system = sysinfo::System::new_all();
+                let rss_bytes = sysinfo::get_current_pid().ok().and_then(|pid| system.process(pid)).map(|process| process.memory()).unwrap_or(0);
+                emit(&Response { protocol: PROTOCOL, request_id, status, data: PythonBatch { files: data, rss_bytes }, diagnostics });
             }
             Request::Watch { request_id, root_path } => { watch(request_id, root_path); break; }
             Request::ProbeTypescript { request_id, content } => match probe_typescript(&content) {

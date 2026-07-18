@@ -26,14 +26,28 @@ export class CodeService {
   }
 
   async index(mode: "full" | "incremental"): Promise<IndexResult> {
-    const result = await this.indexer.index(mode);
-    this.cache.hydrate();
-    return result;
+    try {
+      const result = await this.indexer.index(mode);
+      await this.database.withReadSnapshot(() => this.cache.hydrate());
+      if (result.adapterStats.some((item) => item.language === "python")) {
+        this.database.setOperationalStatus("graph_kernel", "ready");
+      }
+      return result;
+    } catch (error) {
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      if (/KERNEL_/.test(diagnostic)) this.database.setOperationalStatus("graph_kernel", "failed", diagnostic);
+      throw error;
+    }
   }
 
   recordOperationalFailure(diagnostic: string): void {
+    this.database.setOperationalStatus(diagnostic.startsWith("WATCH_") ? "watcher" : "graph_kernel", "failed", diagnostic);
     const handle = this.database.startIndexRun("incremental");
     this.database.failIndexRun(handle, [diagnostic]);
+  }
+
+  recordOperationalRecovery(component: "graph_kernel" | "watcher"): void {
+    this.database.setOperationalStatus(component, "ready");
   }
 
   reconcileSemantic(): Promise<void> {
@@ -79,6 +93,7 @@ export class CodeService {
     truncated: boolean;
     nextOffset: number | null;
   } {
+    this.cache.hydrate();
     const hybrid = semantic
       ? hybridCodeSearch(this.database, input, semantic)
       : this.cache.search(JSON.stringify(input), () => hybridCodeSearch(this.database, input, null));
@@ -92,9 +107,10 @@ export class CodeService {
   }
 
   trace(input: TraceCodeInput): ReturnType<ContextMeshStorage["traceCode"]> {
+    this.cache.hydrate();
     return this.cache.trace(JSON.stringify(input), () => this.cache.traceGraph(input.symbolId, input.direction, input.edgeKinds, input.depth, input.limit)
       ?? this.database.traceCode(input.symbolId, input.direction, input.edgeKinds, input.depth, input.limit));
   }
 
-  cacheStats(): ReturnType<GenerationGraphCache["stats"]> { return this.cache.stats(); }
+  cacheStats(): ReturnType<GenerationGraphCache["stats"]> { this.cache.hydrate(); return this.cache.stats(); }
 }

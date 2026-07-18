@@ -257,6 +257,7 @@ export interface AdapterStats {
   analysisLevel: AnalysisLevel;
   files: number;
   filesReparsed?: number;
+  kernelRssBytes?: number;
   syntaxInvocations: number;
   precisionInvocations: number;
   configHash: string;
