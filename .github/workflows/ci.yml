@@ -26,12 +26,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.85.0
       - uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run verify:native-supply-chain
+      - run: npm run evaluate:v04
       - run: npm run evaluate:multilang
       - run: npm run verify:package
         if: matrix.os == 'ubuntu-latest'

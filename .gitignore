@@ -3,6 +3,8 @@ dist/
 .semantic-smoke-model/
 coverage/
 .contextmesh/
+native/graph-kernel/target/
+artifacts/v04-local-*.json
 *.log
 .env
 .env.*

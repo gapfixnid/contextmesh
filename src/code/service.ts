@@ -6,12 +6,14 @@ import { hybridCodeSearch } from "../semantic/hybrid.js";
 import { estimateTokens } from "../utils.js";
 import { CodeIndexer, type IndexResult } from "./indexer.js";
 import type { FreshnessMode, RequestGenerationState } from "./indexer.js";
+import { GenerationGraphCache } from "./query-cache.js";
 
 export const INDEX_STALE_WARNING = "INDEX_STALE: serving the last committed generation";
 
 export class CodeService {
   readonly indexer: CodeIndexer;
   private readonly database: ContextMeshStorage;
+  private readonly cache: GenerationGraphCache;
 
   constructor(
     database: ContextMeshStorage,
@@ -20,10 +22,18 @@ export class CodeService {
   ) {
     this.database = database;
     this.indexer = new CodeIndexer(database, freshnessMode, semantic);
+    this.cache = new GenerationGraphCache(database);
   }
 
-  index(mode: "full" | "incremental"): Promise<IndexResult> {
-    return this.indexer.index(mode);
+  async index(mode: "full" | "incremental"): Promise<IndexResult> {
+    const result = await this.indexer.index(mode);
+    this.cache.hydrate();
+    return result;
+  }
+
+  recordOperationalFailure(diagnostic: string): void {
+    const handle = this.database.startIndexRun("incremental");
+    this.database.failIndexRun(handle, [diagnostic]);
   }
 
   reconcileSemantic(): Promise<void> {
@@ -69,7 +79,9 @@ export class CodeService {
     truncated: boolean;
     nextOffset: number | null;
   } {
-    const hybrid = hybridCodeSearch(this.database, input, semantic);
+    const hybrid = semantic
+      ? hybridCodeSearch(this.database, input, semantic)
+      : this.cache.search(JSON.stringify(input), () => hybridCodeSearch(this.database, input, null));
     const results = hybrid.results;
     return {
       results,
@@ -80,6 +92,9 @@ export class CodeService {
   }
 
   trace(input: TraceCodeInput): ReturnType<ContextMeshStorage["traceCode"]> {
-    return this.database.traceCode(input.symbolId, input.direction, input.edgeKinds, input.depth, input.limit);
+    return this.cache.trace(JSON.stringify(input), () => this.cache.traceGraph(input.symbolId, input.direction, input.edgeKinds, input.depth, input.limit)
+      ?? this.database.traceCode(input.symbolId, input.direction, input.edgeKinds, input.depth, input.limit));
   }
+
+  cacheStats(): ReturnType<GenerationGraphCache["stats"]> { return this.cache.stats(); }
 }

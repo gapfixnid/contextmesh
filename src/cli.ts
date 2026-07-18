@@ -10,7 +10,7 @@ import { runStdioServer } from "./mcp/server.js";
 const HELP = `ContextMesh — local MCP code intelligence and long-term memory
 
 Usage:
-  contextmesh serve [--workspace PATH] [--no-auto-index] [--freshness-mode fast|strict] [--semantic-model PATH]
+  contextmesh serve [--workspace PATH] [--watch] [--no-auto-index] [--freshness-mode fast|strict] [--semantic-model PATH]
   contextmesh index [--workspace PATH] [--full | --incremental]
   contextmesh status [--workspace PATH]
   contextmesh search QUERY [--kind function --limit 20 --offset 0]
@@ -18,6 +18,7 @@ Usage:
   contextmesh remember CONTENT --topic TOPIC --type fact
   contextmesh recall [QUERY] [--keyword WORD --token-budget 1000 --offset 0]
   contextmesh context QUERY [--symbol SYMBOL_ID --token-budget 2000]
+  contextmesh explore QUERY [--symbol SYMBOL_ID --intent implementation|architecture|debugging --depth 2 --token-budget 2000]
   contextmesh reflect --session ID --summary TEXT [--learnings JSON]
   contextmesh forget FRAGMENT_ID --reason TEXT
   contextmesh doctor [--workspace PATH]
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
       full: { type: "boolean", default: false },
       incremental: { type: "boolean", default: false },
       "no-auto-index": { type: "boolean", default: false },
+      watch: { type: "boolean", default: false },
       "freshness-mode": { type: "string" },
       "semantic-model": { type: "string" },
       kind: { type: "string", multiple: true },
@@ -79,6 +81,7 @@ async function main(): Promise<void> {
       "include-anchor": { type: "boolean", default: false },
       include: { type: "string", multiple: true },
       symbol: { type: "string" },
+      intent: { type: "string" },
       session: { type: "string" },
       summary: { type: "string" },
       learnings: { type: "string" },
@@ -96,8 +99,8 @@ async function main(): Promise<void> {
     workspace,
     values["db-path"],
     values["semantic-model"]
-      ? { freshnessMode, semantic: { modelPath: values["semantic-model"] } }
-      : { freshnessMode },
+      ? { freshnessMode, semantic: { modelPath: values["semantic-model"] }, watcher: values.watch }
+      : { freshnessMode, watcher: values.watch },
   );
 
   if (command === "serve") {
@@ -147,6 +150,10 @@ async function main(): Promise<void> {
             offset: numeric(values.offset, 0),
           }),
         );
+        break;
+      case "explore":
+        writeJson(await app.exploreContext({ query: required(positionals[0], "QUERY"), symbolId: values.symbol,
+          intent: values.intent ?? "implementation", depth: numeric(values.depth, 2), limit: numeric(values.limit, 12), tokenBudget: numeric(values["token-budget"], 2000) }));
         break;
       case "trace":
         writeJson(

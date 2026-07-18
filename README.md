@@ -26,6 +26,7 @@ The local database is created at `.contextmesh/contextmesh.sqlite3` and is ignor
 ```powershell
 node dist/cli.js index --full
 node dist/cli.js index --incremental
+node dist/cli.js serve --watch
 node dist/cli.js status
 node dist/cli.js search ContextMeshApp
 node dist/cli.js remember "Use SQLite for local persistence." --topic architecture --type decision --anchor
@@ -77,6 +78,7 @@ Omit `--semantic-model` for the Phase 1–3 lexical/graph behavior. When supplie
 - `remember`: atomic memory storage with deduplication, TTL, anchors, supersession, and code links
 - `recall`: filtered lexical and optional semantic memory retrieval within a token budget
 - `get_context`: combined code, graph, lexical, optional semantic, and memory context
+- `explore_context`: one-shot implementation, architecture, or debugging evidence with current snippets
 - `reflect`: atomic session episode plus structured learnings
 - `forget`: auditable soft deletion
 
@@ -99,15 +101,16 @@ Fast freshness compares the configured path set, size, and modification time, th
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 
-## Library API in 0.3.0
+## Library API in 0.4.0
 
-Configure semantic retrieval only through the constructor; MCP tool input schemas are unchanged.
+Configure semantic retrieval and the additive watcher through the constructor; the original nine MCP tool input schemas are unchanged.
 
 ```ts
 import { ContextMeshApp } from "contextmesh";
 
 const app = new ContextMeshApp(workspacePath, undefined, {
   semantic: { modelPath: "C:/absolute/path/to/multilingual-e5-small" },
+  watcher: true,
 });
 
 await app.remember(input);
@@ -116,4 +119,4 @@ await app.reflect(reflection);
 await app.close();
 ```
 
-`remember`, `recall`, `reflect`, and `close` remain asynchronous. Version 0.3.0 adds a Python syntax provider and optional language/evidence/snapshot fields without changing schemaVersion 1 or the nine existing MCP tool inputs. See [multilanguage provider support](docs/multilanguage.md).
+`remember`, `recall`, `reflect`, and `close` remain asynchronous. Version 0.4.0 adds a Rust Python graph-kernel, opt-in native watcher, generation caches, and `explore_context` without changing schemaVersion 1 or the nine existing MCP tool inputs. Python portable fallback is explicit; TS Tree-sitter remains benchmark-only. See [multilanguage provider support](docs/multilanguage.md).

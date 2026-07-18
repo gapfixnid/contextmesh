@@ -5,7 +5,8 @@ ContextMesh is a single-workspace, local-first MCP process. The stdio transport 
 ```mermaid
 flowchart LR
   Client["MCP client / CLI"] --> App["ContextMesh application"]
-  App --> Index["TypeScript code index"]
+  App --> Index["Graph index coordinator"]
+  Index --> Kernel["Rust graph-kernel sidecar<br/>Python Tree-sitter + native watcher"]
   App --> Memory["Memory lifecycle"]
   App --> Context["Context assembler"]
   App -. "explicit local model only" .-> Semantic["Transformers.js + ONNX Runtime CPU"]
@@ -17,6 +18,12 @@ flowchart LR
 ```
 
 ## Code generations
+
+v0.4 keeps TypeScript/JavaScript on the TypeScript Compiler AST plus the same-`Program` TypeChecker overlay. Python parsing and syntax-fact extraction run in the `contextmesh.graph-kernel/v1` Rust sidecar; Node applies the unchanged scanner scope, project layout, canonical IDs, confidence/evidence policy, and commit fence. The sidecar parses changed Python files in parallel and returns a deterministically ordered parser-neutral batch. The portable WASM provider is explicit (`CONTEXTMESH_KERNEL_POLICY=portable`) rather than an implicit partial fallback. Protocol mismatch, crash, or an incomplete batch fails the run before commit.
+
+The optional native watcher feeds a bounded, sorted, debounced queue. Only supported source/config paths are admitted; the normal scanner still re-applies ignore, secret, symlink, and size policy. Events received during a build remain queued for the next batch. Startup performs durable-baseline reconciliation, and overflow/source/index failures persist a failed run fence while the last committed generation remains readable. One application writer builds in RAM and commits one generation.
+
+Successful commits atomically replace generation-keyed in-memory forward/reverse maps and bounded search/trace caches. A failed or intermediate build never changes active cache state. SQLite graph replacement uses reused prepared statements inside the existing single transaction, including FTS, foreign keys, memory relinks, audit/semantic state, and generation transition.
 
 The scanner hashes supported TypeScript and JavaScript files after applying built-in secret/build exclusions, `.gitignore`, and `.contextmeshignore`. Symlinks and files larger than 2 MiB are skipped. When `tsconfig.json` or `jsconfig.json` exists, TypeScript's configured `fileNames` intersected with scanner policy is the project scope; a synthetic NodeNext project uses every scanner result otherwise. Sorted file names, effective compiler options, the resolved config/extends chain, and the root `package.json` are hashed so configuration-only changes cannot produce a false no-op.
 

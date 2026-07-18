@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ContextMeshApp } from "../app.js";
 import {
   forgetSchema,
+  exploreContextSchema,
   getContextSchema,
   indexWorkspaceSchema,
   recallSchema,
@@ -52,7 +53,7 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
-  const server = new McpServer({ name: "contextmesh", version: "0.3.0" });
+  const server = new McpServer({ name: "contextmesh", version: "0.4.0" });
 
   server.registerTool(
     "index_workspace",
@@ -177,6 +178,21 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
       } catch (error) {
         return failure(error);
       }
+    },
+  );
+
+  server.registerTool(
+    "explore_context",
+    {
+      title: "Explore code context",
+      description: "Return deterministic entry points, bounded relations, current snippets, and verification warnings in one read snapshot.",
+      inputSchema: exploreContextSchema,
+      outputSchema: envelopeOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try { return success(await app.exploreContext(input)); }
+      catch (error) { return failure(error); }
     },
   );
 

@@ -58,7 +58,21 @@ Only one index operation runs at a time within a server process. ContextMesh enf
 
 Project-specific exclusions belong in `.contextmeshignore`. Secret-like filenames, `.env*`, credentials/secrets paths, certificates/keys, external symlinks, dependency folders, and common build outputs are excluded before parsing.
 
+### Opt-in watcher runbook
+
+Manual indexing remains the default. Enable native watching only for the single writer process:
+
+```powershell
+node dist/cli.js serve --workspace C:\project --watch
+```
+
+The watcher reconciles the durable baseline on startup, coalesces add/change/delete/rename events, and invalidates `tsconfig.json`, `jsconfig.json`, `pyproject.toml`, source-root changes, and declaration/public API changes through the normal indexer. `workspace_status.data.watcher`, `graphKernel`, freshness fences, and `lastRun` show current mode and durable failures. On `WATCH_QUEUE_OVERFLOW`, `WATCH_SOURCE_FAILED`, `KERNEL_*`, or repeated `WATCH_INDEX_FAILED`, keep serving the last generation, correct the OS handle/path/binary issue, run `index --full`, then restart the one watcher writer. Shutdown closes watcher and sidecar handles before SQLite.
+
+The packaged host binary lives under `dist/native`. Source builds require Rust 1.85 or newer and `cargo build --locked`. Runtime network use is zero. [graph-kernel.manifest.json](graph-kernel.manifest.json), `Cargo.lock`, and `npm run verify:native-supply-chain` define exact crate/grammar pins and checksums. Windows, Linux, and macOS build/contract tests are required; only host-target binaries are packaged.
+
 ## Performance check
+
+`npm run evaluate:v04` measures five cold samples for fixed small/medium/large mixed fixtures, twenty warm search/trace/explore samples, ten single-file increments, ten real native watcher events, RSS, provider invocations, files reparsed, and prepared-transaction commit time. It gates exact native/portable Python graph parity, twenty fresh-sidecar signatures, and watcher p95 at 2,000 ms. `npm run verify:v04-artifact` requires the recorded source commit to be an ancestor of the tested checkout. The TypeScript Tree-sitter probe is benchmark-only; production remains Compiler AST plus TypeChecker.
 
 `npm run benchmark` creates and deletes a temporary 1,000-file project and runs 50 samples per p95 measurement. It fails if cold indexing exceeds 30 seconds, verified no-op indexing exceeds 2 seconds, fast public search-plus-trace p95 exceeds 100 ms, or fast public `get_context` p95 exceeds 150 ms. Raw database latency, strict startup verification, and strict public request p95 are reported separately as information.
 

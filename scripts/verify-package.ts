@@ -67,6 +67,22 @@ try {
     cwd: consumer,
     stdio: "inherit",
   });
+  const smokeWorkspace = path.join(temporary, "native-consumer-workspace");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(smokeWorkspace, { recursive: true }));
+  writeFileSync(path.join(smokeWorkspace, "only.py"), "def packaged_kernel():\n    return 1\n", "utf8");
+  writeFileSync(
+    path.join(consumer, "native-smoke.mjs"),
+    `import { ContextMeshApp } from "contextmesh";
+const app = new ContextMeshApp(${JSON.stringify(smokeWorkspace)});
+try {
+  await app.indexWorkspace({ mode: "full" });
+  const result = await app.searchCode({ query: "packaged_kernel" });
+  if (result.data.results.length !== 1) process.exitCode = 3;
+} finally { await app.close(); }
+`,
+    "utf8",
+  );
+  execFileSync(process.execPath, [path.join(consumer, "native-smoke.mjs")], { cwd: consumer, stdio: "inherit" });
   execFileSync(
     process.execPath,
     ["--import", "tsx", path.join(root, "scripts", "audit-production.ts"), "--cwd", consumer],

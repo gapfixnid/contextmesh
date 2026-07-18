@@ -2,6 +2,7 @@ import { ZodError } from "zod";
 
 import {
   forgetSchema,
+  exploreContextSchema,
   getContextSchema,
   indexWorkspaceSchema,
   recallSchema,
@@ -10,6 +11,7 @@ import {
   searchCodeSchema,
   traceCodeSchema,
   type Envelope,
+  type ExploreContextInput,
   type ForgetInput,
   type GetContextInput,
   type IndexWorkspaceInput,
@@ -40,6 +42,8 @@ import { envelopeFits, stabilizeEnvelope, type EnvelopeScope } from "./token-bud
 import { nowIso } from "./utils.js";
 import type { FreshnessMode, RequestGenerationState } from "./code/indexer.js";
 import { buildCodeRedundancyText, buildMemoryRedundancyText } from "./semantic/redundancy.js";
+import { GraphWatchCoordinator, type WatcherOptions } from "./code/watcher.js";
+import { graphKernelExecutablePath } from "./code/native-kernel.js";
 
 const QUERY_TRUNCATED_WARNING = "QUERY_TRUNCATED";
 const PAGINATION_STALLED_WARNING = "PAGINATION_STALLED";
@@ -82,6 +86,7 @@ export interface ContextMeshAppOptions {
   freshnessMode?: FreshnessMode;
   semantic?: SemanticServiceOptions;
   clock?: () => Date;
+  watcher?: boolean | WatcherOptions;
 }
 
 export interface ContextPackingDiagnostics {
@@ -99,6 +104,7 @@ export class ContextMeshApp {
   private activeIndex: Promise<Envelope<unknown>> | null = null;
   private closePromise: Promise<void> | null = null;
   private closing = false;
+  private readonly watcher: GraphWatchCoordinator | null;
   private lastPackingDiagnostics: ContextPackingDiagnostics = {
     softReservationEvaluations: 0,
     softReservationFits: 0,
@@ -115,12 +121,19 @@ export class ContextMeshApp {
     this.code = new CodeService(this.database, options.freshnessMode ?? "fast", this.semantic);
     this.memory = new MemoryService(this.database, this.semantic);
     this.context = new ContextAssembler(this.database, this.code.indexer);
+    this.watcher = options.watcher ? new GraphWatchCoordinator(
+      rootPath,
+      async () => { await this.indexWorkspace({ mode: "incremental" }); },
+      (diagnostic) => this.code.recordOperationalFailure(diagnostic),
+      typeof options.watcher === "object" ? options.watcher : {},
+    ) : null;
   }
 
   async initialize(autoIndex = false): Promise<void> {
     this.assertOpen();
     if (!autoIndex) {
       await this.code.indexer.verifyStartup();
+      if (this.watcher) await this.watcher.start();
       return;
     }
     try {
@@ -128,6 +141,7 @@ export class ContextMeshApp {
     } catch (error) {
       console.error(`[ContextMesh] Automatic indexing failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (this.watcher) await this.watcher.start();
   }
 
   contextPackingDiagnostics(): Readonly<ContextPackingDiagnostics> {
@@ -139,6 +153,7 @@ export class ContextMeshApp {
     this.closing = true;
     this.closePromise = (async () => {
       this.code.indexer.dispose();
+      if (this.watcher) await this.watcher.close();
       try {
         if (this.semantic) await this.semantic.dispose();
       } finally {
@@ -236,8 +251,11 @@ export class ContextMeshApp {
     }
     const adapterStats = this.code.indexer.adapterStats();
     const statsByLanguage = new Map(adapterStats.map((item) => [item.language, item]));
+    const codeStatus = await this.code.status();
+    const lastRun = codeStatus.lastRun as { status?: string; diagnostics?: string[] } | null | undefined;
+    const kernelFailure = lastRun?.status === "failed" ? lastRun.diagnostics?.find((item) => /(?:KERNEL|WATCH)_/.test(item)) : undefined;
     return this.envelope({
-      ...(await this.code.status()),
+      ...codeStatus,
       adapters: this.code.indexer.coordinator.capabilities().map((capability) => ({
         ...capability,
         providerVersions: statsByLanguage.get(capability.language)?.providerVersions ?? {},
@@ -246,6 +264,16 @@ export class ContextMeshApp {
         diagnostics: statsByLanguage.get(capability.language)?.diagnostics ?? [],
       })),
       adapterStats,
+      graphKernel: {
+        protocol: "contextmesh.graph-kernel/v1",
+        version: "0.4.0",
+        mode: process.env.CONTEXTMESH_KERNEL_POLICY === "portable" ? "portable" : "sidecar",
+        status: kernelFailure ? "failed" : process.env.CONTEXTMESH_KERNEL_POLICY === "portable" || graphKernelExecutablePath() ? "ready" : "unavailable",
+        diagnostics: kernelFailure ? [{ code: kernelFailure.split(":", 1)[0], severity: "error", message: kernelFailure }] : [],
+        runtimeNetwork: 0,
+      },
+      queryCache: this.code.cacheStats(),
+      watcher: { enabled: this.watcher !== null, mode: this.watcher ? "native-opt-in" : "manual" },
       semantic: this.semantic?.status() ?? { enabled: false },
     });
   }
@@ -345,6 +373,57 @@ export class ContextMeshApp {
       );
     }
     throw new ContextMeshError("INTERNAL_ERROR", "Code trace retry did not produce a result");
+  }
+
+  async exploreContext(input: unknown): Promise<Envelope<unknown>> {
+    this.assertOpen();
+    const parsed = validate<ExploreContextInput>(exploreContextSchema, input);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const initial = await this.code.freshnessState();
+      const snapshotResult = await this.database.withReadSnapshot(() => {
+        const state = this.database.getFreshnessState();
+        const snapshot: RequestGenerationState = { generation: state.currentGeneration, successFence: state.successFenceGeneration, stale: state.stale };
+        const assembled = this.context.assembleDatabase({ query: parsed.query, ...(parsed.symbolId ? { symbolId: parsed.symbolId } : {}), tokenBudget: parsed.tokenBudget, include: ["code"] });
+        const focused = parsed.symbolId ? this.code.trace({ symbolId: parsed.symbolId, direction: "both", depth: parsed.depth, limit: parsed.limit }) : null;
+        return { snapshot, assembled, focused };
+      });
+      const hydrated = await this.context.hydrateSnippets(snapshotResult.assembled, snapshotResult.snapshot.generation, snapshotResult.snapshot.successFence);
+      const final = await this.code.indexer.readFinalRequestState();
+      const generationChanged = hydrated.generationChanged || initial.generation !== snapshotResult.snapshot.generation || final.generation !== snapshotResult.snapshot.generation || final.successFence !== snapshotResult.snapshot.successFence;
+      if (generationChanged && attempt === 0) continue;
+      const relations = (snapshotResult.focused?.edges ?? hydrated.assembled.relationships)
+        .filter((edge) => parsed.intent !== "architecture" || ["CONTAINS", "IMPORTS", "EXTENDS", "IMPLEMENTS", "EXPORTS"].includes(edge.kind))
+        .filter((edge) => parsed.intent !== "debugging" || ["CALLS", "REFERENCES", "IMPORTS"].includes(edge.kind))
+        .slice(0, parsed.limit)
+        .map((edge) => ({ ...edge, confirmed: edge.status === "resolved" && edge.confidence >= 0.9 }));
+      let entryPoints = hydrated.assembled.candidates.filter((candidate) => candidate.kind === "code").slice(0, parsed.limit).map((candidate) => {
+        const code = candidate.value as ContextCodeItem;
+        return { id: code.id, kind: code.kind, name: code.name, qualifiedName: code.qualifiedName, relativePath: code.relativePath,
+          language: code.language, analysisLevel: code.analysisLevel, signature: code.signature, snippet: code.snippet, source: code.source };
+      });
+      let selectedRelations = relations;
+      const warningSet = new Set([
+        ...hydrated.assembled.warnings,
+        ...(initial.stale || final.stale || generationChanged ? [INDEX_STALE_WARNING] : []),
+        ...(snapshotResult.focused?.unresolved.length ? [`${snapshotResult.focused.unresolved.length} unresolved reference(s); source verification required`] : []),
+        ...(relations.some((edge) => !edge.confirmed) ? ["Candidate or low-confidence relations require source verification"] : []),
+        ...(entryPoints.some((entry) => entry.snippet === null) ? ["SOURCE_VERIFICATION_REQUIRED: one or more current snippets were unavailable"] : []),
+      ]);
+      const scope = this.scope(snapshotResult.snapshot.generation);
+      const makeData = () => ({ query: parsed.query, intent: parsed.intent, entryPoints, relations: selectedRelations,
+        unresolved: (snapshotResult.focused?.unresolved ?? []).slice(0, parsed.limit),
+        trace: { toolCalls: 1, fileReads: entryPoints.filter((entry) => entry.snippet !== null).length, strategy: "one-shot" as const } });
+      let data = makeData(); let truncated = generationChanged || hydrated.assembled.candidateTruncated;
+      while (!envelopeFits(scope, data, [...warningSet], truncated, parsed.tokenBudget) && (selectedRelations.length > 0 || entryPoints.length > 0)) {
+        truncated = true;
+        if (selectedRelations.length > entryPoints.length) selectedRelations = selectedRelations.slice(0, -1);
+        else entryPoints = entryPoints.slice(0, -1);
+        data = makeData();
+      }
+      if (!envelopeFits(scope, data, [...warningSet], truncated, parsed.tokenBudget)) throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum explore_context envelope");
+      return stabilizeEnvelope(scope, data, [...warningSet], truncated);
+    }
+    throw new ContextMeshError("INTERNAL_ERROR", "Explore context retry did not produce a result");
   }
 
   async remember(input: unknown): Promise<Envelope<unknown>> {

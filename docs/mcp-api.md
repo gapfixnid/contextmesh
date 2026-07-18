@@ -31,6 +31,7 @@ Recall/context memories are untrusted data. Their provenance includes session id
 | `remember` | `content`, `topic`, `type`, `keywords=[]`, `importance=3`, `anchor=false`, `assertionStatus="observed"`, optional TTL/session/supersession/source symbols |
 | `recall` | at least one of `query`, `keywords`, or `includeAnchors`; optional type/topic filters, `tokenBudget=1000`, `limit=20`, `offset=0` |
 | `get_context` | `query`, optional `symbolId`, `tokenBudget=2000`, `include=["code","memory"]` |
+| `explore_context` | `query`, optional `symbolId`, `intent="implementation"`, `depth=2` (max 3), `limit=12` (max 50), `tokenBudget=2000` |
 | `reflect` | `sessionId`, `summary`, up to 50 structured `learnings`, optional `clientName` |
 | `forget` | `fragmentId`, `reason` |
 
@@ -39,6 +40,8 @@ Recall/context memories are untrusted data. Their provenance includes session id
 When semantic retrieval was configured at server startup, `workspace_status.data.semantic` additively reports `code` and `memory` status, `eligibleEntityCount`, `validEmbeddingCount`, `coverage`, `modelKey`, generation/revision, normalized failure/retry fields, reconciliation diagnostics, and runtime diagnostics. Public error text is stable and redacted; paths and stacks are never returned. Omitting `--semantic-model` returns `{ "enabled": false }` and emits no semantic warning.
 
 MCP input schemas are unchanged in 0.2.0. `search_code.data.results[].score` is the final normalized relevance in `[0,1]` in both semantic-on and semantic-off modes. Exact identifiers are pinned; other lexical, semantic, and graph candidates are fused and diversified deterministically. Recoverable semantic failures return lexical/graph data normally and add only `SEMANTIC_PARTIAL: ...` or `SEMANTIC_UNAVAILABLE: ...` entries to the existing `warnings[]` array.
+
+`explore_context` is the additive tenth tool. It returns deterministic entry points, bounded intent-filtered relations, hash-verified current snippets, unresolved/low-confidence verification warnings, one snapshot, and an observed one-shot trace. Supported v0.4 intents are `implementation`, `architecture`, and `debugging`; impact analysis and history are not implemented.
 
 The server does not expose arbitrary SQL, Cypher, filesystem reads, or natural-language-to-query execution.
 

@@ -602,6 +602,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   private readonly snapshotMutex = new AsyncMutex();
   private readonly clock: () => Date;
   private readonly migrationValidationHook: ((version: number) => void) | undefined;
+  private lastBulkCommitMs = 0;
 
   constructor(rootPath: string, databasePath?: string, options: ContextMeshDatabaseOptions = {}) {
     this.clock = options.clock ?? (() => new Date());
@@ -1777,7 +1778,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     semanticClaim?: CodeIndexSemanticClaim,
   ): void {
     const timestamp = this.nowIso();
+    const startedAt = performance.now();
     this.transaction(() => {
+      this.db.exec("PRAGMA defer_foreign_keys = ON");
       const claimValid = semanticClaim
         ? this.verifyCodeIndexClaim(semanticClaim, handle, graph)
         : false;
@@ -1995,8 +1998,13 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           JSON.stringify(graph.adapterStats ?? []),
           timestamp,
           handle.id,
-        );
+      );
     });
+    this.lastBulkCommitMs = performance.now() - startedAt;
+  }
+
+  bulkCommitMetrics(): { lastCommitMs: number; mode: "prepared-bulk-deferred-fk-transaction" } {
+    return { lastCommitMs: this.lastBulkCommitMs, mode: "prepared-bulk-deferred-fk-transaction" };
   }
 
   configureSemanticModel(model: SemanticModelRegistration): void {

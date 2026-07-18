@@ -596,7 +596,7 @@ export class CodeIndexer {
           const pythonAdapter = this.coordinator.adapter("python");
           const pythonProvider = pythonAdapter?.createSyntaxProvider(project.pythonProject);
           const pythonGraph = pythonProvider
-            ? await pythonProvider.extract({ workspace, project: project.pythonProject, files: pythonFiles, generation: handle.generation })
+            ? await pythonProvider.extract({ workspace, project: project.pythonProject, files: pythonFiles, generation: handle.generation, mode })
             : { files: [], nodes: [], edges: [], unresolvedReferences: [], diagnostics: [] };
           const adapterStats: AdapterStats[] = [
             ...(typescriptFiles.length > 0 ? [{
@@ -609,13 +609,17 @@ export class CodeIndexer {
               coverage: 1, diagnostics: [],
             }] : []),
             ...(pythonFiles.length > 0 ? [{
-              language: "python", ecosystem: "pypi", syntaxProvider: "tree_sitter_python", precisionProvider: null,
+              language: "python", ecosystem: "pypi", syntaxProvider: "contextmesh_graph_kernel", precisionProvider: null,
               analysisLevel: "syntax" as const, files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: 0,
+              filesReparsed: pythonGraph.providerMetrics?.filesParsed ?? pythonFiles.length,
               configHash: project.pythonProject.configHash,
               providerVersions: { ...PYTHON_PROVIDER_VERSIONS }, status: "ready" as const,
-              coverage: 1, diagnostics: project.pythonProject.diagnostics.map((message) => ({
-                code: "PYTHON_PROJECT_DIAGNOSTIC", severity: "warning" as const, message,
-              })),
+              coverage: 1, diagnostics: [
+                { code: "GRAPH_KERNEL_MODE", severity: "info" as const, message: pythonGraph.providerMetrics?.mode ?? "unknown" },
+                ...project.pythonProject.diagnostics.map((message) => ({
+                  code: "PYTHON_PROJECT_DIAGNOSTIC", severity: "warning" as const, message,
+                })),
+              ],
             }] : []),
           ];
           this.lastAdapterStats = adapterStats;

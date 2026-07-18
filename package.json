@@ -1,6 +1,6 @@
 {
   "name": "contextmesh",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local-first MCP code intelligence and long-term memory server",
   "type": "module",
   "bin": {
@@ -25,10 +25,12 @@
   "packageManager": "npm@11.16.0",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && npm run build:native:release",
+    "build:native": "tsx scripts/build-native.ts",
+    "build:native:release": "tsx scripts/build-native.ts --release",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js serve",
-    "test": "vitest run",
+    "test": "npm run build:native && vitest run",
     "test:watch": "vitest",
     "benchmark": "tsx scripts/benchmark.ts",
     "benchmark:semantic": "node --expose-gc --import tsx scripts/benchmark-semantic.ts",
@@ -36,6 +38,9 @@
     "benchmark:unavailable": "tsx scripts/benchmark-unavailable.ts",
     "evaluate:quality": "tsx scripts/evaluate-quality.ts",
     "evaluate:multilang": "tsx scripts/evaluate-multilang.ts",
+    "evaluate:v04": "tsx scripts/evaluate-v04.ts",
+    "verify:v04-artifact": "tsx scripts/verify-v04-artifact.ts",
+    "verify:native-supply-chain": "tsx scripts/verify-native-supply-chain.ts",
     "compare:parity": "tsx scripts/compare-parity.ts",
     "fetch:semantic-smoke-model": "tsx scripts/fetch-semantic-smoke-model.ts",
     "smoke:semantic": "tsx scripts/smoke-semantic.ts",

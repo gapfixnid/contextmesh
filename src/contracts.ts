@@ -115,6 +115,15 @@ export const getContextSchema = z.object({
   include: z.array(z.enum(["code", "memory"])).min(1).max(2).default(["code", "memory"]),
 });
 
+export const exploreContextSchema = z.object({
+  query: z.string().trim().min(1).max(1000),
+  symbolId: z.string().min(1).optional(),
+  intent: z.enum(["implementation", "architecture", "debugging"]).default("implementation"),
+  depth: z.number().int().min(1).max(3).default(2),
+  limit: z.number().int().min(1).max(50).default(12),
+  tokenBudget: z.number().int().min(256).max(8000).default(2000),
+});
+
 export const reflectSchema = z.object({
   sessionId: z.string().trim().min(1).max(200),
   summary: z.string().trim().min(1).max(4000),
@@ -133,6 +142,7 @@ export type TraceCodeInput = z.infer<typeof traceCodeSchema>;
 export type RememberInput = z.infer<typeof rememberSchema>;
 export type RecallInput = z.infer<typeof recallSchema>;
 export type GetContextInput = z.infer<typeof getContextSchema>;
+export type ExploreContextInput = z.infer<typeof exploreContextSchema>;
 export type ReflectInput = z.infer<typeof reflectSchema>;
 export type ForgetInput = z.infer<typeof forgetSchema>;
 
@@ -246,6 +256,7 @@ export interface AdapterStats {
   precisionProvider: string | null;
   analysisLevel: AnalysisLevel;
   files: number;
+  filesReparsed?: number;
   syntaxInvocations: number;
   precisionInvocations: number;
   configHash: string;

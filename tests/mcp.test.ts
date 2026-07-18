@@ -29,6 +29,7 @@ describe("MCP protocol", () => {
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
         [
           "forget",
+          "explore_context",
           "get_context",
           "index_workspace",
           "recall",
@@ -84,7 +85,7 @@ describe("MCP protocol", () => {
       try {
         await client.connect(transport);
         const tools = await client.listTools();
-        expect(tools.tools).toHaveLength(9);
+        expect(tools.tools).toHaveLength(10);
         const status = await client.callTool({ name: "workspace_status", arguments: {} });
         expect(status.isError).not.toBe(true);
       } finally {

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "protocol": "contextmesh.graph-kernel/v1",
+  "kernelVersion": "0.4.0",
+  "runtimeNetwork": "denied",
+  "grammars": [
+    { "language": "python", "crate": "tree-sitter-python", "version": "0.25.0" },
+    { "language": "typescript-benchmark-only", "crate": "tree-sitter-typescript", "version": "0.23.2" }
+  ],
+  "crates": {
+    "notify": "8.2.0",
+    "rayon": "1.11.0",
+    "serde": "1.0.228",
+    "serde_json": "1.0.145",
+    "sysinfo": "0.33.1",
+    "tree-sitter": "0.25.10",
+    "tree-sitter-python": "0.25.0",
+    "tree-sitter-typescript": "0.23.2"
+  },
+  "supportedBuildTargets": [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin"
+  ],
+  "packaging": "one host-target sidecar in dist/native; Cargo.lock checksums are authoritative"
+}

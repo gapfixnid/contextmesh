@@ -29,6 +29,7 @@ export interface SyntaxGraphBatch {
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
   diagnostics: string[];
+  providerMetrics?: { filesParsed: number; mode: string };
 }
 
 export interface SyntaxProvider {
@@ -39,6 +40,7 @@ export interface SyntaxProvider {
     project: ProjectDescriptor;
     files: ScannedFile[];
     generation: number;
+    mode?: "full" | "incremental" | "evaluation";
   }): Promise<SyntaxGraphBatch>;
 }
 

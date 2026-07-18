@@ -1,9 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
-
 import { parse as parseToml } from "smol-toml";
-import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 
 import type {
   CodeEdgeKind,
@@ -15,29 +12,16 @@ import type {
   UnresolvedReferenceRecord,
 } from "../../contracts.js";
 import { clampText, sha256 } from "../../utils.js";
+import { extractPythonKernelFacts, type KernelSpan } from "../native-kernel.js";
 import type { LanguageAdapter, ProjectDescriptor, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
 
 export const PYTHON_PROVIDER_VERSIONS = {
-  runtime: "web-tree-sitter@0.26.11",
+  runtime: "contextmesh-graph-kernel@0.4.0",
+  portableRuntime: "web-tree-sitter@0.26.11",
   grammar: "tree-sitter-python@0.25.0",
   manifest: "smol-toml@1.7.0",
+  protocol: "contextmesh.graph-kernel/v1",
 } as const;
-
-const require = createRequire(import.meta.url);
-let parserPromise: Promise<Parser> | null = null;
-
-async function pythonParser(): Promise<Parser> {
-  if (!parserPromise) {
-    parserPromise = (async () => {
-      const runtimeDirectory = path.dirname(require.resolve("web-tree-sitter"));
-      await Parser.init({ locateFile: (file: string) => path.join(runtimeDirectory, file) });
-      const grammarDirectory = path.dirname(require.resolve("tree-sitter-python/package.json"));
-      const language = await Language.load(path.join(grammarDirectory, "tree-sitter-python.wasm"));
-      return new Parser().setLanguage(language);
-    })();
-  }
-  return parserPromise;
-}
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -109,17 +93,17 @@ export function discoverPythonProject(rootPath: string): ProjectDescriptor {
   };
 }
 
-function evidence(source: CodeEvidence["source"], confidence: number, node?: SyntaxNode): CodeEvidence[] {
+function evidence(source: CodeEvidence["source"], confidence: number, node?: KernelSpan, provider = "contextmesh_graph_kernel", providerVersion = "0.4.0"): CodeEvidence[] {
   return [{
-    provider: "tree_sitter_python",
-    providerVersion: "0.25.0",
+    provider,
+    providerVersion,
     source,
     confidence,
     ...(node ? { sourceSpan: {
-      startByte: node.startIndex,
-      endByte: node.endIndex,
-      line: node.startPosition.row + 1,
-      column: node.startPosition.column + 1,
+      startByte: node.startByte,
+      endByte: node.endByte,
+      line: node.startLine,
+      column: node.startColumn,
     } } : {}),
   }];
 }
@@ -140,22 +124,12 @@ function moduleName(relativePath: string, root: string, packageDirectories: Pyth
   return name || path.basename(root || relativePath).replace(/\.py$/i, "");
 }
 
-function importedName(node: SyntaxNode): { name: string; alias: string | null } | null {
-  if (node.type === "aliased_import") {
-    const name = node.childForFieldName("name")?.text.trim();
-    if (!name) return null;
-    return { name, alias: node.childForFieldName("alias")?.text.trim() ?? null };
-  }
-  const name = node.text.trim();
-  return name ? { name, alias: null } : null;
-}
-
 class PythonSyntaxProvider implements SyntaxProvider {
-  readonly id = "tree_sitter_python";
-  readonly version = "0.25.0";
+  readonly id = "contextmesh_graph_kernel";
+  readonly version = "0.4.0";
 
   async extract(input: Parameters<SyntaxProvider["extract"]>[0]): Promise<SyntaxGraphBatch> {
-    const parser = await pythonParser();
+    const kernel = await extractPythonKernelFacts(input.files.filter((file) => file.language === "python"), undefined, input.mode === "full");
     const files: IndexedSourceFile[] = [];
     const nodes = new Map<string, CodeNodeRecord>();
     const edges = new Map<string, CodeEdgeRecord>();
@@ -165,14 +139,16 @@ class PythonSyntaxProvider implements SyntaxProvider {
     const declarationIdsByPosition = new Map<string, string>();
     const declarationOrdinals = new Map<string, number>();
     const packageDirectories = ((input.project.runtime as PythonProjectRuntime | undefined)?.packageDirectories ?? []);
-    const trees: Array<{ scanned: (typeof input.files)[number]; file: IndexedSourceFile; moduleId: string; tree: ReturnType<Parser["parse"]> }> = [];
+    const entries: Array<{ scanned: (typeof input.files)[number]; file: IndexedSourceFile; moduleId: string; facts: (typeof kernel.files)[number] }> = [];
     const edgeKey = (edge: CodeEdgeRecord): string => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
+    const factsByPath = new Map(kernel.files.map((facts) => [facts.relativePath, facts]));
 
     for (const scanned of input.files.filter((file) => file.language === "python")) {
       const root = sourceRootFor(scanned, input.project.sourceRoots);
       const fileId = sha256(`${input.workspace.id}\0${scanned.pathKey}`);
-      const tree = parser.parse(scanned.content);
-      const hasError = tree?.rootNode.hasError ?? true;
+      const facts = factsByPath.get(scanned.relativePath);
+      if (!facts) throw new Error(`KERNEL_INCOMPLETE_BATCH: ${scanned.relativePath}`);
+      const hasError = facts.hasError;
       const file: IndexedSourceFile = {
         ...scanned,
         id: fileId,
@@ -201,97 +177,60 @@ class PythonSyntaxProvider implements SyntaxProvider {
         generation: input.generation, metadata: { sourceRoot: root }, language: "python", ecosystem: "pypi",
         nativeKind: "module", analysisLevel: "syntax",
       });
-      trees.push({ scanned, file, moduleId, tree });
+      entries.push({ scanned, file, moduleId, facts });
     }
 
-    const addEdge = (sourceId: string, targetId: string, kind: CodeEdgeKind, confidence: number, status: "candidate" | "resolved", node?: SyntaxNode, details: Record<string, unknown> = {}): void => {
+    const addEdge = (sourceId: string, targetId: string, kind: CodeEdgeKind, confidence: number, status: "candidate" | "resolved", node?: KernelSpan, details: Record<string, unknown> = {}): void => {
       if (kind === "IMPORTS" && sourceId === targetId) return;
       const record: CodeEdgeRecord = {
         workspaceId: input.workspace.id, sourceId, targetId, kind, confidence,
         resolutionKind: status === "candidate" ? "heuristic" : kind === "IMPORTS" ? "import" : "local",
-        generation: input.generation, metadata: details, status, evidence: evidence("syntax", confidence, node),
+        generation: input.generation, metadata: details, status, evidence: evidence("syntax", confidence, node, "tree_sitter_python", "0.25.0"),
       };
       edges.set(edgeKey(record), record);
     };
-    const addUnresolved = (file: IndexedSourceFile, sourceNodeId: string, kind: string, rawName: string, node: SyntaxNode, confidence = 0.5, candidates: string[] = []): void => {
+    const addUnresolved = (file: IndexedSourceFile, sourceNodeId: string, kind: string, rawName: string, node: KernelSpan, confidence = 0.5, candidates: string[] = []): void => {
       const item: UnresolvedReferenceRecord = {
         workspaceId: input.workspace.id, fileId: file.id, sourceNodeId, kind, rawName: clampText(rawName, 200),
-        qualifier: null, line: node.startPosition.row + 1, column: node.startPosition.column + 1,
+        qualifier: null, line: node.startLine, column: node.startColumn,
         candidates: [...new Set(candidates)].sort((left, right) => left.localeCompare(right)),
-        generation: input.generation, confidence, evidence: evidence("syntax", confidence, node),
+        generation: input.generation, confidence, evidence: evidence("syntax", confidence, node, "tree_sitter_python", "0.25.0"),
       };
       unresolved.set(`${file.id}\0${sourceNodeId}\0${kind}\0${rawName}\0${item.line}\0${item.column}`, item);
     };
 
-    const declarationPass = (entry: (typeof trees)[number]): void => {
-      if (!entry.tree) return;
-      const visit = (node: SyntaxNode, containerId: string, names: string[], containerKind: CodeNodeKind): void => {
-        if (node.type === "decorated_definition") {
-          const definition = node.namedChildren.at(-1);
-          if (definition) visit(definition, containerId, names, containerKind);
-          return;
-        }
-        let activeId = containerId;
-        let activeNames = names;
-        let activeKind = containerKind;
-        const actual = node;
-        const functionLike = actual.type === "function_definition";
-        const classLike = actual.type === "class_definition";
-        if (functionLike || classLike) {
-          const nameNode = actual.childForFieldName("name");
-          if (nameNode) {
-            const name = nameNode.text;
-            const kind: CodeNodeKind = classLike ? "class" : containerKind === "class" ? "method" : "function";
-            const symbolPath = [...names, name].join(".");
-            const content = actual.text;
-            const signature = clampText(content.split(/:\s*(?:#.*)?\r?\n/, 1)[0] ?? content, 1000);
-            const locatorKey = `${entry.file.pathKey}:${kind}:${symbolPath}`;
-            const ordinal = (declarationOrdinals.get(locatorKey) ?? 0) + 1;
-            declarationOrdinals.set(locatorKey, ordinal);
-            const declarationHash = sha256(signature.trim().replace(/\s+/g, " "));
-            const localKey = `${locatorKey}:${ordinal}:${declarationHash.slice(0, 16)}`;
-            const id = sha256(`${input.workspace.id}\0python\0${locatorKey}\0${ordinal}\0${declarationHash}`);
-            nodes.set(id, {
-              id, workspaceId: input.workspace.id, fileId: entry.file.id, kind, name,
-              qualifiedName: `${entry.file.relativePath}#${symbolPath}`, localKey,
-              signature, doc: "",
-              isExported: !name.startsWith("_"), startByte: actual.startIndex, endByte: actual.endIndex,
-              startLine: actual.startPosition.row + 1, startColumn: actual.startPosition.column + 1,
-              endLine: actual.endPosition.row + 1, endColumn: actual.endPosition.column + 1,
-              contentHash: sha256(content), generation: input.generation,
-              metadata: { async: actual.namedChildren.some((child) => child.type === "async"), stableLocator: locatorKey, declarationHash, ordinal },
-              language: "python", ecosystem: "pypi", nativeKind: actual.type, analysisLevel: "syntax",
-            });
-            const matches = declarationsByName.get(name) ?? [];
-            matches.push(id); declarationsByName.set(name, matches);
-            declarationIdsByPosition.set(`${entry.file.id}:${actual.startIndex}`, id);
-            addEdge(containerId, id, "CONTAINS", 1, "resolved", actual);
-            activeId = id; activeNames = [...names, name]; activeKind = kind;
-          }
-        }
-        for (const child of node.namedChildren) visit(child, activeId, activeNames, activeKind);
-      };
-      visit(entry.tree.rootNode, entry.moduleId, [], "module");
-    };
-    trees.forEach(declarationPass);
+    for (const entry of entries) for (const declaration of entry.facts.declarations) {
+      const kind = declaration.containerKind as CodeNodeKind;
+      const locatorKey = `${entry.file.pathKey}:${kind}:${declaration.symbolPath}`;
+      const ordinal = (declarationOrdinals.get(locatorKey) ?? 0) + 1;
+      declarationOrdinals.set(locatorKey, ordinal);
+      const signature = clampText(declaration.signature, 1000);
+      const declarationHash = sha256(signature.trim().replace(/\s+/g, " "));
+      const localKey = `${locatorKey}:${ordinal}:${declarationHash.slice(0, 16)}`;
+      const id = sha256(`${input.workspace.id}\0python\0${locatorKey}\0${ordinal}\0${declarationHash}`);
+      const containerId = declaration.containerStartByte === null
+        ? entry.moduleId
+        : declarationIdsByPosition.get(`${entry.file.id}:${declaration.containerStartByte}`) ?? entry.moduleId;
+      nodes.set(id, {
+        id, workspaceId: input.workspace.id, fileId: entry.file.id, kind, name: declaration.name,
+        qualifiedName: `${entry.file.relativePath}#${declaration.symbolPath}`, localKey, signature, doc: "",
+        isExported: !declaration.name.startsWith("_"), startByte: declaration.span.startByte, endByte: declaration.span.endByte,
+        startLine: declaration.span.startLine, startColumn: declaration.span.startColumn,
+        endLine: declaration.span.endLine, endColumn: declaration.span.endColumn,
+        contentHash: sha256(declaration.content), generation: input.generation,
+        metadata: { async: declaration.isAsync, stableLocator: locatorKey, declarationHash, ordinal },
+        language: "python", ecosystem: "pypi", nativeKind: declaration.nativeKind, analysisLevel: "syntax",
+      });
+      const matches = declarationsByName.get(declaration.name) ?? [];
+      matches.push(id); declarationsByName.set(declaration.name, matches);
+      declarationIdsByPosition.set(`${entry.file.id}:${declaration.span.startByte}`, id);
+      addEdge(containerId, id, "CONTAINS", 1, "resolved", declaration.span);
+    }
 
-    for (const entry of trees) {
-      if (!entry.tree) continue;
+    for (const entry of entries) {
       const currentModule = moduleName(entry.scanned.relativePath, entry.file.sourceRoot ?? "", packageDirectories);
-      const visit = (node: SyntaxNode, callerId: string): void => {
-        if (node.type === "decorated_definition") {
-          const definition = node.namedChildren.at(-1);
-          if (definition) visit(definition, callerId);
-          return;
-        }
-        const definition = node.type === "function_definition" || node.type === "class_definition" ? node : null;
-        const nextCaller = definition ? (declarationIdsByPosition.get(`${entry.file.id}:${definition.startIndex}`) ?? callerId) : callerId;
-        if (node.type === "import_statement" || node.type === "import_from_statement") {
-          const fromImport = node.type === "import_from_statement";
-          const moduleNode = fromImport ? node.namedChildren[0] : null;
-          const rawModule = fromImport ? (moduleNode?.text.trim() ?? "") : "";
-          const importNodes = fromImport ? node.namedChildren.slice(1) : node.namedChildren;
-          const names = importNodes.map(importedName).filter((item): item is NonNullable<typeof item> => item !== null);
+      for (const importFact of entry.facts.imports) {
+          const { fromImport, rawModule, names } = importFact;
           const leading = rawModule.match(/^\.+/)?.[0].length ?? 0;
           const baseParts = currentModule.split(".");
           if (!entry.scanned.relativePath.endsWith("/__init__.py")) baseParts.pop();
@@ -299,7 +238,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
             ? [...baseParts.slice(0, Math.max(0, baseParts.length - leading + 1)), rawModule.slice(leading)].filter(Boolean).join(".")
             : rawModule;
           const specs = fromImport ? (names.length ? names : [{ name: "", alias: null }]) : names;
-          if (specs.length === 0) addUnresolved(entry.file, entry.moduleId, "IMPORTS", node.text, node, 0.5);
+          if (specs.length === 0) addUnresolved(entry.file, entry.moduleId, "IMPORTS", importFact.rawText, importFact.span, 0.5);
           for (const imported of specs) {
             const specifier = fromImport ? `${rawModule} import ${imported.name}` : imported.name;
             const candidates = fromImport && rawModule.replace(/^\.+/, "") === ""
@@ -309,20 +248,20 @@ class PythonSyntaxProvider implements SyntaxProvider {
               .sort((left, right) => left.localeCompare(right));
             const target = targets.length === 1 ? targets[0] : undefined;
             if (target && target !== entry.moduleId) {
-              addEdge(entry.moduleId, target, "IMPORTS", 0.95, "resolved", node, { specifier, alias: imported.alias });
+              addEdge(entry.moduleId, target, "IMPORTS", 0.95, "resolved", importFact.span, { specifier, alias: imported.alias });
               continue;
             }
             if (targets.length > 0) {
-              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier, node, 0.5, targets);
+              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier, importFact.span, 0.5, targets);
               continue;
             }
             if (leading > 0) {
-              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier, node, 0.5);
+              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier, importFact.span, 0.5);
               continue;
             }
             const packageName = (absoluteModule || imported.name).split(".")[0];
             if (!packageName) {
-              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier || node.text, node, 0.5);
+              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier || importFact.rawText, importFact.span, 0.5);
               continue;
             }
             const localKey = `external:pypi:${packageName.toLocaleLowerCase("en-US")}`;
@@ -334,33 +273,27 @@ class PythonSyntaxProvider implements SyntaxProvider {
               contentHash: sha256(packageName), generation: input.generation, metadata: { legacyAlias: `external:${packageName}` },
               language: "python", ecosystem: "pypi", nativeKind: "external_module", analysisLevel: "syntax",
             });
-            addEdge(entry.moduleId, id, "IMPORTS", 0.95, "resolved", node, { specifier, alias: imported.alias });
+            addEdge(entry.moduleId, id, "IMPORTS", 0.95, "resolved", importFact.span, { specifier, alias: imported.alias });
           }
-        }
-        if (node.type === "class_definition") {
-          const superclasses = node.childForFieldName("superclasses");
-          for (const base of superclasses?.namedChildren ?? []) {
-            const matches = declarationsByName.get(base.text) ?? [];
+      }
+      for (const base of entry.facts.inheritances) {
+            const sourceId = base.ownerStartByte === null ? entry.moduleId : declarationIdsByPosition.get(`${entry.file.id}:${base.ownerStartByte}`) ?? entry.moduleId;
+            const matches = declarationsByName.get(base.rawName) ?? [];
             const target = matches.length === 1 ? matches[0] : undefined;
-            if (target) addEdge(nextCaller, target, "EXTENDS", 0.9, "resolved", base);
-            else addUnresolved(entry.file, nextCaller, "EXTENDS", base.text, base, 0.5);
-          }
-        }
-        if (node.type === "call") {
-          const callable = node.childForFieldName("function");
-          if (callable?.type === "identifier") {
-            const matches = declarationsByName.get(callable.text) ?? [];
+            if (target) addEdge(sourceId, target, "EXTENDS", 0.9, "resolved", base.span);
+            else addUnresolved(entry.file, sourceId, "EXTENDS", base.rawName, base.span, 0.5);
+      }
+      for (const callable of entry.facts.calls) {
+          const sourceId = callable.ownerStartByte === null ? entry.moduleId : declarationIdsByPosition.get(`${entry.file.id}:${callable.ownerStartByte}`) ?? entry.moduleId;
+          if (callable.simpleIdentifier) {
+            const matches = declarationsByName.get(callable.rawName) ?? [];
             const target = matches.length === 1 ? matches[0] : undefined;
-            if (target && nodes.get(target)?.language === "python") addEdge(nextCaller, target, "CALLS", 0.8, "candidate", callable);
-            else addUnresolved(entry.file, nextCaller, "CALLS", callable.text, callable, 0.5);
-          } else if (callable) addUnresolved(entry.file, nextCaller, "CALLS", callable.text, callable, 0.5);
-        }
-        for (const child of node.namedChildren) visit(child, nextCaller);
-      };
-      visit(entry.tree.rootNode, entry.moduleId);
-      entry.tree.delete();
+            if (target && nodes.get(target)?.language === "python") addEdge(sourceId, target, "CALLS", 0.8, "candidate", callable.span);
+            else addUnresolved(entry.file, sourceId, "CALLS", callable.rawName, callable.span, 0.5);
+          } else addUnresolved(entry.file, sourceId, "CALLS", callable.rawName, callable.span, 0.5);
+      }
     }
-    return { files, nodes: [...nodes.values()], edges: [...edges.values()], unresolvedReferences: [...unresolved.values()], diagnostics: input.project.diagnostics };
+    return { files, nodes: [...nodes.values()], edges: [...edges.values()], unresolvedReferences: [...unresolved.values()], diagnostics: [...input.project.diagnostics, ...kernel.diagnostics, `GRAPH_KERNEL_MODE: ${kernel.mode}`], providerMetrics: { filesParsed: kernel.filesParsed, mode: kernel.mode } };
   }
 }
 
