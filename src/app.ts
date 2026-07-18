@@ -152,10 +152,16 @@ export class ContextMeshApp {
     if (this.closing) throw new ContextMeshError("INTERNAL_ERROR", "ContextMeshApp is closing or closed");
   }
 
-  private scope(generation = this.database.getWorkspace().currentGeneration): EnvelopeScope {
+  private scope(generation = this.database.getWorkspace().currentGeneration, includeSnapshot = true): EnvelopeScope {
+    const freshness = this.database.getFreshnessState();
     return {
       workspaceId: this.database.workspace.id,
       generation,
+      ...(includeSnapshot ? { snapshot: {
+        graphGeneration: generation,
+        precisionRevision: generation > 0 ? 1 : 0,
+        freshness: freshness.stale ? "stale" : "fresh",
+      } as const } : {}),
     };
   }
 
@@ -227,7 +233,12 @@ export class ContextMeshApp {
         this.semantic.reconcileMemoryIfNeeded(true),
       ]);
     }
-    return this.envelope({ ...(await this.code.status()), semantic: this.semantic?.status() ?? { enabled: false } });
+    return this.envelope({
+      ...(await this.code.status()),
+      adapters: this.code.indexer.coordinator.capabilities(),
+      adapterStats: this.code.indexer.adapterStats(),
+      semantic: this.semantic?.status() ?? { enabled: false },
+    });
   }
 
   private async graphReadAttempt<T>(
@@ -337,7 +348,7 @@ export class ContextMeshApp {
   async recall(input: unknown): Promise<Envelope<unknown>> {
     this.assertOpen();
     const parsed = validate<RecallInput>(recallSchema, input);
-    const scope = this.scope();
+    const scope = this.scope(undefined, false);
     const semanticQuery = [parsed.query ?? "", ...(parsed.keywords ?? [])].filter(Boolean).join(" ");
     let semanticResult =
       this.semantic && semanticQuery
@@ -605,7 +616,7 @@ export class ContextMeshApp {
       return this.packContext(
         parsed,
         hydrated.assembled,
-        this.scope(snapshotResult.snapshot.generation),
+        this.scope(snapshotResult.snapshot.generation, parsed.tokenBudget > 256),
         [
           ...(stale ? [INDEX_STALE_WARNING] : []),
           ...(semanticChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),

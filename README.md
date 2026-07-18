@@ -99,7 +99,7 @@ Fast freshness compares the configured path set, size, and modification time, th
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 
-## Library API in 0.2.0
+## Library API in 0.3.0
 
 Configure semantic retrieval only through the constructor; MCP tool input schemas are unchanged.
 
@@ -116,4 +116,4 @@ await app.reflect(reflection);
 await app.close();
 ```
 
-`remember`, `recall`, `reflect`, and `close` are asynchronous in 0.2.0. `search_code.data.results[].score` is now the deterministic final hybrid relevance in `[0,1]`, regardless of whether semantic retrieval is enabled.
+`remember`, `recall`, `reflect`, and `close` remain asynchronous. Version 0.3.0 adds a Python syntax provider and optional language/evidence/snapshot fields without changing schemaVersion 1 or the nine existing MCP tool inputs. See [multilanguage provider support](docs/multilanguage.md).

@@ -39,6 +39,23 @@ export type CodeEdgeKind = (typeof CODE_EDGE_KINDS)[number];
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 export type AssertionStatus = (typeof ASSERTION_STATUSES)[number];
 export type IndexMode = "full" | "incremental";
+export type AnalysisLevel = "syntax" | "resolved" | "typed";
+export type EvidenceSource = "syntax" | "type_checker" | "manifest" | "heuristic";
+
+export interface WorkspaceSnapshot {
+  graphGeneration: number;
+  precisionRevision: number;
+  freshness: "fresh" | "fast-verified" | "stale";
+}
+
+export interface CodeEvidence {
+  provider: string;
+  providerVersion: string;
+  source: EvidenceSource;
+  confidence: number;
+  sourceSpan?: { startByte: number; endByte: number; line: number; column: number };
+  details?: Record<string, unknown>;
+}
 
 export const indexWorkspaceSchema = z.object({
   mode: z.enum(["full", "incremental"]).default("incremental"),
@@ -127,6 +144,7 @@ export interface Envelope<T> {
   warnings: string[];
   truncated: boolean;
   estimatedTokens: number;
+  snapshot?: WorkspaceSnapshot;
 }
 
 export interface WorkspaceRecord {
@@ -145,7 +163,10 @@ export interface IndexedSourceFile {
   relativePath: string;
   pathKey: string;
   absolutePath: string;
-  language: "typescript" | "tsx" | "javascript" | "jsx" | "mjs" | "cjs";
+  language: "typescript" | "tsx" | "javascript" | "jsx" | "mjs" | "cjs" | "python";
+  ecosystem?: "npm" | "pypi";
+  sourceRoot?: string;
+  adapterConfigHash?: string;
   content: string;
   contentHash: string;
   sizeBytes: number;
@@ -175,6 +196,10 @@ export interface CodeNodeRecord {
   contentHash: string;
   generation: number;
   metadata: Record<string, unknown>;
+  language?: IndexedSourceFile["language"];
+  ecosystem?: "npm" | "pypi";
+  nativeKind?: string;
+  analysisLevel?: AnalysisLevel;
 }
 
 export interface CodeEdgeRecord {
@@ -186,6 +211,8 @@ export interface CodeEdgeRecord {
   resolutionKind: "exact" | "local" | "import" | "heuristic";
   generation: number;
   metadata: Record<string, unknown>;
+  status?: "candidate" | "resolved";
+  evidence?: CodeEvidence[];
 }
 
 export interface UnresolvedReferenceRecord {
@@ -199,6 +226,8 @@ export interface UnresolvedReferenceRecord {
   column: number;
   candidates: string[];
   generation: number;
+  confidence?: number;
+  evidence?: CodeEvidence[];
 }
 
 export interface ExtractedGraph {
@@ -207,6 +236,19 @@ export interface ExtractedGraph {
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
   diagnostics: string[];
+  adapterStats?: AdapterStats[];
+}
+
+export interface AdapterStats {
+  language: string;
+  ecosystem: string;
+  syntaxProvider: string;
+  precisionProvider: string | null;
+  analysisLevel: AnalysisLevel;
+  files: number;
+  syntaxInvocations: number;
+  precisionInvocations: number;
+  configHash: string;
 }
 
 export interface MemoryFragmentRecord {

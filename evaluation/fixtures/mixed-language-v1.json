@@ -1,0 +1,17 @@
+{
+  "id": "mixed-language-v1",
+  "k": 10,
+  "tokenBudget": 2000,
+  "files": {
+    "src/entry.ts": "export function sharedEntry(): number { return tsHelper(); }\nexport function tsHelper(): number { return 1; }\n",
+    "src/service.py": "def sharedEntry():\n    return python_helper()\n\ndef python_helper():\n    return 1\n",
+    "src/models.py": "class Base:\n    pass\n\nclass Worker(Base):\n    def run(self):\n        return missing_dynamic()\n"
+  },
+  "tasks": [
+    { "id": "ts", "category": "ts-only", "query": "tsHelper", "goldFiles": ["src/entry.ts"], "goldSymbols": ["tsHelper"], "memoryExpected": false },
+    { "id": "python", "category": "python-only", "query": "Worker", "goldFiles": ["src/models.py"], "goldSymbols": ["Worker"], "memoryExpected": false },
+    { "id": "mixed", "category": "mixed", "query": "sharedEntry", "goldFiles": ["src/entry.ts", "src/service.py"], "goldSymbols": ["sharedEntry"], "memoryExpected": false },
+    { "id": "memory", "category": "memory-needed", "query": "retry decision", "goldFiles": [], "goldSymbols": [], "memoryExpected": true },
+    { "id": "no-memory", "category": "memory-not-needed", "query": "python_helper", "goldFiles": ["src/service.py"], "goldSymbols": ["python_helper"], "memoryExpected": false }
+  ]
+}

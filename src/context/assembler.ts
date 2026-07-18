@@ -155,6 +155,10 @@ export class ContextAssembler {
       if (traceStartId) {
         const trace = this.database.traceCode(traceStartId, "both", undefined, 1, 50);
         relationships = trace.edges;
+        const verificationEdges = trace.edges.filter((edge) => edge.status === "candidate" || edge.confidence < 0.9);
+        if (verificationEdges.length > 0) {
+          warnings.push(`SOURCE_VERIFICATION_REQUIRED: ${verificationEdges.length} candidate/low-confidence relationship(s); current source snippets are included when budget permits`);
+        }
         for (const node of trace.nodes) {
           graphCodeIds.add(node.id);
           allCodeNodeIds.add(node.id);

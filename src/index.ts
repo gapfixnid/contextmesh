@@ -4,6 +4,7 @@ export {
   type ContextPackingDiagnostics,
 } from "./app.js";
 export * from "./contracts.js";
+export * from "./evaluation/contracts.js";
 export { ContextMeshError, type ContextMeshErrorCode } from "./errors.js";
 export type { FreshnessMode } from "./code/indexer.js";
 export type {

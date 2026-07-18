@@ -1,10 +1,11 @@
-import type { Envelope } from "./contracts.js";
+import type { Envelope, WorkspaceSnapshot } from "./contracts.js";
 import { ContextMeshError } from "./errors.js";
 import { estimateTokens } from "./utils.js";
 
 export interface EnvelopeScope {
   workspaceId: string;
   generation: number;
+  snapshot?: WorkspaceSnapshot;
 }
 
 function envelopeWithEstimate<T>(
@@ -22,6 +23,7 @@ function envelopeWithEstimate<T>(
     warnings,
     truncated,
     estimatedTokens,
+    ...(scope.snapshot ? { snapshot: scope.snapshot } : {}),
   };
 }
 

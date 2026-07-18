@@ -67,6 +67,7 @@ function languageForFile(fileName: string): ScannedFileMetadata["language"] | nu
   if (lower.endsWith(".cjs")) return "cjs";
   if (lower.endsWith(".jsx")) return "jsx";
   if (lower.endsWith(".js")) return "javascript";
+  if (lower.endsWith(".py")) return "python";
   return null;
 }
 

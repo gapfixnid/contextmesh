@@ -100,13 +100,15 @@ export interface TraceEdgeResult {
   confidence: number;
   resolutionKind: string;
   depth: number;
+  status: "candidate" | "resolved";
+  evidence: CodeEdgeRecord["evidence"];
 }
 
 export interface TraceResult {
   start: CodeSearchResult;
   nodes: CodeSearchResult[];
   edges: TraceEdgeResult[];
-  unresolved: Array<{ sourceNodeId: string | null; kind: string; rawName: string; line: number; column: number }>;
+  unresolved: Array<{ sourceNodeId: string | null; kind: string; rawName: string; line: number; column: number; confidence: number; evidence: UnresolvedReferenceRecord["evidence"] }>;
   truncated: boolean;
 }
 
@@ -151,6 +153,12 @@ export interface ExistingRelations {
   externalNodes: CodeNodeRecord[];
   edges: ExistingEdgeRelation[];
   unresolved: ExistingUnresolvedRelation[];
+}
+
+export interface StoredGraphPartition {
+  nodes: CodeNodeRecord[];
+  edges: CodeEdgeRecord[];
+  unresolvedReferences: UnresolvedReferenceRecord[];
 }
 
 export interface MemoryCodeProvenance {
@@ -309,6 +317,8 @@ export interface ReflectResult {
 
 export interface ContextMeshDatabaseOptions {
   clock?: () => Date;
+  /** Test-only fault injection after migration SQL and before commit. */
+  migrationValidationHook?: (version: number) => void;
 }
 
 const MIGRATIONS_DIRECTORY = fileURLToPath(new URL("../../migrations", import.meta.url));
@@ -380,6 +390,10 @@ function mapCodeNode(row: SqlRow): CodeSearchResult {
     contentHash: stringValue(row.content_hash),
     generation: numberValue(row.generation),
     metadata: parseJson<Record<string, unknown>>(row.metadata_json, {}),
+    language: stringValue(row.language) as NonNullable<CodeNodeRecord["language"]>,
+    ecosystem: stringValue(row.ecosystem) as NonNullable<CodeNodeRecord["ecosystem"]>,
+    nativeKind: stringValue(row.native_kind),
+    analysisLevel: stringValue(row.analysis_level) as NonNullable<CodeNodeRecord["analysisLevel"]>,
     relativePath: nullableString(row.relative_path),
     fileContentHash: nullableString(row.file_content_hash),
     score: numberValue(row.score),
@@ -461,6 +475,7 @@ export interface ContextMeshStorage {
   hasUnresolvedIndexFailure(): boolean;
   getReverseDependencyClosure(seedPathKeys: Iterable<string>): Set<string>;
   getExistingRelations(): ExistingRelations;
+  getStoredGraphPartition(language: "python" | "non-python"): StoredGraphPartition;
   startIndexRun(mode: IndexMode): IndexRunHandle;
   failIndexRun(handle: IndexRunHandle, diagnostics: string[]): void;
   completeNoOpRun(
@@ -580,9 +595,11 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   private readonly db: DatabaseSync;
   private readonly snapshotMutex = new AsyncMutex();
   private readonly clock: () => Date;
+  private readonly migrationValidationHook: ((version: number) => void) | undefined;
 
   constructor(rootPath: string, databasePath?: string, options: ContextMeshDatabaseOptions = {}) {
     this.clock = options.clock ?? (() => new Date());
+    this.migrationValidationHook = options.migrationValidationHook;
     const resolvedRoot = path.resolve(rootPath);
     if (!existsSync(resolvedRoot)) {
       throw new ContextMeshError("INVALID_ARGUMENT", `Workspace does not exist: ${resolvedRoot}`);
@@ -604,7 +621,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     this.db.exec("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
     const schemaObjects = this.db.prepare("SELECT count(*) AS count FROM sqlite_schema").get();
     if (numberValue(schemaObjects?.count) === 0) this.db.exec(`PRAGMA page_size = ${PHASE4_PAGE_SIZE}`);
-    this.applyMigrations();
+    try {
+      this.applyMigrations();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
     if (this.dbPath !== ":memory:") this.db.exec("PRAGMA journal_mode = WAL;");
     this.recoverInterruptedRuns();
     this.workspace = this.ensureWorkspace();
@@ -689,12 +711,41 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const version = Number.parseInt(name.split("_", 1)[0] ?? "", 10);
       const sql = readFileSync(path.join(MIGRATIONS_DIRECTORY, name), "utf8");
       this.transaction(() => {
+        const preserved = version === 7 ? this.multilanguageMigrationState() : null;
         this.db.exec(sql);
+        this.migrationValidationHook?.(version);
+        if (preserved) this.verifyMultilanguageMigration(preserved);
         this.db
           .prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
           .run(version, name, this.nowIso());
       });
     }
+  }
+
+  private multilanguageMigrationState(): Record<string, number> {
+    const count = (table: string): number =>
+      numberValue(this.db.prepare(`SELECT count(*) AS count FROM ${table}`).get()?.count);
+    return {
+      sourceFiles: count("source_files"), codeNodes: count("code_nodes"), codeEdges: count("code_edges"),
+      unresolved: count("unresolved_refs"), memoryLinks: count("memory_code_links"),
+      codeFts: count("code_nodes_fts"), memoryFts: count("memory_fragments_fts"),
+      generations: numberValue(this.db.prepare("SELECT coalesce(sum(current_generation), 0) AS value FROM workspaces").get()?.value),
+    };
+  }
+
+  private verifyMultilanguageMigration(before: Record<string, number>): void {
+    const after = this.multilanguageMigrationState();
+    for (const [key, value] of Object.entries(before)) {
+      if (after[key] !== value) throw new Error(`Migration 007 preservation check failed for ${key}`);
+    }
+    if (this.db.prepare("PRAGMA foreign_key_check").all().length > 0) {
+      throw new Error("Migration 007 foreign-key validation failed");
+    }
+    const missingTargets = numberValue(this.db.prepare(
+      `SELECT count(*) AS count FROM memory_code_links link
+       WHERE link.code_node_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM code_nodes node WHERE node.id = link.code_node_id)`,
+    ).get()?.count);
+    if (missingTargets > 0) throw new Error("Migration 007 memory link target validation failed");
   }
 
   private ensureWorkspace(): WorkspaceRecord {
@@ -941,6 +992,45 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     };
   }
 
+  getStoredGraphPartition(language: "python" | "non-python"): StoredGraphPartition {
+    const comparison = language === "python" ? "=" : "<>";
+    const nodeRows = this.db.prepare(
+      `SELECT n.*, f.relative_path, f.content_hash AS file_content_hash, 0 AS score
+       FROM code_nodes n LEFT JOIN source_files f ON f.id=n.file_id
+       WHERE n.workspace_id=? AND n.language ${comparison} 'python' ORDER BY n.id`,
+    ).all(this.workspace.id);
+    const nodes = nodeRows.map(mapCodeNode);
+    const ids = new Set(nodes.map((node) => node.id));
+    const edgeRows = this.db.prepare(
+      `SELECT edge.* FROM code_edges edge
+       JOIN code_nodes source ON source.id=edge.source_id
+       JOIN code_nodes target ON target.id=edge.target_id
+       WHERE edge.workspace_id=? AND source.language ${comparison} 'python' AND target.language ${comparison} 'python'
+       ORDER BY edge.kind,edge.source_id,edge.target_id`,
+    ).all(this.workspace.id);
+    const unresolvedRows = this.db.prepare(
+      `SELECT reference.* FROM unresolved_refs reference JOIN source_files file ON file.id=reference.file_id
+       WHERE reference.workspace_id=? AND file.language ${comparison} 'python'
+       ORDER BY reference.file_id,reference.line,reference.column`,
+    ).all(this.workspace.id);
+    return {
+      nodes,
+      edges: edgeRows.filter((row) => ids.has(stringValue(row.source_id)) && ids.has(stringValue(row.target_id))).map((row) => ({
+        workspaceId: stringValue(row.workspace_id), sourceId: stringValue(row.source_id), targetId: stringValue(row.target_id),
+        kind: stringValue(row.kind) as CodeEdgeKind, confidence: numberValue(row.confidence),
+        resolutionKind: stringValue(row.resolution_kind) as CodeEdgeRecord["resolutionKind"], generation: numberValue(row.generation),
+        metadata: parseJson(row.metadata_json, {}), status: stringValue(row.status) as "candidate" | "resolved",
+        evidence: parseJson(row.evidence_json, []),
+      })),
+      unresolvedReferences: unresolvedRows.map((row) => ({
+        workspaceId: stringValue(row.workspace_id), fileId: stringValue(row.file_id), sourceNodeId: nullableString(row.source_node_id),
+        kind: stringValue(row.kind), rawName: stringValue(row.raw_name), qualifier: nullableString(row.qualifier),
+        line: numberValue(row.line), column: numberValue(row.column), candidates: parseJson(row.candidates_json, []),
+        generation: numberValue(row.generation), confidence: numberValue(row.confidence), evidence: parseJson(row.evidence_json, []),
+      })),
+    };
+  }
+
   startIndexRun(mode: IndexMode): IndexRunHandle {
     const latestRun = this.db
       .prepare("SELECT max(generation) AS generation FROM index_runs WHERE workspace_id = ?")
@@ -1003,7 +1093,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   private relinkStaleMemoryCodeLinks(timestamp: string): number {
     const staleLinks = this.db
       .prepare(
-        `SELECT id, memory_id, locator_snapshot_json
+        `SELECT id, memory_id, locator_snapshot_json, language
          FROM memory_code_links WHERE workspace_id = ? AND code_node_id IS NULL`,
       )
       .all(this.workspace.id);
@@ -1011,7 +1101,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
     const nodeRows = this.db
       .prepare(
-        `SELECT n.id, n.local_key, n.kind, n.name, n.qualified_name, n.content_hash,
+        `SELECT n.id, n.local_key, n.kind, n.name, n.qualified_name, n.content_hash, n.language,
                 n.start_line, n.end_line, f.relative_path
          FROM code_nodes n LEFT JOIN source_files f ON f.id = n.file_id
          WHERE n.workspace_id = ? ORDER BY n.qualified_name, n.id`,
@@ -1058,16 +1148,19 @@ export class ContextMeshDatabase implements ContextMeshStorage {
             ? suffix.slice(suffix.lastIndexOf(".") + 1)
             : suffix;
 
-      let candidates = contentHash ? (byHash.get(contentHash) ?? []) : [];
+      const linkLanguage = nullableString(link.language);
+      const sameLanguage = (row: SqlRow): boolean => !linkLanguage || stringValue(row.language) === linkLanguage;
+
+      let candidates = contentHash ? (byHash.get(contentHash) ?? []).filter(sameLanguage) : [];
       let confidence = 0.95;
       let strategy = "content_hash";
       if (candidates.length !== 1) {
-        candidates = suffix ? (bySuffix.get(suffix) ?? []) : [];
+        candidates = suffix ? (bySuffix.get(suffix) ?? []).filter(sameLanguage) : [];
         confidence = 0.85;
         strategy = "qualified_name_suffix";
       }
       if (candidates.length !== 1 && kind && name) {
-        candidates = byKindAndName.get(`${kind}\0${name}`) ?? [];
+        candidates = (byKindAndName.get(`${kind}\0${name}`) ?? []).filter(sameLanguage);
         confidence = 0.65;
         strategy = "kind_and_name";
       }
@@ -1681,9 +1774,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
       const insertFile = this.db.prepare(
         `INSERT INTO source_files(
-          id, workspace_id, relative_path, path_key, language, content_hash,
+          id, workspace_id, relative_path, path_key, language, ecosystem, source_root, adapter_config_hash, content_hash,
           size_bytes, mtime_ms, parse_status, diagnostic_count, last_generation, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const file of graph.files) {
         insertFile.run(
@@ -1692,6 +1785,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           file.relativePath,
           file.pathKey,
           file.language,
+          file.ecosystem ?? "npm",
+          file.sourceRoot ?? "",
+          file.adapterConfigHash ?? indexConfigHash,
           file.contentHash,
           file.sizeBytes,
           file.mtimeMs,
@@ -1707,8 +1803,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         `INSERT INTO code_nodes(
           id, workspace_id, file_id, kind, name, qualified_name, local_key, signature, doc,
           is_exported, start_byte, end_byte, start_line, start_column, end_line, end_column,
-          content_hash, generation, metadata_json, semantic_source_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          content_hash, generation, metadata_json, semantic_source_hash,
+          language, ecosystem, native_kind, analysis_level
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const insertNodeFts = this.db.prepare(
         `INSERT INTO code_nodes_fts(node_id, name, qualified_name, signature, doc, search_tokens)
@@ -1740,6 +1837,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           handle.generation,
           JSON.stringify(node.metadata),
           semanticDocument.sourceHash,
+          node.language ?? (node.metadata.language as string | undefined) ?? "typescript",
+          node.ecosystem ?? "npm",
+          node.nativeKind ?? (node.metadata.syntaxKind as string | undefined) ?? node.kind,
+          node.analysisLevel ?? "typed",
         );
         insertNodeFts.run(
           node.id,
@@ -1753,8 +1854,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
       const insertEdge = this.db.prepare(
         `INSERT OR IGNORE INTO code_edges(
-          workspace_id, source_id, target_id, kind, confidence, resolution_kind, generation, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          workspace_id, source_id, target_id, kind, confidence, resolution_kind, generation, metadata_json,
+          status, evidence_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const edge of graph.edges) {
         insertEdge.run(
@@ -1766,14 +1868,16 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           edge.resolutionKind,
           handle.generation,
           JSON.stringify(edge.metadata),
+          edge.status ?? "resolved",
+          JSON.stringify(edge.evidence ?? []),
         );
       }
 
       const insertUnresolved = this.db.prepare(
         `INSERT INTO unresolved_refs(
           workspace_id, file_id, source_node_id, kind, raw_name, qualifier,
-          line, column, candidates_json, generation
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          line, column, candidates_json, generation, confidence, evidence_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const reference of graph.unresolvedReferences) {
         insertUnresolved.run(
@@ -1787,6 +1891,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           reference.column,
           JSON.stringify(reference.candidates),
           handle.generation,
+          reference.confidence ?? 0.5,
+          JSON.stringify(reference.evidence ?? []),
         );
       }
 
@@ -1797,8 +1903,11 @@ export class ContextMeshDatabase implements ContextMeshStorage {
              SELECT id FROM code_nodes
              WHERE code_nodes.workspace_id = memory_code_links.workspace_id
                AND code_nodes.local_key = memory_code_links.node_local_key
+               AND (memory_code_links.language IS NULL OR code_nodes.language = memory_code_links.language)
              LIMIT 1
-           )
+           ), language = coalesce(language, (SELECT language FROM code_nodes
+              WHERE code_nodes.workspace_id = memory_code_links.workspace_id
+                AND code_nodes.local_key = memory_code_links.node_local_key LIMIT 1))
            WHERE workspace_id = ?`,
         )
         .run(this.workspace.id);
@@ -1857,7 +1966,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       this.db
         .prepare(
           `UPDATE index_runs SET status = ?, scanned_files = ?, changed_files = ?, deleted_files = ?,
-           failed_files = ?, diagnostics_json = ?, completed_at = ? WHERE id = ?`,
+           failed_files = ?, diagnostics_json = ?, adapter_stats_json = ?, completed_at = ? WHERE id = ?`,
         )
         .run(
           stats.failedFiles > 0 ? "partial" : "succeeded",
@@ -1866,6 +1975,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           stats.deletedFiles,
           stats.failedFiles,
           JSON.stringify(graph.diagnostics),
+          JSON.stringify(graph.adapterStats ?? []),
           timestamp,
           handle.id,
         );
@@ -2879,6 +2989,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
             mode: stringValue(lastRun.mode),
             status: stringValue(lastRun.status),
             diagnostics: parseJson<string[]>(lastRun.diagnostics_json, []),
+            adapterStats: parseJson(lastRun.adapter_stats_json, []),
             startedAt: stringValue(lastRun.started_at),
             completedAt: nullableString(lastRun.completed_at),
           }
@@ -2923,13 +3034,24 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   getCodeNode(id: string): CodeSearchResult | null {
-    const row = this.db
+    let row = this.db
       .prepare(
         `SELECT n.*, f.relative_path, f.content_hash AS file_content_hash, 1.0 AS score
          FROM code_nodes n LEFT JOIN source_files f ON f.id = n.file_id
          WHERE n.workspace_id = ? AND n.id = ?`,
       )
       .get(this.workspace.id, id);
+    if (!row) {
+      const aliases = this.db.prepare(
+        `SELECT n.*, f.relative_path, f.content_hash AS file_content_hash, 1.0 AS score
+         FROM code_nodes n LEFT JOIN source_files f ON f.id=n.file_id
+         WHERE n.workspace_id=? AND n.kind='external_module' ORDER BY n.id`,
+      ).all(this.workspace.id);
+      row = aliases.find((candidate) => {
+        const metadata = parseJson<Record<string, unknown>>(candidate.metadata_json, {});
+        return typeof metadata.legacyAlias === "string" && sha256(`${this.workspace.id}\0${metadata.legacyAlias}`) === id;
+      });
+    }
     return row ? mapCodeNode(row) : null;
   }
 
@@ -2959,7 +3081,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const directionParams = direction === "both" ? [current.id, current.id] : [current.id];
       const rows = this.db
         .prepare(
-          `SELECT source_id, target_id, kind, confidence, resolution_kind
+          `SELECT source_id, target_id, kind, confidence, resolution_kind, status, evidence_json
            FROM code_edges WHERE workspace_id = ? AND ${relationClause}${kindClause}
            ORDER BY kind, source_id, target_id`,
         )
@@ -2976,6 +3098,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           confidence: numberValue(row.confidence),
           resolutionKind: stringValue(row.resolution_kind),
           depth: current.depth + 1,
+          status: stringValue(row.status) as "candidate" | "resolved",
+          evidence: parseJson(row.evidence_json, []),
         });
         if (!visited.has(nextId)) {
           visited.add(nextId);
@@ -2990,7 +3114,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const unresolvedRows = visitedIds.length
       ? this.db
           .prepare(
-            `SELECT source_node_id, kind, raw_name, line, column FROM unresolved_refs
+            `SELECT source_node_id, kind, raw_name, line, column, confidence, evidence_json FROM unresolved_refs
              WHERE workspace_id = ? AND source_node_id IN (${placeholders(visitedIds.length)})
              ORDER BY line, column LIMIT 100`,
           )
@@ -3006,6 +3130,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         rawName: stringValue(row.raw_name),
         line: numberValue(row.line),
         column: numberValue(row.column),
+        confidence: numberValue(row.confidence),
+        evidence: parseJson(row.evidence_json, []),
       })),
       truncated: edges.length >= limit,
     };

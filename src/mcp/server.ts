@@ -24,6 +24,11 @@ const envelopeOutputSchema = z.object({
   warnings: z.array(z.string()),
   truncated: z.boolean(),
   estimatedTokens: z.number().int().nonnegative(),
+  snapshot: z.object({
+    graphGeneration: z.number().int().nonnegative(),
+    precisionRevision: z.number().int().nonnegative(),
+    freshness: z.enum(["fresh", "fast-verified", "stale"]),
+  }).optional(),
 });
 
 function success(result: Envelope<unknown>) {
@@ -47,13 +52,13 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
-  const server = new McpServer({ name: "contextmesh", version: "0.2.0" });
+  const server = new McpServer({ name: "contextmesh", version: "0.3.0" });
 
   server.registerTool(
     "index_workspace",
     {
       title: "Index workspace",
-      description: "Build or refresh the local TypeScript/JavaScript code graph.",
+      description: "Build or refresh the local TypeScript/JavaScript and Python code graph.",
       inputSchema: indexWorkspaceSchema,
       outputSchema: envelopeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

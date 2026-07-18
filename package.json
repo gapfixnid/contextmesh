@@ -1,6 +1,6 @@
 {
   "name": "contextmesh",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local-first MCP code intelligence and long-term memory server",
   "type": "module",
   "bin": {
@@ -35,6 +35,7 @@
     "benchmark:hydration": "node --expose-gc --import tsx scripts/benchmark-hydration.ts",
     "benchmark:unavailable": "tsx scripts/benchmark-unavailable.ts",
     "evaluate:quality": "tsx scripts/evaluate-quality.ts",
+    "evaluate:multilang": "tsx scripts/evaluate-multilang.ts",
     "compare:parity": "tsx scripts/compare-parity.ts",
     "fetch:semantic-smoke-model": "tsx scripts/fetch-semantic-smoke-model.ts",
     "smoke:semantic": "tsx scripts/smoke-semantic.ts",
@@ -57,7 +58,10 @@
     "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "ignore": "^7.0.5",
+    "smol-toml": "1.7.0",
+    "tree-sitter-python": "0.25.0",
     "typescript": "^5.9.3",
+    "web-tree-sitter": "0.26.11",
     "zod": "^3.25.76"
   },
   "devDependencies": {
