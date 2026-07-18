@@ -7,8 +7,42 @@ import { describe, expect, it } from "vitest";
 import { ContextMeshApp } from "../src/app.js";
 import type { Envelope } from "../src/contracts.js";
 import { sha256 } from "../src/utils.js";
+import { crossesAdapterFamily } from "../src/code/languages/family.js";
 
 describe("v0.2 TypeScript golden compatibility", () => {
+  it("allows confirmed TS/JS and npm-external edges while rejecting adapter-family crossings", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-ts-js-family-"));
+    mkdirSync(path.join(root, "src"));
+    writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*"], compilerOptions: { allowJs: true } }));
+    writeFileSync(path.join(root, "src", "legacy.js"), "export function jsEntry() { return 1; }\n");
+    writeFileSync(path.join(root, "src", "consumer.ts"), [
+      'import { jsEntry } from "./legacy.js";',
+      'import externalValue from "external-package";',
+      "export function tsUsesJs(): number { void externalValue; return jsEntry(); }",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "src", "same_name.py"), "def jsEntry():\n    return 2\n");
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = await app.code.indexer.evaluationGraph("typed");
+      const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+      const caller = graph.nodes.find((node) => node.name === "tsUsesJs")!;
+      const jsTarget = graph.nodes.find((node) => node.name === "jsEntry" && node.language === "javascript")!;
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: caller.id, targetId: jsTarget.id, kind: "CALLS", confidence: 1,
+      }));
+      expect(crossesAdapterFamily(caller, jsTarget)).toBe(false);
+      expect(graph.edges.filter((edge) => {
+        const source = byId.get(edge.sourceId); const target = byId.get(edge.targetId);
+        return edge.status === "resolved" && source && target && crossesAdapterFamily(source, target);
+      })).toHaveLength(0);
+      const external = graph.nodes.find((node) => node.localKey === "external:npm:external-package")!;
+      expect(crossesAdapterFamily(graph.nodes.find((node) => node.qualifiedName === "src/consumer.ts")!, external)).toBe(false);
+      expect(crossesAdapterFamily(jsTarget, graph.nodes.find((node) => node.name === "jsEntry" && node.language === "python")!)).toBe(true);
+    } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("reports the exact TS/JS dialect for declarations in syntax and typed views", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-ts-dialects-"));
     mkdirSync(path.join(root, "src"));

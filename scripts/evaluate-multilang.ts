@@ -10,6 +10,7 @@ import { ContextMeshApp } from "../src/app.js";
 import type { CodeEdgeRecord, CodeNodeRecord, Envelope, ExtractedGraph, MemoryFragmentRecord } from "../src/contracts.js";
 import type { EvaluationScore, EvaluationStrategy, EvaluationTask, EvaluationTrace } from "../src/evaluation/contracts.js";
 import { PYTHON_PROVIDER_VERSIONS } from "../src/code/languages/python.js";
+import { crossesAdapterFamily } from "../src/code/languages/family.js";
 import { sha256 } from "../src/utils.js";
 
 interface Fixture { id: string; k: number; tokenBudget: number; files: Record<string, string>; tasks: EvaluationTask[] }
@@ -112,7 +113,7 @@ function observeGraph(task: EvaluationTask, graph: ExtractedGraph, resultIds: st
   const trueEdges = [...gold].filter((item) => predictedKeys.includes(item)).length;
   const falseEdges = predictedKeys.filter((item) => !gold.has(item)).length + graph.edges.filter((edge) => {
     const source = nodes.get(edge.sourceId); const target = nodes.get(edge.targetId);
-    return edge.status === "resolved" && source && target && source.language !== target.language;
+    return edge.status === "resolved" && source && target && crossesAdapterFamily(source, target);
   }).length;
   const unresolved = graph.unresolvedReferences.filter((item) => relevant.has(item.sourceNodeId ?? "") || (task.goldUnresolved ?? []).includes(item.rawName)).length;
   const staleEvidence = [...predicted, ...graph.unresolvedReferences.filter((item) => relevant.has(item.sourceNodeId ?? ""))]
@@ -231,7 +232,10 @@ try {
     falseConfirmedCrossLanguage: await (async () => {
       const graph = await app.code.indexer.evaluationGraph("typed");
       const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
-      return graph.edges.filter((edge) => edge.status === "resolved" && nodes.get(edge.sourceId)?.language !== nodes.get(edge.targetId)?.language).length === 0;
+      return graph.edges.filter((edge) => {
+        const source = nodes.get(edge.sourceId); const target = nodes.get(edge.targetId);
+        return edge.status === "resolved" && source && target && crossesAdapterFamily(source, target);
+      }).length === 0;
     })(),
     staleEvidence: strategyScores.every((item) => item.score.staleEvidence === 0),
     tokenBudget: orderedTraces.every((trace) => trace.estimatedTokens <= fixture.tokenBudget),

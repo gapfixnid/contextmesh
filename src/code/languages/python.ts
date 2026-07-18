@@ -160,7 +160,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
     const nodes = new Map<string, CodeNodeRecord>();
     const edges = new Map<string, CodeEdgeRecord>();
     const unresolved = new Map<string, UnresolvedReferenceRecord>();
-    const moduleIds = new Map<string, string>();
+    const moduleIds = new Map<string, string[]>();
     const declarationsByName = new Map<string, string[]>();
     const declarationIdsByPosition = new Map<string, string>();
     const declarationOrdinals = new Map<string, number>();
@@ -189,7 +189,10 @@ class PythonSyntaxProvider implements SyntaxProvider {
       const localKey = `${scanned.pathKey}:module`;
       const moduleId = sha256(`${input.workspace.id}\0python\0${localKey}`);
       const name = moduleName(scanned.relativePath, root, packageDirectories);
-      moduleIds.set(name, moduleId);
+      const moduleCandidates = moduleIds.get(name) ?? [];
+      moduleCandidates.push(moduleId);
+      moduleCandidates.sort((left, right) => left.localeCompare(right));
+      moduleIds.set(name, moduleCandidates);
       nodes.set(moduleId, {
         id: moduleId, workspaceId: input.workspace.id, fileId, kind: "module", name,
         qualifiedName: scanned.relativePath, localKey, signature: `module ${name}`, doc: "", isExported: true,
@@ -202,6 +205,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
     }
 
     const addEdge = (sourceId: string, targetId: string, kind: CodeEdgeKind, confidence: number, status: "candidate" | "resolved", node?: SyntaxNode, details: Record<string, unknown> = {}): void => {
+      if (kind === "IMPORTS" && sourceId === targetId) return;
       const record: CodeEdgeRecord = {
         workspaceId: input.workspace.id, sourceId, targetId, kind, confidence,
         resolutionKind: status === "candidate" ? "heuristic" : kind === "IMPORTS" ? "import" : "local",
@@ -209,11 +213,12 @@ class PythonSyntaxProvider implements SyntaxProvider {
       };
       edges.set(edgeKey(record), record);
     };
-    const addUnresolved = (file: IndexedSourceFile, sourceNodeId: string, kind: string, rawName: string, node: SyntaxNode, confidence = 0.5): void => {
+    const addUnresolved = (file: IndexedSourceFile, sourceNodeId: string, kind: string, rawName: string, node: SyntaxNode, confidence = 0.5, candidates: string[] = []): void => {
       const item: UnresolvedReferenceRecord = {
         workspaceId: input.workspace.id, fileId: file.id, sourceNodeId, kind, rawName: clampText(rawName, 200),
         qualifier: null, line: node.startPosition.row + 1, column: node.startPosition.column + 1,
-        candidates: [], generation: input.generation, confidence, evidence: evidence("syntax", confidence, node),
+        candidates: [...new Set(candidates)].sort((left, right) => left.localeCompare(right)),
+        generation: input.generation, confidence, evidence: evidence("syntax", confidence, node),
       };
       unresolved.set(`${file.id}\0${sourceNodeId}\0${kind}\0${rawName}\0${item.line}\0${item.column}`, item);
     };
@@ -298,12 +303,17 @@ class PythonSyntaxProvider implements SyntaxProvider {
           for (const imported of specs) {
             const specifier = fromImport ? `${rawModule} import ${imported.name}` : imported.name;
             const candidates = fromImport && rawModule.replace(/^\.+/, "") === ""
-              ? [`${absoluteModule}.${imported.name}`.replace(/^\./, ""), absoluteModule]
+              ? [`${absoluteModule}.${imported.name}`.replace(/^\./, "")]
               : [absoluteModule || imported.name];
-            const resolvedName = candidates.find((candidate) => moduleIds.has(candidate));
-            const target = resolvedName ? moduleIds.get(resolvedName) : undefined;
-            if (target) {
+            const targets = [...new Set(candidates.flatMap((candidate) => moduleIds.get(candidate) ?? []))]
+              .sort((left, right) => left.localeCompare(right));
+            const target = targets.length === 1 ? targets[0] : undefined;
+            if (target && target !== entry.moduleId) {
               addEdge(entry.moduleId, target, "IMPORTS", 0.95, "resolved", node, { specifier, alias: imported.alias });
+              continue;
+            }
+            if (targets.length > 0) {
+              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier, node, 0.5, targets);
               continue;
             }
             if (leading > 0) {

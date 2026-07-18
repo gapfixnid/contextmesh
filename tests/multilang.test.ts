@@ -5,7 +5,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
-import type { Envelope } from "../src/contracts.js";
+import type { CodeNodeRecord, Envelope } from "../src/contracts.js";
+import { crossesAdapterFamily } from "../src/code/languages/family.js";
 
 const roots: string[] = [];
 
@@ -93,7 +94,7 @@ describe("v0.3 multilingual graph", () => {
       const worker = py.data.results[0];
       expect(worker).toBeDefined();
       const trace = await app.traceCode({ symbolId: worker!.id, direction: "both", depth: 3 }) as Envelope<{
-        nodes: Array<{ language: string }>;
+        nodes: Array<Pick<CodeNodeRecord, "language" | "ecosystem"> & { id: string }>;
         edges: Array<{ confidence: number; status: string; evidence: unknown[] }>;
         unresolved: Array<{ rawName: string; confidence: number; evidence: unknown[] }>;
       }>;
@@ -104,7 +105,7 @@ describe("v0.3 multilingual graph", () => {
         const relation = edge as typeof edge & { sourceId: string; targetId: string };
         const source = trace.data.nodes.find((node) => (node as typeof node & { id: string }).id === relation.sourceId);
         const target = trace.data.nodes.find((node) => (node as typeof node & { id: string }).id === relation.targetId);
-        return source && target && source.language !== target.language;
+        return source && target && crossesAdapterFamily(source, target);
       })).toBe(false);
       const run = await app.searchCode({ query: "run", kinds: ["method"] }) as Envelope<{ results: Array<{ id: string }> }>;
       const context = await app.getContext({ query: "run", symbolId: run.data.results[0]!.id, tokenBudget: 2000, include: ["code"] });
