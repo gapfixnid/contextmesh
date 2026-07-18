@@ -145,7 +145,8 @@ try {
         : haystack.includes(normalized) ? 1 : 0;
       return { id: node.id, name: node.name, relativePath: node.fileId ? (pathByFile.get(node.fileId) ?? null) : null, score };
     }).filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name) ||
+        (left.relativePath ?? "").localeCompare(right.relativePath ?? "") || left.id.localeCompare(right.id))
       .slice(0, fixture.k).map(({ score: _score, ...item }) => item);
   };
 
