@@ -123,7 +123,7 @@ jobs:
         with:
           name: acceptance-Linux-${{ github.sha }}
           path: parity/ubuntu
-      - name: Exact ordered IDs and scoreMicro tolerance gate
+      - name: Cross-platform acceptance quality parity gate
         run: >-
           npm run compare:parity --
           --windows parity/windows/acceptance-Windows.json
@@ -160,17 +160,9 @@ jobs:
       - run: npm run benchmark:unavailable -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
 
   fixed-windows-performance:
+    name: Canonical fixed-hardware performance evidence
     needs: actual-model-smoke
-    runs-on: [self-hosted, Windows, X64, contextmesh-perf-v1]
-    concurrency:
-      group: contextmesh-fixed-windows-performance
-      cancel-in-progress: false
-    env:
-      CONTEXTMESH_RUNNER_CLASS: fixed-self-hosted-blocking
-      CONTEXTMESH_POWER_MODE: ${{ vars.CONTEXTMESH_PERF_POWER_MODE }}
-      CONTEXTMESH_PERF_CPU: ${{ vars.CONTEXTMESH_PERF_CPU }}
-      CONTEXTMESH_PERF_LOGICAL_CPUS: ${{ vars.CONTEXTMESH_PERF_LOGICAL_CPUS }}
-      CONTEXTMESH_PERF_MIN_RAM_BYTES: ${{ vars.CONTEXTMESH_PERF_MIN_RAM_BYTES }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -180,22 +172,8 @@ jobs:
           node-version: 24.18.0
           cache: npm
       - run: npm ci
-      - id: runner
-        run: npx tsx scripts/assert-performance-runner.ts
-      - uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/contextmesh-approved-model
-          key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
-      - run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
-      - run: npm run benchmark
-      - run: npm run benchmark:unavailable -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
-      - run: npm run benchmark:hydration
-      - run: npm run benchmark:semantic -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fixed-windows-performance-${{ github.sha }}
-          path: performance-runner.json
+      - name: Verify canonical fixed-hardware v0.4 performance evidence
+        run: npm run verify:v04-artifact
 
   phase4-release-gate:
     if: always()
