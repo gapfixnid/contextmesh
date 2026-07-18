@@ -9,6 +9,37 @@ import type { Envelope } from "../src/contracts.js";
 import { sha256 } from "../src/utils.js";
 
 describe("v0.2 TypeScript golden compatibility", () => {
+  it("reports the exact TS/JS dialect for declarations in syntax and typed views", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-ts-dialects-"));
+    mkdirSync(path.join(root, "src"));
+    const fixtures = [
+      ["ts", "typescript"], ["tsx", "tsx"], ["js", "javascript"],
+      ["jsx", "jsx"], ["mjs", "mjs"], ["cjs", "cjs"],
+    ] as const;
+    writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*"], compilerOptions: { allowJs: true, jsx: "preserve" } }));
+    for (const [extension] of fixtures) {
+      writeFileSync(path.join(root, "src", `dialect_${extension}.${extension}`), `export function entry_${extension}() { return ${JSON.stringify(extension)}; }\n`);
+    }
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const syntax = await app.code.indexer.evaluationGraph("syntax");
+      const typed = await app.code.indexer.evaluationGraph("typed");
+      for (const [extension, language] of fixtures) {
+        const localKey = `src/dialect_${extension}.${extension}:function:entry_${extension}`;
+        expect(syntax.nodes.find((node) => node.localKey === localKey)).toMatchObject({ language, analysisLevel: "syntax" });
+        expect(typed.nodes.find((node) => node.localKey === localKey)).toMatchObject({ language, analysisLevel: "typed" });
+        const searched = await app.searchCode({ query: `entry_${extension}`, kinds: ["function"] }) as Envelope<{
+          results: Array<{ language: string; localKey: string }>;
+        }>;
+        expect(searched.data.results[0]).toMatchObject({ language, localKey });
+        expect(searched.data.results[0]!.localKey).toBe(localKey);
+      }
+    } finally {
+      await app.close(); rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("performs real syntax and precision work over exactly one shared Program", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-ts-provider-"));
     mkdirSync(path.join(root, "src"));

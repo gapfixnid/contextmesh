@@ -354,9 +354,10 @@ function cloneGraph(graph: ExtractedGraph): ExtractedGraph {
 
 function asTypeScriptSyntaxView(graph: ExtractedGraph): ExtractedGraph {
   const snapshot = cloneGraph(graph);
+  const languageByFileId = new Map(snapshot.files.map((file) => [file.id, file.language]));
   for (const file of snapshot.files) file.ecosystem = "npm";
   for (const node of snapshot.nodes) {
-    node.language = (node.metadata.language as CodeNodeRecord["language"] | undefined) ?? "typescript";
+    node.language = node.fileId ? (languageByFileId.get(node.fileId) ?? "typescript") : "typescript";
     node.ecosystem = "npm";
     node.nativeKind = (node.metadata.syntaxKind as string | undefined) ?? node.kind;
     node.analysisLevel = "syntax";
@@ -416,8 +417,10 @@ export class CodeIndexer {
         const pythonFiles = project.files.filter((file) => file.language === "python");
         const runtime: TypeScriptProviderRuntime = { diagnostics: project.scan.diagnostics, compiler: project.compiler };
         const tsProject: ProjectDescriptor = { ...project.typescriptProject, runtime };
-        const tsGraph = asTypeScriptSyntaxView(await this.coordinator.adapter("typescript/javascript")!
-          .createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: workspace.currentGeneration }));
+        const tsGraph = typescriptFiles.length > 0
+          ? asTypeScriptSyntaxView(await this.coordinator.adapter("typescript/javascript")!
+            .createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: workspace.currentGeneration }))
+          : { files: [], nodes: [], edges: [], unresolvedReferences: [], diagnostics: [] };
         const pythonGraph = await this.coordinator.adapter("python")!.createSyntaxProvider(project.pythonProject)
           .extract({ workspace, project: project.pythonProject, files: pythonFiles, generation: workspace.currentGeneration });
         this.lastSyntaxEvaluationGraph = mergeGraphBatches([tsGraph, pythonGraph], this.lastAdapterStats);
@@ -565,11 +568,17 @@ export class CodeIndexer {
             ...project.typescriptProject,
             configHash: compiler.configHash, diagnostics: compiler.diagnostics, runtime: tsRuntime,
           };
-          let tsGraph = pythonOnlyIncremental
-            ? this.reuseStoredTypescriptGraph(workspace, typescriptFiles, handle.generation)
-            : await tsAdapter.createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: handle.generation });
-          const tsSyntaxGraph = pythonOnlyIncremental ? null : asTypeScriptSyntaxView(tsGraph);
-          if (!pythonOnlyIncremental) {
+          let tsGraph: ExtractedGraph = {
+            files: [], nodes: [], edges: [], unresolvedReferences: [], diagnostics: [...compiler.diagnostics],
+          };
+          let tsSyntaxGraph: ExtractedGraph | null = null;
+          if (typescriptFiles.length > 0) {
+            tsGraph = pythonOnlyIncremental
+              ? this.reuseStoredTypescriptGraph(workspace, typescriptFiles, handle.generation)
+              : await tsAdapter.createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: handle.generation });
+            tsSyntaxGraph = pythonOnlyIncremental ? null : asTypeScriptSyntaxView(tsGraph);
+          }
+          if (typescriptFiles.length > 0 && !pythonOnlyIncremental) {
             const precision = tsAdapter.createPrecisionProvider?.(tsProject);
             if (precision) tsGraph = await precision.refine(tsGraph);
           }
@@ -577,8 +586,9 @@ export class CodeIndexer {
             file.ecosystem = "npm";
             file.adapterConfigHash = compiler.configHash;
           }
+          const languageByFileId = new Map(tsGraph.files.map((file) => [file.id, file.language]));
           for (const node of tsGraph.nodes) {
-            node.language = (node.metadata.language as CodeNodeRecord["language"] | undefined) ?? "typescript";
+            node.language = node.fileId ? (languageByFileId.get(node.fileId) ?? "typescript") : "typescript";
             node.ecosystem = "npm";
             node.nativeKind = (node.metadata.syntaxKind as string | undefined) ?? node.kind;
             node.analysisLevel = "typed";

@@ -43,9 +43,23 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+interface PythonPackageDirectory {
+  packagePrefix: string;
+  path: string;
+}
+
+interface PythonProjectRuntime {
+  packageDirectories: PythonPackageDirectory[];
+}
+
+function normalizeLayoutPath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
+}
+
 export function discoverPythonProject(rootPath: string): ProjectDescriptor {
   const diagnostics: string[] = [];
   const roots = new Set<string>([""]);
+  const packageDirectories: PythonPackageDirectory[] = [];
   if (existsSync(path.join(rootPath, "src"))) roots.add("src");
   const pyprojectPath = path.join(rootPath, "pyproject.toml");
   let pyprojectHash = sha256("");
@@ -57,7 +71,12 @@ export function discoverPythonProject(rootPath: string): ProjectDescriptor {
       const tool = document.tool as Record<string, unknown> | undefined;
       const setuptools = tool?.setuptools as Record<string, unknown> | undefined;
       const packageDir = setuptools?.["package-dir"] as Record<string, unknown> | undefined;
-      for (const value of Object.values(packageDir ?? {})) if (typeof value === "string") roots.add(value);
+      for (const [packagePrefix, value] of Object.entries(packageDir ?? {})) {
+        if (typeof value !== "string") continue;
+        const normalizedPath = normalizeLayoutPath(value);
+        roots.add(normalizedPath);
+        packageDirectories.push({ packagePrefix: packagePrefix.trim().replace(/^\.+|\.+$/g, ""), path: normalizedPath });
+      }
       const packages = setuptools?.packages as Record<string, unknown> | undefined;
       const find = packages?.find as Record<string, unknown> | undefined;
       for (const value of stringArray(find?.where)) roots.add(value);
@@ -74,15 +93,19 @@ export function discoverPythonProject(rootPath: string): ProjectDescriptor {
     }
   }
   const sourceRoots = [...roots]
-    .map((item) => item.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, ""))
+    .map(normalizeLayoutPath)
     .filter((item, index, all) => all.indexOf(item) === index)
     .sort((a, b) => a.localeCompare(b));
+  const normalizedPackageDirectories = packageDirectories.sort((left, right) =>
+    right.path.length - left.path.length || right.packagePrefix.length - left.packagePrefix.length ||
+    left.packagePrefix.localeCompare(right.packagePrefix));
   return {
     language: "python",
     ecosystem: "pypi",
     sourceRoots,
     diagnostics,
-    configHash: sha256(JSON.stringify({ ...PYTHON_PROVIDER_VERSIONS, pyprojectHash, sourceRoots })),
+    configHash: sha256(JSON.stringify({ ...PYTHON_PROVIDER_VERSIONS, pyprojectHash, sourceRoots, packageDirectories: normalizedPackageDirectories })),
+    runtime: { packageDirectories: normalizedPackageDirectories } satisfies PythonProjectRuntime,
   };
 }
 
@@ -107,10 +130,14 @@ function sourceRootFor(file: { relativePath: string }, roots: string[]): string 
     .find((root) => root === "" || file.relativePath === root || file.relativePath.startsWith(`${root}/`)) ?? "";
 }
 
-function moduleName(relativePath: string, root: string): string {
+function moduleName(relativePath: string, root: string, packageDirectories: PythonPackageDirectory[]): string {
   let name = root ? relativePath.slice(root.length + 1) : relativePath;
-  name = name.replace(/\.py$/i, "").replace(/\/__init__$/i, "").replaceAll("/", ".");
-  return name || path.basename(root || relativePath);
+  name = name.replace(/\.py$/i, "").replace(/(^|\/)__init__$/i, "").replaceAll("/", ".");
+  const mapping = packageDirectories.find((item) => item.path === root);
+  const prefix = mapping?.packagePrefix ?? "";
+  if (prefix && name) return `${prefix}.${name}`;
+  if (prefix) return prefix;
+  return name || path.basename(root || relativePath).replace(/\.py$/i, "");
 }
 
 function importedName(node: SyntaxNode): { name: string; alias: string | null } | null {
@@ -137,6 +164,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
     const declarationsByName = new Map<string, string[]>();
     const declarationIdsByPosition = new Map<string, string>();
     const declarationOrdinals = new Map<string, number>();
+    const packageDirectories = ((input.project.runtime as PythonProjectRuntime | undefined)?.packageDirectories ?? []);
     const trees: Array<{ scanned: (typeof input.files)[number]; file: IndexedSourceFile; moduleId: string; tree: ReturnType<Parser["parse"]> }> = [];
     const edgeKey = (edge: CodeEdgeRecord): string => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
 
@@ -160,7 +188,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
       files.push(file);
       const localKey = `${scanned.pathKey}:module`;
       const moduleId = sha256(`${input.workspace.id}\0python\0${localKey}`);
-      const name = moduleName(scanned.relativePath, root);
+      const name = moduleName(scanned.relativePath, root, packageDirectories);
       moduleIds.set(name, moduleId);
       nodes.set(moduleId, {
         id: moduleId, workspaceId: input.workspace.id, fileId, kind: "module", name,
@@ -244,7 +272,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
 
     for (const entry of trees) {
       if (!entry.tree) continue;
-      const currentModule = moduleName(entry.scanned.relativePath, entry.file.sourceRoot ?? "");
+      const currentModule = moduleName(entry.scanned.relativePath, entry.file.sourceRoot ?? "", packageDirectories);
       const visit = (node: SyntaxNode, callerId: string): void => {
         if (node.type === "decorated_definition") {
           const definition = node.namedChildren.at(-1);

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -39,6 +39,42 @@ afterEach(() => {
 });
 
 describe("v0.3 multilingual graph", () => {
+  it("never invokes TS providers in a pure Python workspace and handles TS add/remove transitions", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-python-only-"));
+    roots.push(root); mkdirSync(path.join(root, "src"));
+    const pythonPath = path.join(root, "src", "only.py");
+    const typescriptPath = path.join(root, "src", "later.ts");
+    writeFileSync(pythonPath, "def only_python():\n    return 1\n");
+    const app = new ContextMeshApp(root);
+    try {
+      const full = await app.indexWorkspace({ mode: "full" }) as Envelope<{ adapterStats: Array<{ language: string }> }>;
+      expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
+      expect(full.data.adapterStats.some((item) => item.language === "typescript/javascript")).toBe(false);
+
+      writeFileSync(pythonPath, "def only_python_changed():\n    return 2\n");
+      await app.indexWorkspace({ mode: "incremental" });
+      expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
+
+      writeFileSync(typescriptPath, "export function added_later(): number { return 3; }\n");
+      await app.indexWorkspace({ mode: "incremental" });
+      const addedInstrumentation = app.code.indexer.typeScriptInstrumentation();
+      expect(addedInstrumentation.programCreations).toBe(1);
+      expect(addedInstrumentation.syntaxWorkItems).toBeGreaterThan(0);
+      expect(addedInstrumentation.precisionWorkItems).toBeGreaterThan(0);
+      const added = await app.searchCode({ query: "added_later", kinds: ["function"] }) as Envelope<{ results: unknown[] }>;
+      expect(added.data.results).toHaveLength(1);
+
+      unlinkSync(typescriptPath);
+      await app.indexWorkspace({ mode: "incremental" });
+      expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
+      const removed = await app.searchCode({ query: "added_later", kinds: ["function"] }) as Envelope<{ results: unknown[] }>;
+      expect(removed.data.results).toHaveLength(0);
+      expect(app.database.getStoredGraphPartition("non-python").nodes).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("commits TS and Python together with evidence and no confirmed cross-language edge", async () => {
     const root = mixedWorkspace();
     const app = new ContextMeshApp(root);
