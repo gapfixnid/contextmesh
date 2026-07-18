@@ -21,6 +21,18 @@ describe("v0.2 TypeScript golden compatibility", () => {
       expect(instrumentation.programCreations).toBe(1);
       expect(instrumentation.syntaxWorkItems).toBeGreaterThan(0);
       expect(instrumentation.precisionWorkItems).toBeGreaterThan(0);
+      const syntax = await app.code.indexer.evaluationGraph("syntax");
+      const typed = await app.code.indexer.evaluationGraph("typed");
+      const syntaxTsNodes = syntax.nodes.filter((node) => node.language === "typescript");
+      const typedTsNodes = typed.nodes.filter((node) => node.language === "typescript");
+      expect(new Set(syntaxTsNodes.map((node) => node.analysisLevel))).toEqual(new Set(["syntax"]));
+      expect(new Set(typedTsNodes.map((node) => node.analysisLevel))).toEqual(new Set(["typed"]));
+      expect(syntax.edges.some((edge) => edge.kind === "CALLS")).toBe(false);
+      expect(typed.edges.some((edge) => edge.kind === "CALLS")).toBe(true);
+      expect(syntax.edges.flatMap((edge) => edge.evidence ?? []).some((item) => item.source === "type_checker")).toBe(false);
+      expect(syntax.unresolvedReferences.flatMap((item) => item.evidence ?? []).some((entry) => entry.source === "type_checker")).toBe(false);
+      expect(syntaxTsNodes.find((node) => node.name === "caller")?.signature)
+        .not.toBe(typedTsNodes.find((node) => node.name === "caller")?.signature);
       const status = app.database.getStatus() as { lastRun: { adapterStats: Array<{ syntaxInvocations: number; precisionInvocations: number }> } };
       expect(status.lastRun.adapterStats[0]).toMatchObject({ syntaxInvocations: 1, precisionInvocations: 1 });
     } finally {

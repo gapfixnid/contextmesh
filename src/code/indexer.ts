@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -40,7 +39,7 @@ import {
   type ScannedFileMetadata,
 } from "./scanner.js";
 import { PythonLanguageAdapter, PYTHON_PROVIDER_VERSIONS } from "./languages/python.js";
-import { TypeScriptLanguageAdapter } from "./languages/typescript.js";
+import { TypeScriptLanguageAdapter, type TypeScriptCompilerConfiguration, type TypeScriptProjectRuntime } from "./languages/typescript.js";
 import { GraphIndexCoordinator, mergeGraphBatches, type ProjectDescriptor } from "./providers.js";
 
 export type FreshnessMode = "fast" | "strict";
@@ -319,20 +318,14 @@ function diagnosticText(diagnostic: ts.Diagnostic): string {
   return `${diagnostic.file.fileName}:${location.line + 1}:${location.character + 1} ${message}`;
 }
 
-interface CompilerConfiguration {
-  options: ts.CompilerOptions;
-  diagnostics: string[];
-  fatalDiagnostics: string[];
-  configHash: string;
-  hasConfig: boolean;
-  configuredFileNames: Set<string>;
-}
+type CompilerConfiguration = TypeScriptCompilerConfiguration;
 
 interface ProjectScan {
   scan: { files: ScannedFile[]; diagnostics: string[] };
   files: ScannedFile[];
   compiler: CompilerConfiguration;
   pythonProject: ProjectDescriptor;
+  typescriptProject: ProjectDescriptor;
   configHash: string;
 }
 
@@ -341,32 +334,8 @@ interface MetadataProjectScan {
   files: ScannedFileMetadata[];
   compiler: CompilerConfiguration;
   pythonProject: ProjectDescriptor;
+  typescriptProject: ProjectDescriptor;
   configHash: string;
-}
-
-function canonicalizeCompilerValue(value: unknown, caseSensitivePaths: boolean): unknown {
-  if (value === undefined) return undefined;
-  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-  if (typeof value === "string") {
-    const normalized = value.normalize("NFC").replaceAll("\\", "/");
-    return path.isAbsolute(value) ? normalizePathKey(value, caseSensitivePaths) : normalized;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalizeCompilerValue(item, caseSensitivePaths));
-  }
-  if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      if (key === "configFile") continue;
-      const normalized = canonicalizeCompilerValue(
-        (value as Record<string, unknown>)[key],
-        caseSensitivePaths,
-      );
-      if (normalized !== undefined) result[key] = normalized;
-    }
-    return result;
-  }
-  return String(value);
 }
 
 function scriptKindFor(fileName: string): ts.ScriptKind {
@@ -377,6 +346,28 @@ function scriptKindFor(fileName: string): ts.ScriptKind {
     return ts.ScriptKind.JS;
   }
   return ts.ScriptKind.TS;
+}
+
+function cloneGraph(graph: ExtractedGraph): ExtractedGraph {
+  return structuredClone(graph);
+}
+
+function asTypeScriptSyntaxView(graph: ExtractedGraph): ExtractedGraph {
+  const snapshot = cloneGraph(graph);
+  for (const file of snapshot.files) file.ecosystem = "npm";
+  for (const node of snapshot.nodes) {
+    node.language = (node.metadata.language as CodeNodeRecord["language"] | undefined) ?? "typescript";
+    node.ecosystem = "npm";
+    node.nativeKind = (node.metadata.syntaxKind as string | undefined) ?? node.kind;
+    node.analysisLevel = "syntax";
+  }
+  for (const edge of snapshot.edges) {
+    edge.evidence = (edge.evidence ?? []).filter((item) => item.source !== "type_checker");
+  }
+  snapshot.unresolvedReferences = snapshot.unresolvedReferences.filter((item) =>
+    (item.evidence ?? []).every((entry) => entry.source !== "type_checker"),
+  );
+  return snapshot;
 }
 
 export class CodeIndexer {
@@ -414,8 +405,27 @@ export class CodeIndexer {
   typeScriptInstrumentation(): Readonly<typeof this.lastTypeScriptInstrumentation> {
     return { ...this.lastTypeScriptInstrumentation };
   }
-  evaluationGraph(level: "syntax" | "typed"): ExtractedGraph {
-    if (level === "syntax" && this.lastSyntaxEvaluationGraph) return this.lastSyntaxEvaluationGraph;
+  async evaluationGraph(level: "syntax" | "typed"): Promise<ExtractedGraph> {
+    if (level === "syntax" && this.lastSyntaxEvaluationGraph) return cloneGraph(this.lastSyntaxEvaluationGraph);
+    if (level === "syntax") {
+      const priorInstrumentation = { ...this.lastTypeScriptInstrumentation };
+      try {
+        const project = this.loadProject();
+        const workspace = this.database.getWorkspace();
+        const typescriptFiles = project.files.filter((file) => file.language !== "python");
+        const pythonFiles = project.files.filter((file) => file.language === "python");
+        const runtime: TypeScriptProviderRuntime = { diagnostics: project.scan.diagnostics, compiler: project.compiler };
+        const tsProject: ProjectDescriptor = { ...project.typescriptProject, runtime };
+        const tsGraph = asTypeScriptSyntaxView(await this.coordinator.adapter("typescript/javascript")!
+          .createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: workspace.currentGeneration }));
+        const pythonGraph = await this.coordinator.adapter("python")!.createSyntaxProvider(project.pythonProject)
+          .extract({ workspace, project: project.pythonProject, files: pythonFiles, generation: workspace.currentGeneration });
+        this.lastSyntaxEvaluationGraph = mergeGraphBatches([tsGraph, pythonGraph], this.lastAdapterStats);
+        return cloneGraph(this.lastSyntaxEvaluationGraph);
+      } finally {
+        this.lastTypeScriptInstrumentation = priorInstrumentation;
+      }
+    }
     const python = this.database.getStoredGraphPartition("python");
     const typescript = this.database.getStoredGraphPartition("non-python");
     return mergeGraphBatches([{
@@ -456,6 +466,7 @@ export class CodeIndexer {
 
   async index(mode: IndexMode): Promise<IndexResult> {
     return this.runtime.indexMutex.runExclusive(async () => {
+      this.lastTypeScriptInstrumentation = { programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 };
       const startingState = await this.runtime.freshnessMutex.runExclusive(() =>
         this.database.getFreshnessState(),
       );
@@ -550,15 +561,14 @@ export class CodeIndexer {
             ...(relationshipScope ? { relationshipScope } : {}),
           };
           const tsAdapter = this.coordinator.adapter("typescript/javascript")!;
-          const discoveredTsProject = tsAdapter.discoverProject(this.rootPath);
           const tsProject: ProjectDescriptor = {
-            ...discoveredTsProject, sourceRoots: discoveredTsProject.sourceRoots.length ? discoveredTsProject.sourceRoots : [""],
+            ...project.typescriptProject,
             configHash: compiler.configHash, diagnostics: compiler.diagnostics, runtime: tsRuntime,
           };
           let tsGraph = pythonOnlyIncremental
             ? this.reuseStoredTypescriptGraph(workspace, typescriptFiles, handle.generation)
             : await tsAdapter.createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: handle.generation });
-          const tsSyntaxGraph = tsGraph;
+          const tsSyntaxGraph = pythonOnlyIncremental ? null : asTypeScriptSyntaxView(tsGraph);
           if (!pythonOnlyIncremental) {
             const precision = tsAdapter.createPrecisionProvider?.(tsProject);
             if (precision) tsGraph = await precision.refine(tsGraph);
@@ -582,7 +592,8 @@ export class CodeIndexer {
             ...(typescriptFiles.length > 0 ? [{
               language: "typescript/javascript", ecosystem: "npm", syntaxProvider: "typescript_compiler_ast",
               precisionProvider: "typescript_type_checker", analysisLevel: "typed" as const, files: typescriptFiles.length,
-              syntaxInvocations: pythonOnlyIncremental ? 0 : 1, precisionInvocations: pythonOnlyIncremental ? 0 : 1,
+              syntaxInvocations: this.lastTypeScriptInstrumentation.programCreations,
+              precisionInvocations: this.lastTypeScriptInstrumentation.precisionWorkItems > 0 ? 1 : 0,
               configHash: compiler.configHash,
               providerVersions: { syntax: ts.version, precision: ts.version }, status: "ready" as const,
               coverage: 1, diagnostics: [],
@@ -598,7 +609,9 @@ export class CodeIndexer {
             }] : []),
           ];
           this.lastAdapterStats = adapterStats;
-          this.lastSyntaxEvaluationGraph = mergeGraphBatches([tsSyntaxGraph, pythonGraph], adapterStats);
+          this.lastSyntaxEvaluationGraph = tsSyntaxGraph
+            ? mergeGraphBatches([tsSyntaxGraph, cloneGraph(pythonGraph)], adapterStats)
+            : null;
           const adapterState: AdapterStateMap = Object.fromEntries(adapterStats.map((item) => [item.language, {
             configHash: item.configHash,
             lastGeneration: handle.generation,
@@ -958,14 +971,19 @@ export class CodeIndexer {
   private loadMetadataProject(): MetadataProjectScan {
     const scan = scanWorkspaceMetadata(this.rootPath, this.caseSensitivePaths);
     const typescriptFiles = scan.files.filter((file) => file.language !== "python");
-    const compiler = this.compilerConfiguration(typescriptFiles);
-    const pythonProject = new PythonLanguageAdapter().discoverProject(this.rootPath);
+    const typescriptProject = this.coordinator.discoverProject("typescript/javascript", this.rootPath, {
+      sourceFiles: typescriptFiles,
+      caseSensitivePaths: this.caseSensitivePaths,
+    });
+    const compiler = (typescriptProject.runtime as TypeScriptProjectRuntime | undefined)?.compiler;
+    if (!compiler) throw new Error("TypeScript adapter discovery did not provide compiler configuration");
+    const pythonProject = this.coordinator.discoverProject("python", this.rootPath);
     const configHash = sha256(JSON.stringify({ typescript: compiler.configHash, python: pythonProject.configHash }));
     const files = compiler.hasConfig
       ? scan.files.filter((file) => file.language === "python" ||
           compiler.configuredFileNames.has(normalizePathKey(file.absolutePath, this.caseSensitivePaths)))
       : scan.files;
-    return { scan, files, compiler, pythonProject, configHash };
+    return { scan, files, compiler, pythonProject, typescriptProject, configHash };
   }
 
   private loadProject(): ProjectScan {
@@ -986,110 +1004,8 @@ export class CodeIndexer {
       files,
       compiler: metadata.compiler,
       pythonProject: metadata.pythonProject,
+      typescriptProject: metadata.typescriptProject,
       configHash: metadata.configHash,
-    };
-  }
-
-  private compilerConfiguration(scannedFiles: ScannedFileMetadata[]): CompilerConfiguration {
-    const diagnostics: string[] = [];
-    const fatalDiagnostics: string[] = [];
-    const configPath = ["tsconfig.json", "jsconfig.json"]
-      .map((name) => path.join(this.rootPath, name))
-      .find((candidate) => ts.sys.fileExists(candidate));
-    let options: ts.CompilerOptions = {
-      allowJs: true,
-      checkJs: false,
-      noEmit: true,
-      skipLibCheck: true,
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-      jsx: ts.JsxEmit.Preserve,
-    };
-    let configuredFileNames = scannedFiles.map((file) =>
-      normalizePathKey(file.absolutePath, this.caseSensitivePaths),
-    );
-    const configContents = new Map<string, string>();
-    const trackedReadFile = (fileName: string): string | undefined => {
-      const content = ts.sys.readFile(fileName);
-      if (content !== undefined && fileName.toLocaleLowerCase("en-US").endsWith(".json")) {
-        configContents.set(normalizePathKey(fileName, this.caseSensitivePaths), content);
-      }
-      return content;
-    };
-    if (configPath) {
-      const typescriptConfigPath = configPath.replaceAll("\\", "/");
-      const config = ts.readConfigFile(typescriptConfigPath, trackedReadFile);
-      if (config.error) {
-        const message = diagnosticText(config.error);
-        diagnostics.push(message);
-        fatalDiagnostics.push(message);
-        configuredFileNames = [];
-      } else {
-        const parseHost: ts.ParseConfigHost = {
-          useCaseSensitiveFileNames: this.caseSensitivePaths,
-          fileExists: ts.sys.fileExists,
-          readFile: trackedReadFile,
-          readDirectory: ts.sys.readDirectory,
-        };
-        const parsed = ts.parseJsonConfigFileContent(
-          config.config,
-          parseHost,
-          this.rootPath,
-          { allowJs: true, checkJs: false, noEmit: true, skipLibCheck: true },
-          typescriptConfigPath,
-        );
-        for (const diagnostic of parsed.errors) {
-          const message = diagnosticText(diagnostic);
-          diagnostics.push(message);
-          if (
-            diagnostic.category === ts.DiagnosticCategory.Error &&
-            diagnostic.code !== 18002 &&
-            diagnostic.code !== 18003
-          ) {
-            fatalDiagnostics.push(message);
-          }
-        }
-        options = {
-          ...parsed.options,
-          allowJs: true,
-          checkJs: false,
-          noEmit: true,
-          skipLibCheck: true,
-        };
-        configuredFileNames = parsed.fileNames.map((fileName) =>
-          normalizePathKey(path.resolve(fileName), this.caseSensitivePaths),
-        );
-      }
-    }
-    const packageJsonPath = path.join(this.rootPath, "package.json");
-    let packageJson = "";
-    try {
-      packageJson = readFileSync(packageJsonPath, "utf8");
-    } catch {
-      // package.json is optional for a synthetic project.
-    }
-    configuredFileNames = [...new Set(configuredFileNames)].sort();
-    const configFiles = [...configContents.entries()]
-      .map(([fileName, content]) => ({ fileName, contentHash: sha256(content) }))
-      .sort((left, right) => left.fileName.localeCompare(right.fileName));
-    const configHash = sha256(
-      JSON.stringify({
-        typescriptVersion: ts.version,
-        configPath: configPath ? normalizePathKey(configPath, this.caseSensitivePaths) : null,
-        configuredFileNames,
-        effectiveCompilerOptions: canonicalizeCompilerValue(options, this.caseSensitivePaths),
-        configFiles,
-        packageJsonHash: sha256(packageJson),
-      }),
-    );
-    return {
-      options,
-      diagnostics,
-      fatalDiagnostics,
-      configHash,
-      hasConfig: configPath !== undefined,
-      configuredFileNames: new Set(configuredFileNames),
     };
   }
 

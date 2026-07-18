@@ -18,6 +18,11 @@ export interface ProjectDescriptor {
   runtime?: unknown;
 }
 
+export interface ProjectDiscoveryInput {
+  sourceFiles?: Array<{ absolutePath: string }>;
+  caseSensitivePaths?: boolean;
+}
+
 export interface SyntaxGraphBatch {
   files: IndexedSourceFile[];
   nodes: CodeNodeRecord[];
@@ -47,7 +52,7 @@ export interface LanguageAdapter {
   readonly languageId: string;
   readonly ecosystem: string;
   readonly extensions: readonly string[];
-  discoverProject(rootPath: string): ProjectDescriptor;
+  discoverProject(rootPath: string, input?: ProjectDiscoveryInput): ProjectDescriptor;
   createSyntaxProvider(project: ProjectDescriptor): SyntaxProvider;
   createPrecisionProvider?(project: ProjectDescriptor): PrecisionProvider;
 }
@@ -85,6 +90,12 @@ export class GraphIndexCoordinator {
 
   adapter(language: string): LanguageAdapter | undefined {
     return this.adapters.get(language);
+  }
+
+  discoverProject(language: string, rootPath: string, input?: ProjectDiscoveryInput): ProjectDescriptor {
+    const adapter = this.adapters.get(language);
+    if (!adapter) throw new Error(`No language adapter registered for ${language}`);
+    return adapter.discoverProject(rootPath, input);
   }
 
   capabilities(): Array<{ language: string; ecosystem: string; extensions: readonly string[] }> {

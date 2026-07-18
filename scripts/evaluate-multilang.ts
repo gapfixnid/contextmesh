@@ -132,19 +132,37 @@ try {
   }
   const linkTarget = await app.searchCode({ query: "tsHelper", limit: 1 }) as Envelope<{ results: Array<{ id: string }> }>;
   await app.remember({ content: "Retry policy was selected for deterministic recovery.", topic: "retry decision", type: "decision", keywords: ["retry", "decision"], sourceSymbolIds: [linkTarget.data.results[0]!.id] });
+  await app.remember({ content: "Retry decision draft without code provenance.", topic: "retry decision unlinked", type: "decision", keywords: ["retry", "decision"], sourceSymbolIds: [] });
+
+  const searchGraph = (graph: ExtractedGraph, query: string): Array<{ id: string; name: string; relativePath: string | null }> => {
+    const normalized = query.toLocaleLowerCase("en-US");
+    const pathByFile = new Map(graph.files.map((file) => [file.id, file.relativePath]));
+    return graph.nodes.map((node) => {
+      const haystack = `${node.name} ${node.qualifiedName} ${node.signature} ${node.doc}`.toLocaleLowerCase("en-US");
+      const score = node.name.toLocaleLowerCase("en-US") === normalized ? 3
+        : node.qualifiedName.toLocaleLowerCase("en-US") === normalized ? 2
+        : haystack.includes(normalized) ? 1 : 0;
+      return { id: node.id, name: node.name, relativePath: node.fileId ? (pathByFile.get(node.fileId) ?? null) : null, score };
+    }).filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+      .slice(0, fixture.k).map(({ score: _score, ...item }) => item);
+  };
 
   const graphStrategy = (id: "B" | "C", level: "syntax" | "typed"): EvaluationStrategy => ({
     id,
     async run(task) {
-      const search = await app.searchCode({ query: task.query, limit: fixture.k }) as Envelope<{ results: Array<{ id: string; name: string; relativePath: string | null }> }>;
-      const graph = app.code.indexer.evaluationGraph(level);
-      const observed = observeGraph(task, graph, search.data.results.map((item) => item.id), search.generation);
-      const payload = { results: search.data.results.map((item) => ({ id: item.id, name: item.name, path: item.relativePath })), observed };
+      const graph = await app.code.indexer.evaluationGraph(level);
+      const generation = app.database.getWorkspace().currentGeneration;
+      const results = level === "syntax"
+        ? searchGraph(graph, task.query)
+        : (await app.searchCode({ query: task.query, limit: fixture.k }) as Envelope<{ results: Array<{ id: string; name: string; relativePath: string | null }> }>).data.results;
+      const observed = observeGraph(task, graph, results.map((item) => item.id), generation);
+      const payload = { results: results.map((item) => ({ id: item.id, name: item.name, path: item.relativePath })), observed };
       return {
         taskId: task.id, strategyId: id,
-        orderedFiles: [...new Set(search.data.results.flatMap((item) => item.relativePath ? [item.relativePath] : []))],
-        orderedSymbols: search.data.results.map((item) => item.name), orderedMemories: [],
-        searchStages: level === "syntax" ? ["syntax-graph"] : ["syntax-graph", "ts-precision"],
+        orderedFiles: [...new Set(results.flatMap((item) => item.relativePath ? [item.relativePath] : []))],
+        orderedSymbols: results.map((item) => item.name), orderedMemories: [],
+        searchStages: level === "syntax" ? ["syntax-snapshot-retrieval", "syntax-graph"] : ["typed-db-retrieval", "syntax-graph", "ts-precision"],
         toolCalls: 1, fileReads: 0, estimatedTokens: Math.ceil(canonical(payload).length / 4),
         ...observed, memoryLeak: 0,
       };
@@ -172,7 +190,10 @@ try {
     async run(task) {
       const base = await graphStrategy("C", "typed").run(task);
       const recalled = await app.recall({ query: task.query, limit: fixture.k }) as Envelope<{ fragments: Array<MemoryFragmentRecord & { provenance?: { codeLinks?: Array<{ codeNodeId: string | null }> } }> }>;
-      const valid = recalled.data.fragments.filter((memory) => (memory.provenance?.codeLinks ?? []).every((link) => link.codeNodeId !== null));
+      const valid = recalled.data.fragments.filter((memory) => {
+        const links = memory.provenance?.codeLinks ?? [];
+        return links.length > 0 && links.every((link) => link.codeNodeId !== null);
+      });
       const orderedMemories = valid.map((memory) => memory.topic);
       const memoryLeak = task.memoryExpected ? 0 : orderedMemories.length;
       const payload = { code: base.orderedSymbols, memories: orderedMemories };
@@ -207,8 +228,8 @@ try {
     precisionRecall: (byId.get("C")?.edgeRecall ?? 0) >= (byId.get("B")?.edgeRecall ?? 0),
     memoryNeededD: memoryDTrace?.orderedMemories.includes("retry decision") === true,
     memoryNotNeededLeak: (byId.get("D")?.memoryLeak ?? 1) === 0,
-    falseConfirmedCrossLanguage: (() => {
-      const graph = app.code.indexer.evaluationGraph("typed");
+    falseConfirmedCrossLanguage: await (async () => {
+      const graph = await app.code.indexer.evaluationGraph("typed");
       const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
       return graph.edges.filter((edge) => edge.status === "resolved" && nodes.get(edge.sourceId)?.language !== nodes.get(edge.targetId)?.language).length === 0;
     })(),
@@ -216,7 +237,6 @@ try {
     tokenBudget: orderedTraces.every((trace) => trace.estimatedTokens <= fixture.tokenBudget),
   };
   const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  execFileSync("git", ["merge-base", "--is-ancestor", testedCommit, "HEAD"]);
   const deterministic = { fixture: fixture.id, k: fixture.k, tokenBudget: fixture.tokenBudget, strategies: strategyScores, traces: orderedTraces };
   const artifact = {
     schemaVersion: 1, fixtureDigest: sha256(canonical(fixture)),

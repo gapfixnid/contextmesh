@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "n
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import type { Envelope } from "../src/contracts.js";
@@ -89,6 +89,10 @@ describe("v0.3 multilingual graph", () => {
       }>;
       const typescript = indexed.data.adapterStats.find((item) => item.language === "typescript/javascript");
       expect(typescript).toMatchObject({ syntaxInvocations: 0, precisionInvocations: 0 });
+      expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
+      const syntaxAfterIncremental = await app.code.indexer.evaluationGraph("syntax");
+      expect(new Set(syntaxAfterIncremental.nodes.filter((node) => node.language === "typescript").map((node) => node.analysisLevel))).toEqual(new Set(["syntax"]));
+      expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
       const ts = await app.searchCode({ query: "typescriptEntry" }) as Envelope<{ results: unknown[] }>;
       const py = await app.searchCode({ query: "changed_python_only" }) as Envelope<{ results: unknown[] }>;
       expect(ts.data.results).toHaveLength(1);
@@ -108,6 +112,7 @@ describe("v0.3 multilingual graph", () => {
     }>;
     expect(changed.data.adapterStats.find((item) => item.language === "typescript/javascript"))
       .toMatchObject({ syntaxInvocations: 0, precisionInvocations: 0 });
+    expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
     expect(changed.data.adapterStats.find((item) => item.language === "python"))
       .toMatchObject({ syntaxInvocations: 1, precisionInvocations: 0 });
     await app.close();
@@ -124,6 +129,32 @@ describe("v0.3 multilingual graph", () => {
       }>;
       expect(afterNoOp.data.adapterStats.every((item) => item.status === "ready" && item.coverage === 1)).toBe(true);
       expect(afterNoOp.data.adapterStats.every((item) => Object.keys(item.providerVersions ?? {}).length > 0)).toBe(true);
+      const rebuiltSyntax = await app.code.indexer.evaluationGraph("syntax");
+      expect(new Set(rebuiltSyntax.nodes.filter((node) => node.language === "typescript").map((node) => node.analysisLevel))).toEqual(new Set(["syntax"]));
+      expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("uses registered adapter discovery descriptors for both language projects", async () => {
+    const root = mixedWorkspace();
+    const app = new ContextMeshApp(root);
+    const typescriptAdapter = app.code.indexer.coordinator.adapter("typescript/javascript")!;
+    const pythonAdapter = app.code.indexer.coordinator.adapter("python")!;
+    const typescriptDiscovery = vi.spyOn(typescriptAdapter, "discoverProject");
+    const pythonDiscovery = vi.spyOn(pythonAdapter, "discoverProject");
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{ adapterStats: Array<{ language: string; configHash: string }> }>;
+      expect(typescriptDiscovery).toHaveBeenCalledTimes(1);
+      expect(pythonDiscovery).toHaveBeenCalledTimes(1);
+      const tsDescriptor = typescriptDiscovery.mock.results[0]!.value;
+      const pyDescriptor = pythonDiscovery.mock.results[0]!.value;
+      expect(tsDescriptor.configHash).not.toBe("");
+      expect((tsDescriptor.runtime as { compiler?: { options?: unknown; configuredFileNames?: Set<string> } }).compiler)
+        .toMatchObject({ options: expect.any(Object), configuredFileNames: expect.any(Set) });
+      expect(indexed.data.adapterStats.find((item) => item.language === "typescript/javascript")?.configHash).toBe(tsDescriptor.configHash);
+      expect(indexed.data.adapterStats.find((item) => item.language === "python")?.configHash).toBe(pyDescriptor.configHash);
     } finally {
       await app.close();
     }

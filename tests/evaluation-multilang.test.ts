@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -26,6 +27,7 @@ describe("mixed-language evaluation artifact", () => {
       samples: { cold: number; warm: number; incremental: number };
       providers: { typescript: string };
       thresholds: Record<string, boolean>;
+      git: { commit: string; baseline: string };
     };
     expect(artifact.fixtureDigest).toBe(sha256(canonical(fixture)));
     expect(new Set(fixture.tasks.map((task) => task.category))).toEqual(new Set(["ts-only", "python-only", "mixed", "memory-needed", "memory-not-needed"]));
@@ -33,8 +35,11 @@ describe("mixed-language evaluation artifact", () => {
     expect(artifact.strategies.every((strategy) => strategy.score.falseEdges === 0 && strategy.score.staleEvidence === 0)).toBe(true);
     expect(artifact.strategies.find((strategy) => strategy.id === "B")!.score.edgeRecall)
       .toBeLessThan(artifact.strategies.find((strategy) => strategy.id === "C")!.score.edgeRecall);
+    expect(artifact.traces.find((trace) => trace.taskId === "ts" && trace.strategyId === "B")?.searchStages).toContain("syntax-snapshot-retrieval");
+    expect(artifact.traces.find((trace) => trace.taskId === "ts" && trace.strategyId === "C")?.searchStages).toContain("typed-db-retrieval");
     expect(artifact.strategies.find((strategy) => strategy.id === "D")!.score).toMatchObject({ memoryRecall: 1, memoryLeak: 0 });
     expect(artifact.traces.find((trace) => trace.taskId === "memory" && trace.strategyId === "D")?.orderedMemories).toContain("retry decision");
+    expect(artifact.traces.find((trace) => trace.taskId === "memory" && trace.strategyId === "D")?.orderedMemories).not.toContain("retry decision unlinked");
     expect(artifact.traces.find((trace) => trace.taskId === "memory" && trace.strategyId === "D")?.searchStages).toEqual(expect.arrayContaining(["memory-fts", "valid-code-links"]));
     expect(artifact.traces).toHaveLength(fixture.tasks.length * 4);
     expect(artifact.traces.every((trace) => trace.estimatedTokens <= artifact.tokenBudget)).toBe(true);
@@ -43,6 +48,9 @@ describe("mixed-language evaluation artifact", () => {
     expect(artifact.samples).toEqual({ cold: 5, warm: 20, incremental: 5 });
     expect(artifact.providers.typescript).toMatch(/^\d+\.\d+/);
     expect(Object.values(artifact.thresholds).every(Boolean)).toBe(true);
+    expect(() => execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], {
+      cwd: process.cwd(), stdio: "pipe",
+    })).not.toThrow();
     for (const timing of Object.values(artifact.performanceMs)) expect(timing.p95).toBeGreaterThanOrEqual(timing.p50);
   });
 });
