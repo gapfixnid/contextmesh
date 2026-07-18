@@ -38,7 +38,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run verify:native-supply-chain
-      - run: npm run evaluate:v04
+      - run: npm run verify:v04-artifact
       - run: npm run evaluate:multilang
       - run: npm run verify:package
       - run: npm run audit:production
