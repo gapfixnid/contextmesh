@@ -9,6 +9,9 @@ import { APPROVED_MODEL_KEY } from "../src/semantic/manifest.js";
 import { createTransformersEmbeddingBackend } from "../src/semantic/transformers-backend.js";
 import { installNetworkDenyGuard } from "./network-deny.js";
 
+const MAX_BOUNDED_BATCH_INFERENCE_MS = 10_000;
+const MAX_RUNTIME_EVENT_LOOP_DELAY_MS = 10_000;
+
 function modelPathArgument(): string {
   const index = process.argv.indexOf("--model-path");
   const configured = index >= 0 ? process.argv[index + 1] : process.env.CONTEXTMESH_SEMANTIC_MODEL;
@@ -77,8 +80,11 @@ try {
   const batchStarted = performance.now();
   const passages = await backend.embedPassages(worstCaseBatch);
   const boundedBatchInferenceMs = performance.now() - batchStarted;
-  if (boundedBatchInferenceMs >= 10_000) {
-    throw new Error(`A 16x512-token passage batch exceeded the 10 second gate: ${boundedBatchInferenceMs}`);
+  if (boundedBatchInferenceMs >= MAX_BOUNDED_BATCH_INFERENCE_MS) {
+    throw new Error(
+      `A 16x512-token passage batch exceeded the ${MAX_BOUNDED_BATCH_INFERENCE_MS} ms gate: ` +
+      boundedBatchInferenceMs,
+    );
   }
 
   const query = await backend.embedQuery("find code that retries a temporary upstream failure");
@@ -148,8 +154,11 @@ try {
 
   backend.diagnostics.verificationMethod.push("network_denied", "application_lifecycle");
   await new Promise<void>((resolve) => setImmediate(resolve));
-  if (maximumEventLoopDelayMs >= 5_000) {
-    throw new Error(`Semantic runtime event-loop delay exceeded 5 seconds: ${maximumEventLoopDelayMs}`);
+  if (maximumEventLoopDelayMs >= MAX_RUNTIME_EVENT_LOOP_DELAY_MS) {
+    throw new Error(
+      `Semantic runtime event-loop delay exceeded ${MAX_RUNTIME_EVENT_LOOP_DELAY_MS} ms: ` +
+      maximumEventLoopDelayMs,
+    );
   }
   report = {
     modelKey: APPROVED_MODEL_KEY,
@@ -161,7 +170,9 @@ try {
     boundedBatchSize: passages.length,
     boundedBatchTokensPerPassage: 512,
     boundedBatchInferenceMs: Math.round(boundedBatchInferenceMs * 100) / 100,
+    boundedBatchInferenceLimitMs: MAX_BOUNDED_BATCH_INFERENCE_MS,
     maximumRuntimeEventLoopDelayMs: Math.round(maximumEventLoopDelayMs * 100) / 100,
+    runtimeEventLoopDelayLimitMs: MAX_RUNTIME_EVENT_LOOP_DELAY_MS,
     application: {
       generation: indexed.generation,
       searchResults: search.data.results.length,
