@@ -139,7 +139,13 @@ try {
   const fastPublicGetContextP95Ms = percentile95(fastPublicGetContextDurations);
   const strictPublicSearchTraceP95Ms = percentile95(strictPublicSearchTraceDurations);
   const strictPublicGetContextP95Ms = percentile95(strictPublicGetContextDurations);
+  const thresholdPassed = coldIndexMs <= limits.coldIndexMs
+    && noOpIndexMs <= limits.noOpIndexMs
+    && fastPublicSearchTraceP95Ms <= limits.fastPublicSearchTraceP95Ms
+    && fastPublicGetContextP95Ms <= limits.fastPublicGetContextP95Ms;
+  const runnerClass = process.env.CONTEXTMESH_RUNNER_CLASS ?? "local-blocking";
   const result = {
+    runnerClass,
     files: FILE_COUNT,
     coldIndexMs: Math.round(coldIndexMs * 100) / 100,
     noOpIndexMs: Math.round(noOpIndexMs * 100) / 100,
@@ -149,15 +155,11 @@ try {
     strictStartupVerificationMs: Math.round(strictStartupVerificationMs * 100) / 100,
     strictPublicSearchTraceP95Ms: Math.round(strictPublicSearchTraceP95Ms * 100) / 100,
     strictPublicGetContextP95Ms: Math.round(strictPublicGetContextP95Ms * 100) / 100,
+    thresholdPassed,
     limits,
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (
-    coldIndexMs > limits.coldIndexMs ||
-    noOpIndexMs > limits.noOpIndexMs ||
-    fastPublicSearchTraceP95Ms > limits.fastPublicSearchTraceP95Ms ||
-    fastPublicGetContextP95Ms > limits.fastPublicGetContextP95Ms
-  ) {
+  if (!thresholdPassed && runnerClass !== "github-hosted-informational") {
     throw new Error("ContextMesh benchmark exceeded one or more MVP performance limits");
   }
 } finally {

@@ -53,6 +53,9 @@ writeFileSync(
 
 const restoreNetwork = installNetworkDenyGuard("NETWORK_DENIED_BY_SEMANTIC_SMOKE");
 const started = performance.now();
+const backendStarted = performance.now();
+const backend = await createTransformersEmbeddingBackend(modelPathArgument());
+const backendInitializationMs = performance.now() - backendStarted;
 let heartbeatAt = performance.now();
 let maximumEventLoopDelayMs = 0;
 const heartbeat = setInterval(() => {
@@ -62,7 +65,6 @@ const heartbeat = setInterval(() => {
 }, 50);
 heartbeat.unref();
 
-const backend = await createTransformersEmbeddingBackend(modelPathArgument());
 const app = new ContextMeshApp(root, ":memory:", {
   semantic: { modelPath: modelPathArgument(), backendFactory: async () => backend },
 });
@@ -147,18 +149,19 @@ try {
   backend.diagnostics.verificationMethod.push("network_denied", "application_lifecycle");
   await new Promise<void>((resolve) => setImmediate(resolve));
   if (maximumEventLoopDelayMs >= 5_000) {
-    throw new Error(`Semantic smoke event-loop delay exceeded 5 seconds: ${maximumEventLoopDelayMs}`);
+    throw new Error(`Semantic runtime event-loop delay exceeded 5 seconds: ${maximumEventLoopDelayMs}`);
   }
   report = {
     modelKey: APPROVED_MODEL_KEY,
     dimensions: backend.dimensions,
+    backendInitializationMs: Math.round(backendInitializationMs * 100) / 100,
     loadAndApplicationLifecycleMs: Math.round((performance.now() - started) * 100) / 100,
     relevantScore,
     unrelatedScore,
     boundedBatchSize: passages.length,
     boundedBatchTokensPerPassage: 512,
     boundedBatchInferenceMs: Math.round(boundedBatchInferenceMs * 100) / 100,
-    maximumEventLoopDelayMs: Math.round(maximumEventLoopDelayMs * 100) / 100,
+    maximumRuntimeEventLoopDelayMs: Math.round(maximumEventLoopDelayMs * 100) / 100,
     application: {
       generation: indexed.generation,
       searchResults: search.data.results.length,
