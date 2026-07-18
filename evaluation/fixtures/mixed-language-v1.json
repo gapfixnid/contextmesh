@@ -8,10 +8,10 @@
     "src/models.py": "class Base:\n    pass\n\nclass Worker(Base):\n    def run(self):\n        return missing_dynamic()\n"
   },
   "tasks": [
-    { "id": "ts", "category": "ts-only", "query": "tsHelper", "goldFiles": ["src/entry.ts"], "goldSymbols": ["tsHelper"], "memoryExpected": false },
-    { "id": "python", "category": "python-only", "query": "Worker", "goldFiles": ["src/models.py"], "goldSymbols": ["Worker"], "memoryExpected": false },
-    { "id": "mixed", "category": "mixed", "query": "sharedEntry", "goldFiles": ["src/entry.ts", "src/service.py"], "goldSymbols": ["sharedEntry"], "memoryExpected": false },
-    { "id": "memory", "category": "memory-needed", "query": "retry decision", "goldFiles": [], "goldSymbols": [], "memoryExpected": true },
-    { "id": "no-memory", "category": "memory-not-needed", "query": "python_helper", "goldFiles": ["src/service.py"], "goldSymbols": ["python_helper"], "memoryExpected": false }
+    { "id": "ts", "category": "ts-only", "query": "tsHelper", "goldFiles": ["src/entry.ts"], "goldSymbols": ["tsHelper"], "goldEdges": ["CALLS:sharedEntry:tsHelper"], "memoryExpected": false },
+    { "id": "python", "category": "python-only", "query": "Worker", "goldFiles": ["src/models.py"], "goldSymbols": ["Worker"], "goldEdges": ["EXTENDS:Worker:Base"], "goldUnresolved": ["missing_dynamic"], "memoryExpected": false },
+    { "id": "mixed", "category": "mixed", "query": "sharedEntry", "goldFiles": ["src/entry.ts", "src/service.py"], "goldSymbols": ["sharedEntry"], "goldEdges": ["CALLS:sharedEntry:tsHelper", "CALLS:sharedEntry:python_helper"], "memoryExpected": false },
+    { "id": "memory", "category": "memory-needed", "query": "retry decision", "goldFiles": [], "goldSymbols": [], "goldMemories": ["retry decision"], "memoryExpected": true },
+    { "id": "no-memory", "category": "memory-not-needed", "query": "python_helper", "goldFiles": ["src/service.py"], "goldSymbols": ["python_helper"], "goldEdges": ["CALLS:sharedEntry:python_helper"], "memoryExpected": false }
   ]
 }

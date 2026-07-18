@@ -9,6 +9,25 @@ import type { Envelope } from "../src/contracts.js";
 import { sha256 } from "../src/utils.js";
 
 describe("v0.2 TypeScript golden compatibility", () => {
+  it("performs real syntax and precision work over exactly one shared Program", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-ts-provider-"));
+    mkdirSync(path.join(root, "src"));
+    writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }));
+    writeFileSync(path.join(root, "src", "work.ts"), "export const target = () => 1; export const caller = () => target();\n");
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const instrumentation = app.code.indexer.typeScriptInstrumentation();
+      expect(instrumentation.programCreations).toBe(1);
+      expect(instrumentation.syntaxWorkItems).toBeGreaterThan(0);
+      expect(instrumentation.precisionWorkItems).toBeGreaterThan(0);
+      const status = app.database.getStatus() as { lastRun: { adapterStats: Array<{ syntaxInvocations: number; precisionInvocations: number }> } };
+      expect(status.lastRun.adapterStats[0]).toMatchObject({ syntaxInvocations: 1, precisionInvocations: 1 });
+    } finally {
+      await app.close(); rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves localKey, ID derivation, typed calls, and unresolved output", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-ts-golden-"));
     mkdirSync(path.join(root, "src"));

@@ -16,6 +16,7 @@ import type {
   UnresolvedReferenceRecord,
   WorkspaceRecord,
   AdapterStats,
+  AdapterStateMap,
 } from "../contracts.js";
 import type {
   CodeSearchResult,
@@ -38,7 +39,7 @@ import {
   type ScannedFile,
   type ScannedFileMetadata,
 } from "./scanner.js";
-import { PythonLanguageAdapter } from "./languages/python.js";
+import { PythonLanguageAdapter, PYTHON_PROVIDER_VERSIONS } from "./languages/python.js";
 import { TypeScriptLanguageAdapter } from "./languages/typescript.js";
 import { GraphIndexCoordinator, mergeGraphBatches, type ProjectDescriptor } from "./providers.js";
 
@@ -102,7 +103,7 @@ interface ExtractionState {
   workspace: WorkspaceRecord;
   generation: number;
   compilerOptions: ts.CompilerOptions;
-  checker: ts.TypeChecker;
+  checker: ts.TypeChecker | null;
   filesByPath: Map<string, IndexedSourceFile>;
   moduleByPath: Map<string, string>;
   nodes: Map<string, CodeNodeRecord>;
@@ -111,6 +112,13 @@ interface ExtractionState {
   declarationNodes: Map<ts.Node, string>;
   symbolNodes: Map<ts.Symbol, string>;
   caseSensitivePaths: boolean;
+}
+
+interface TypeScriptProviderRuntime {
+  diagnostics: string[];
+  compiler: CompilerConfiguration;
+  relationshipScope?: Set<string>;
+  context?: { program: ts.Program; state: ExtractionState; programCreations: number };
 }
 
 function hasExportModifier(node: ts.Node): boolean {
@@ -209,6 +217,12 @@ function declarationSignature(
   return clampText((bodyIndex >= 0 ? text.slice(0, bodyIndex) : text).replace(/\s+/g, " ").trim(), 1000);
 }
 
+function declarationSyntaxSignature(node: ts.Node, sourceFile: ts.SourceFile): string {
+  const text = node.getText(sourceFile).trim();
+  const bodyIndex = text.indexOf("{");
+  return clampText((bodyIndex >= 0 ? text.slice(0, bodyIndex) : text).replace(/\s+/g, " ").trim(), 1000);
+}
+
 function declarationDoc(
   descriptor: DeclarationDescriptor,
   checker: ts.TypeChecker,
@@ -234,8 +248,12 @@ function addEdge(
   resolutionKind: CodeEdgeRecord["resolutionKind"] = "exact",
   confidence = 1,
   metadata: Record<string, unknown> = {},
+  evidenceSource: "syntax" | "type_checker" = "syntax",
 ): void {
   if (sourceId === targetId && kind !== "CALLS") return;
+  const provider = evidenceSource === "syntax" ? "typescript_compiler_ast" : "typescript_type_checker";
+  const incomingEvidence = [{ provider, providerVersion: ts.version, source: evidenceSource, confidence }];
+  const existing = state.edges.get(edgeKey({ sourceId, targetId, kind }));
   const edge: CodeEdgeRecord = {
     workspaceId: state.workspace.id,
     sourceId,
@@ -245,6 +263,8 @@ function addEdge(
     resolutionKind,
     generation: state.generation,
     metadata,
+    status: "resolved",
+    evidence: existing ? [...(existing.evidence ?? []), ...incomingEvidence] : incomingEvidence,
   };
   state.edges.set(edgeKey(edge), edge);
 }
@@ -260,6 +280,7 @@ function aliasedSymbol(checker: ts.TypeChecker, symbol: ts.Symbol | undefined): 
 }
 
 function resolveSymbolNode(state: ExtractionState, symbol: ts.Symbol | undefined): string | null {
+  if (!state.checker) return null;
   const resolved = aliasedSymbol(state.checker, symbol);
   if (!resolved) return null;
   const direct = state.symbolNodes.get(resolved) ?? state.symbolNodes.get(symbol as ts.Symbol);
@@ -272,6 +293,7 @@ function resolveSymbolNode(state: ExtractionState, symbol: ts.Symbol | undefined
 }
 
 function symbolBelongsToWorkspace(state: ExtractionState, symbol: ts.Symbol | undefined): boolean {
+  if (!state.checker) return false;
   const resolved = aliasedSymbol(state.checker, symbol);
   return Boolean(
     resolved?.declarations?.some((declaration) => {
@@ -311,6 +333,7 @@ interface ProjectScan {
   files: ScannedFile[];
   compiler: CompilerConfiguration;
   pythonProject: ProjectDescriptor;
+  configHash: string;
 }
 
 interface MetadataProjectScan {
@@ -318,6 +341,7 @@ interface MetadataProjectScan {
   files: ScannedFileMetadata[];
   compiler: CompilerConfiguration;
   pythonProject: ProjectDescriptor;
+  configHash: string;
 }
 
 function canonicalizeCompilerValue(value: unknown, caseSensitivePaths: boolean): unknown {
@@ -364,6 +388,8 @@ export class CodeIndexer {
   readonly freshnessMode: FreshnessMode;
   readonly coordinator = new GraphIndexCoordinator();
   private lastAdapterStats: AdapterStats[] = [];
+  private lastSyntaxEvaluationGraph: ExtractedGraph | null = null;
+  private lastTypeScriptInstrumentation = { programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 };
 
   constructor(
     database: ContextMeshStorage,
@@ -376,25 +402,30 @@ export class CodeIndexer {
     this.freshnessMode = freshnessMode;
     this.semantic = semantic;
     this.runtime = workspaceRuntime(`${database.dbPath}\0${database.workspace.id}`);
+    this.lastAdapterStats = Object.values(database.getAdapterState()).map((state) => state.stats);
     this.coordinator.register(new PythonLanguageAdapter());
-    this.coordinator.register(new TypeScriptLanguageAdapter(async (input) => {
-      const runtime = input.project.runtime as {
-        diagnostics: string[];
-        compiler: CompilerConfiguration;
-        relationshipScope?: Set<string>;
-      };
-      return this.extract(
-        input.workspace,
-        input.files,
-        input.generation,
-        runtime.diagnostics,
-        runtime.compiler,
-        runtime.relationshipScope,
-      );
-    }));
+    this.coordinator.register(new TypeScriptLanguageAdapter(
+      async (input) => this.extractTypeScriptSyntax(input.workspace, input.files, input.generation, input.project.runtime as TypeScriptProviderRuntime),
+      async (project, batch) => this.refineTypeScript(batch, project.runtime as TypeScriptProviderRuntime),
+    ));
   }
 
   adapterStats(): AdapterStats[] { return this.lastAdapterStats.map((item) => ({ ...item })); }
+  typeScriptInstrumentation(): Readonly<typeof this.lastTypeScriptInstrumentation> {
+    return { ...this.lastTypeScriptInstrumentation };
+  }
+  evaluationGraph(level: "syntax" | "typed"): ExtractedGraph {
+    if (level === "syntax" && this.lastSyntaxEvaluationGraph) return this.lastSyntaxEvaluationGraph;
+    const python = this.database.getStoredGraphPartition("python");
+    const typescript = this.database.getStoredGraphPartition("non-python");
+    return mergeGraphBatches([{
+      files: [], nodes: typescript.nodes, edges: typescript.edges,
+      unresolvedReferences: typescript.unresolvedReferences, diagnostics: [],
+    }, {
+      files: [], nodes: python.nodes, edges: python.edges,
+      unresolvedReferences: python.unresolvedReferences, diagnostics: [],
+    }], this.lastAdapterStats);
+  }
 
   dispose(): void {
     // A process-local baseline is cheap to rebuild and must never survive an app lifecycle as if it were durable.
@@ -456,7 +487,10 @@ export class CodeIndexer {
         const deletedPathKeys = [...previous.keys()].filter((key) => !scannedKeys.has(key));
         const deletedFiles = deletedPathKeys.length;
         const workspace = this.database.getWorkspace();
-        const configurationChanged = this.database.getIndexConfigHash() !== compiler.configHash;
+        const priorAdapterState = this.database.getAdapterState();
+        const typescriptConfigChanged = priorAdapterState["typescript/javascript"]?.configHash !== compiler.configHash;
+        const pythonConfigChanged = priorAdapterState.python?.configHash !== project.pythonProject.configHash;
+        const configurationChanged = this.database.getIndexConfigHash() !== project.configHash;
 
         if (
           mode === "incremental" &&
@@ -471,7 +505,9 @@ export class CodeIndexer {
             deletedFiles: 0,
             failedFiles: 0,
           };
-          this.database.completeNoOpRun(handle, stats, scan.diagnostics, compiler.configHash);
+          this.database.completeNoOpRun(
+            handle, stats, scan.diagnostics, project.configHash, this.lastAdapterStats, priorAdapterState,
+          );
           await this.semantic?.reconcileCodeIfNeeded();
           const counts = this.database.getStatus().counts as Record<string, number>;
           result = {
@@ -506,24 +542,25 @@ export class CodeIndexer {
           const typescriptFiles = projectFiles.filter((file) => file.language !== "python");
           const pythonFiles = projectFiles.filter((file) => file.language === "python");
           const pythonOnlyIncremental = mode === "incremental" && workspace.currentGeneration > 0 &&
-            !configurationChanged && changedPathKeys.length + deletedPathKeys.length > 0 &&
+            !typescriptConfigChanged && (pythonConfigChanged || changedPathKeys.length + deletedPathKeys.length > 0) &&
             [...changedPathKeys, ...deletedPathKeys].every((key) => key.endsWith(".py"));
+          const tsRuntime: TypeScriptProviderRuntime = {
+            diagnostics: scan.diagnostics,
+            compiler,
+            ...(relationshipScope ? { relationshipScope } : {}),
+          };
+          const tsAdapter = this.coordinator.adapter("typescript/javascript")!;
+          const discoveredTsProject = tsAdapter.discoverProject(this.rootPath);
+          const tsProject: ProjectDescriptor = {
+            ...discoveredTsProject, sourceRoots: discoveredTsProject.sourceRoots.length ? discoveredTsProject.sourceRoots : [""],
+            configHash: compiler.configHash, diagnostics: compiler.diagnostics, runtime: tsRuntime,
+          };
           let tsGraph = pythonOnlyIncremental
             ? this.reuseStoredTypescriptGraph(workspace, typescriptFiles, handle.generation)
-            : await this.coordinator.adapter("typescript/javascript")!.createSyntaxProvider({
-                language: "typescript/javascript", ecosystem: "npm", sourceRoots: [""],
-                configHash: compiler.configHash, diagnostics: compiler.diagnostics,
-                runtime: { diagnostics: scan.diagnostics, compiler, relationshipScope },
-              }).extract({
-                workspace,
-                project: { language: "typescript/javascript", ecosystem: "npm", sourceRoots: [""], configHash: compiler.configHash, diagnostics: compiler.diagnostics, runtime: { diagnostics: scan.diagnostics, compiler, relationshipScope } },
-                files: typescriptFiles,
-                generation: handle.generation,
-              });
+            : await tsAdapter.createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: handle.generation });
+          const tsSyntaxGraph = tsGraph;
           if (!pythonOnlyIncremental) {
-            const precision = this.coordinator.adapter("typescript/javascript")!.createPrecisionProvider?.({
-              language: "typescript/javascript", ecosystem: "npm", sourceRoots: [""], configHash: compiler.configHash, diagnostics: [],
-            });
+            const precision = tsAdapter.createPrecisionProvider?.(tsProject);
             if (precision) tsGraph = await precision.refine(tsGraph);
           }
           for (const file of tsGraph.files) {
@@ -536,14 +573,6 @@ export class CodeIndexer {
             node.nativeKind = (node.metadata.syntaxKind as string | undefined) ?? node.kind;
             node.analysisLevel = "typed";
           }
-          for (const edge of tsGraph.edges) {
-            edge.status = "resolved";
-            edge.evidence = [{ provider: "typescript_type_checker", providerVersion: ts.version, source: "type_checker", confidence: 1 }];
-          }
-          for (const item of tsGraph.unresolvedReferences) {
-            item.confidence = 0.5;
-            item.evidence = [{ provider: "typescript_type_checker", providerVersion: ts.version, source: "type_checker", confidence: 0.5 }];
-          }
           const pythonAdapter = this.coordinator.adapter("python");
           const pythonProvider = pythonAdapter?.createSyntaxProvider(project.pythonProject);
           const pythonGraph = pythonProvider
@@ -555,14 +584,29 @@ export class CodeIndexer {
               precisionProvider: "typescript_type_checker", analysisLevel: "typed" as const, files: typescriptFiles.length,
               syntaxInvocations: pythonOnlyIncremental ? 0 : 1, precisionInvocations: pythonOnlyIncremental ? 0 : 1,
               configHash: compiler.configHash,
+              providerVersions: { syntax: ts.version, precision: ts.version }, status: "ready" as const,
+              coverage: 1, diagnostics: [],
             }] : []),
             ...(pythonFiles.length > 0 ? [{
               language: "python", ecosystem: "pypi", syntaxProvider: "tree_sitter_python", precisionProvider: null,
               analysisLevel: "syntax" as const, files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: 0,
               configHash: project.pythonProject.configHash,
+              providerVersions: { ...PYTHON_PROVIDER_VERSIONS }, status: "ready" as const,
+              coverage: 1, diagnostics: project.pythonProject.diagnostics.map((message) => ({
+                code: "PYTHON_PROJECT_DIAGNOSTIC", severity: "warning" as const, message,
+              })),
             }] : []),
           ];
           this.lastAdapterStats = adapterStats;
+          this.lastSyntaxEvaluationGraph = mergeGraphBatches([tsSyntaxGraph, pythonGraph], adapterStats);
+          const adapterState: AdapterStateMap = Object.fromEntries(adapterStats.map((item) => [item.language, {
+            configHash: item.configHash,
+            lastGeneration: handle.generation,
+            precisionRevision: item.language === "typescript/javascript"
+              ? (item.precisionInvocations > 0 ? handle.generation : (priorAdapterState[item.language]?.precisionRevision ?? 0))
+              : 0,
+            stats: item,
+          }]));
           const graph = mergeGraphBatches([tsGraph, pythonGraph], adapterStats);
           const reinterpretedFiles = relationshipScope
             ? projectFiles.filter((file) => relationshipScope.has(file.pathKey)).length
@@ -587,7 +631,8 @@ export class CodeIndexer {
               handle,
               graph,
               stats,
-              compiler.configHash,
+              project.configHash,
+              adapterState,
               semanticCommit,
               preparedSemantic?.claim,
             );
@@ -777,7 +822,7 @@ export class CodeIndexer {
     const strictMismatch =
       indexed.size !== project.files.length ||
       project.files.some((file) => indexed.get(file.pathKey)?.contentHash !== file.contentHash) ||
-      this.database.getIndexConfigHash() !== project.compiler.configHash;
+      this.database.getIndexConfigHash() !== project.configHash;
     if (strictMismatch) {
       const recorded = this.recordStaleUnlocked(
         "Strict freshness verification found workspace changes",
@@ -822,7 +867,7 @@ export class CodeIndexer {
       if (!recorded) return this.runStrictCheckUnlocked(this.database.getFreshnessState(), 0);
       return this.requestState(this.database.getFreshnessState());
     }
-    if (project.compiler.configHash !== baseline.configHash) {
+    if (project.configHash !== baseline.configHash) {
       const recorded = this.recordStaleUnlocked(
         "Project configuration changed",
         stateAtStart.currentGeneration,
@@ -890,7 +935,7 @@ export class CodeIndexer {
     this.runtime.baseline = {
       generation: stateBeforeInstall.currentGeneration,
       successFence: stateBeforeInstall.successFenceGeneration,
-      configHash: project.compiler.configHash,
+      configHash: project.configHash,
       files: candidateFiles,
     };
     return this.requestState(stateBeforeInstall);
@@ -900,7 +945,7 @@ export class CodeIndexer {
     this.runtime.baseline = {
       generation: state.currentGeneration,
       successFence: state.successFenceGeneration,
-      configHash: project.compiler.configHash,
+      configHash: project.configHash,
       files: new Map(
         project.files.map((file) => [
           file.pathKey,
@@ -915,12 +960,12 @@ export class CodeIndexer {
     const typescriptFiles = scan.files.filter((file) => file.language !== "python");
     const compiler = this.compilerConfiguration(typescriptFiles);
     const pythonProject = new PythonLanguageAdapter().discoverProject(this.rootPath);
-    compiler.configHash = sha256(JSON.stringify({ typescript: compiler.configHash, python: pythonProject.configHash }));
+    const configHash = sha256(JSON.stringify({ typescript: compiler.configHash, python: pythonProject.configHash }));
     const files = compiler.hasConfig
       ? scan.files.filter((file) => file.language === "python" ||
           compiler.configuredFileNames.has(normalizePathKey(file.absolutePath, this.caseSensitivePaths)))
       : scan.files;
-    return { scan, files, compiler, pythonProject };
+    return { scan, files, compiler, pythonProject, configHash };
   }
 
   private loadProject(): ProjectScan {
@@ -941,6 +986,7 @@ export class CodeIndexer {
       files,
       compiler: metadata.compiler,
       pythonProject: metadata.pythonProject,
+      configHash: metadata.configHash,
     };
   }
 
@@ -1047,14 +1093,13 @@ export class CodeIndexer {
     };
   }
 
-  private extract(
+  private extractTypeScriptSyntax(
     workspace: WorkspaceRecord,
     scannedFiles: ScannedFile[],
     generation: number,
-    scanDiagnostics: string[],
-    compiler: CompilerConfiguration,
-    relationshipScope?: Set<string>,
+    runtime: TypeScriptProviderRuntime,
   ): ExtractedGraph {
+    const { diagnostics: scanDiagnostics, compiler } = runtime;
     const scannedByPath = new Map(
       scannedFiles.map((file) => [
         normalizePathKey(file.absolutePath, this.caseSensitivePaths),
@@ -1094,7 +1139,7 @@ export class CodeIndexer {
       options: compiler.options,
       host: compilerHost,
     });
-    const checker = program.getTypeChecker();
+    this.lastTypeScriptInstrumentation = { programCreations: 1, syntaxWorkItems: 0, precisionWorkItems: 0 };
     const diagnostics = [...scanDiagnostics, ...compiler.diagnostics];
     const filesByPath = new Map<string, IndexedSourceFile>();
     const moduleByPath = new Map<string, string>();
@@ -1153,7 +1198,7 @@ export class CodeIndexer {
       workspace,
       generation,
       compilerOptions: compiler.options,
-      checker,
+      checker: null,
       filesByPath,
       moduleByPath,
       nodes,
@@ -1169,15 +1214,15 @@ export class CodeIndexer {
       const moduleId = moduleByPath.get(normalizePathKey(sourceFile.fileName, this.caseSensitivePaths));
       if (!file || !moduleId) continue;
       this.extractDeclarations(state, sourceFile, file, moduleId);
+      this.lastTypeScriptInstrumentation.syntaxWorkItems += 1;
     }
     for (const sourceFile of program.getSourceFiles()) {
       const file = filesByPath.get(normalizePathKey(sourceFile.fileName, this.caseSensitivePaths));
       const moduleId = moduleByPath.get(normalizePathKey(sourceFile.fileName, this.caseSensitivePaths));
       if (!file || !moduleId) continue;
-      if (relationshipScope && !relationshipScope.has(file.pathKey)) continue;
-      this.extractRelationships(state, sourceFile, file, moduleId);
+      this.extractSyntaxRelationships(state, sourceFile, file, moduleId);
     }
-    if (relationshipScope) this.mergeExistingRelations(state, relationshipScope);
+    runtime.context = { program, state, programCreations: 1 };
 
     return {
       files: [...filesByPath.values()],
@@ -1186,6 +1231,31 @@ export class CodeIndexer {
       unresolvedReferences: [...unresolved.values()],
       diagnostics,
     };
+  }
+
+  private refineTypeScript(batch: ExtractedGraph, runtime: TypeScriptProviderRuntime): Promise<ExtractedGraph> {
+    const context = runtime.context;
+    if (!context) throw new Error("TypeScript precision provider requires a syntax batch from the shared Program");
+    const { program, state } = context;
+    state.checker = program.getTypeChecker();
+    for (const sourceFile of program.getSourceFiles()) {
+      const file = state.filesByPath.get(normalizePathKey(sourceFile.fileName, this.caseSensitivePaths));
+      const moduleId = state.moduleByPath.get(normalizePathKey(sourceFile.fileName, this.caseSensitivePaths));
+      if (!file || !moduleId) continue;
+      this.enrichTypeScriptDeclarations(state, sourceFile, file);
+      if (!runtime.relationshipScope || runtime.relationshipScope.has(file.pathKey)) {
+        this.extractRelationships(state, sourceFile, file, moduleId);
+      }
+      this.lastTypeScriptInstrumentation.precisionWorkItems += 1;
+    }
+    if (runtime.relationshipScope) this.mergeExistingRelations(state, runtime.relationshipScope);
+    for (const node of state.nodes.values()) node.analysisLevel = "typed";
+    return Promise.resolve({
+      ...batch,
+      nodes: [...state.nodes.values()],
+      edges: [...state.edges.values()],
+      unresolvedReferences: [...state.unresolved.values()],
+    });
   }
 
   private reuseStoredTypescriptGraph(
@@ -1282,8 +1352,8 @@ export class CodeIndexer {
           name: descriptor.name,
           qualifiedName,
           localKey,
-          signature: declarationSignature(node, descriptor, sourceFile, state.checker),
-          doc: declarationDoc(descriptor, state.checker),
+          signature: declarationSyntaxSignature(node, sourceFile),
+          doc: "",
           isExported: hasExportModifier(node),
           startByte: Buffer.byteLength(sourceFile.text.slice(0, start), "utf8"),
           endByte: Buffer.byteLength(sourceFile.text.slice(0, end), "utf8"),
@@ -1300,10 +1370,6 @@ export class CodeIndexer {
         }
         state.declarationNodes.set(node, id);
         if (ts.isVariableDeclaration(node) && node.initializer) state.declarationNodes.set(node.initializer, id);
-        if (descriptor.nameNode) {
-          const symbol = state.checker.getSymbolAtLocation(descriptor.nameNode);
-          if (symbol) state.symbolNodes.set(symbol, id);
-        }
         addEdge(state, containerId, id, "CONTAINS");
         if (record.isExported) addEdge(state, moduleId, id, "EXPORTS");
         childContainerId = id;
@@ -1313,6 +1379,39 @@ export class CodeIndexer {
       ts.forEachChild(node, (child) => visit(child, childContainerId, childContainerNames, childContainerKind));
     };
     visit(sourceFile, moduleId, [], "module");
+  }
+
+  private enrichTypeScriptDeclarations(
+    state: ExtractionState,
+    sourceFile: ts.SourceFile,
+    file: IndexedSourceFile,
+  ): void {
+    const checker = state.checker;
+    if (!checker) throw new Error("TypeScript precision provider has no TypeChecker");
+    const visit = (node: ts.Node, containerNames: string[], containerKind: CodeNodeKind): void => {
+      const descriptor = describeDeclaration(node, sourceFile, containerKind);
+      let childNames = containerNames;
+      let childKind = containerKind;
+      if (descriptor) {
+        const symbolPath = [...containerNames, descriptor.name].join(".");
+        const id = sha256(`${state.workspace.id}\0${file.pathKey}:${descriptor.kind}:${symbolPath}`);
+        const record = state.nodes.get(id);
+        if (record) {
+          record.signature = declarationSignature(node, descriptor, sourceFile, checker);
+          record.doc = declarationDoc(descriptor, checker);
+        }
+        state.declarationNodes.set(node, id);
+        if (ts.isVariableDeclaration(node) && node.initializer) state.declarationNodes.set(node.initializer, id);
+        if (descriptor.nameNode) {
+          const symbol = checker.getSymbolAtLocation(descriptor.nameNode);
+          if (symbol) state.symbolNodes.set(symbol, id);
+        }
+        childNames = [...containerNames, descriptor.name];
+        childKind = descriptor.kind;
+      }
+      ts.forEachChild(node, (child) => visit(child, childNames, childKind));
+    };
+    visit(sourceFile, [], "module");
   }
 
   private externalModule(state: ExtractionState, specifier: string): string {
@@ -1356,12 +1455,54 @@ export class CodeIndexer {
     return this.externalModule(state, specifier);
   }
 
+  private extractSyntaxRelationships(
+    state: ExtractionState,
+    sourceFile: ts.SourceFile,
+    file: IndexedSourceFile,
+    moduleId: string,
+  ): void {
+    const recordUnresolved = (node: ts.Node, kind: string, rawName: string, qualifier: string | null): void => {
+      const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+      const confidence = 0.5;
+      const reference: UnresolvedReferenceRecord = {
+        workspaceId: state.workspace.id, fileId: file.id, sourceNodeId: moduleId, kind,
+        rawName: clampText(rawName, 200), qualifier, line: location.line + 1, column: location.character + 1,
+        candidates: [], generation: state.generation, confidence,
+        evidence: [{ provider: "typescript_compiler_ast", providerVersion: ts.version, source: "syntax", confidence }],
+      };
+      state.unresolved.set(unresolvedKey(reference), reference);
+    };
+    const importSpecifier = (expression: ts.Expression): void => {
+      if (!ts.isStringLiteralLike(expression)) {
+        recordUnresolved(expression, "IMPORTS", expression.getText(sourceFile), null);
+        return;
+      }
+      const target = this.moduleTarget(state, sourceFile, expression.text);
+      addEdge(state, moduleId, target, "IMPORTS", target === moduleId ? "local" : "import", 0.95, { specifier: expression.text }, "syntax");
+    };
+    for (const statement of sourceFile.statements) {
+      if (ts.isImportDeclaration(statement)) importSpecifier(statement.moduleSpecifier);
+      if (ts.isExportDeclaration(statement) && statement.moduleSpecifier) importSpecifier(statement.moduleSpecifier);
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const requireCall = ts.isIdentifier(node.expression) && node.expression.text === "require" && node.arguments.length === 1;
+        const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length === 1;
+        if ((requireCall || dynamicImport) && node.arguments[0]) importSpecifier(node.arguments[0]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+
   private extractRelationships(
     state: ExtractionState,
     sourceFile: ts.SourceFile,
     file: IndexedSourceFile,
     moduleId: string,
   ): void {
+    const checker = state.checker;
+    if (!checker) throw new Error("TypeScript precision provider has no TypeChecker");
     const recordUnresolved = (
       node: ts.Node,
       callerId: string,
@@ -1371,6 +1512,7 @@ export class CodeIndexer {
       candidates: string[] = [],
     ): void => {
       const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+      const confidence = 0.5;
       const reference: UnresolvedReferenceRecord = {
         workspaceId: state.workspace.id,
         fileId: file.id,
@@ -1382,29 +1524,20 @@ export class CodeIndexer {
         column: location.character + 1,
         candidates,
         generation: state.generation,
+        confidence,
+        evidence: [{ provider: "typescript_type_checker", providerVersion: ts.version, source: "type_checker", confidence }],
       };
       state.unresolved.set(unresolvedKey(reference), reference);
     };
 
-    const handleModuleSpecifier = (specifierNode: ts.Expression, edgeKind: "IMPORTS" = "IMPORTS"): string | null => {
-      if (!ts.isStringLiteralLike(specifierNode)) return null;
-      const target = this.moduleTarget(state, sourceFile, specifierNode.text);
-      addEdge(state, moduleId, target, edgeKind, target === moduleId ? "local" : "import", 1, {
-        specifier: specifierNode.text,
-      });
-      return target;
-    };
-
     for (const statement of sourceFile.statements) {
-      if (ts.isImportDeclaration(statement)) handleModuleSpecifier(statement.moduleSpecifier);
       if (ts.isExportDeclaration(statement)) {
-        if (statement.moduleSpecifier) handleModuleSpecifier(statement.moduleSpecifier);
         if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
           for (const element of statement.exportClause.elements) {
-            const symbol = state.checker.getSymbolAtLocation(element.name);
+            const symbol = checker.getSymbolAtLocation(element.name);
             const target = resolveSymbolNode(state, symbol);
             if (target) {
-              addEdge(state, moduleId, target, "EXPORTS");
+              addEdge(state, moduleId, target, "EXPORTS", "exact", 1, {}, "type_checker");
               const node = state.nodes.get(target);
               if (node) node.isExported = true;
             }
@@ -1412,8 +1545,8 @@ export class CodeIndexer {
         }
       }
       if (ts.isExportAssignment(statement)) {
-        const target = resolveSymbolNode(state, state.checker.getSymbolAtLocation(statement.expression));
-        if (target) addEdge(state, moduleId, target, "EXPORTS");
+        const target = resolveSymbolNode(state, checker.getSymbolAtLocation(statement.expression));
+        if (target) addEdge(state, moduleId, target, "EXPORTS", "exact", 1, {}, "type_checker");
       }
     }
 
@@ -1425,9 +1558,9 @@ export class CodeIndexer {
         for (const clause of node.heritageClauses) {
           const kind: CodeEdgeKind = clause.token === ts.SyntaxKind.ImplementsKeyword ? "IMPLEMENTS" : "EXTENDS";
           for (const type of clause.types) {
-            const symbol = state.checker.getSymbolAtLocation(type.expression);
+            const symbol = checker.getSymbolAtLocation(type.expression);
             const target = resolveSymbolNode(state, symbol);
-            if (target) addEdge(state, activeCaller, target, kind, "exact");
+            if (target) addEdge(state, activeCaller, target, kind, "exact", 1, {}, "type_checker");
             else if (!symbol || symbolBelongsToWorkspace(state, symbol)) {
               recordUnresolved(
                 type.expression,
@@ -1446,19 +1579,8 @@ export class CodeIndexer {
         const isRequire =
           ts.isIdentifier(node.expression) && node.expression.text === "require" && node.arguments.length === 1;
         const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length === 1;
-        if ((isRequire || isDynamicImport) && node.arguments[0]) {
-          const target = handleModuleSpecifier(node.arguments[0]);
-          if (!target) {
-            recordUnresolved(
-              node.arguments[0],
-              activeCaller,
-              "IMPORTS",
-              node.arguments[0].getText(sourceFile),
-              isRequire ? "require" : "import",
-            );
-          }
-        } else {
-          const symbol = state.checker.getSymbolAtLocation(node.expression);
+        if (!(isRequire || isDynamicImport)) {
+          const symbol = checker.getSymbolAtLocation(node.expression);
           const target = resolveSymbolNode(state, symbol);
           if (target) {
             const targetNode = state.nodes.get(target);
@@ -1469,6 +1591,8 @@ export class CodeIndexer {
               "CALLS",
               targetNode?.fileId === file.id ? "local" : "import",
               1,
+              {},
+              "type_checker",
             );
           } else if (
             !symbol ||
@@ -1491,9 +1615,9 @@ export class CodeIndexer {
       }
 
       if (ts.isNewExpression(node)) {
-        const symbol = state.checker.getSymbolAtLocation(node.expression);
+        const symbol = checker.getSymbolAtLocation(node.expression);
         const target = resolveSymbolNode(state, symbol);
-        if (target) addEdge(state, activeCaller, target, "CALLS", "exact");
+        if (target) addEdge(state, activeCaller, target, "CALLS", "exact", 1, {}, "type_checker");
         else if (!symbol || symbolBelongsToWorkspace(state, symbol)) {
           recordUnresolved(
             node.expression,

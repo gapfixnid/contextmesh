@@ -4,6 +4,9 @@ export interface EvaluationTask {
   query: string;
   goldFiles: string[];
   goldSymbols: string[];
+  goldEdges?: string[];
+  goldUnresolved?: string[];
+  goldMemories?: string[];
   memoryExpected: boolean;
 }
 
@@ -12,11 +15,13 @@ export interface EvaluationTrace {
   strategyId: "A" | "B" | "C" | "D";
   orderedFiles: string[];
   orderedSymbols: string[];
+  orderedMemories: string[];
   searchStages: string[];
   toolCalls: number;
   fileReads: number;
   estimatedTokens: number;
-  edges: { true: number; false: number; unresolved: number };
+  edges: { true: number; false: number; gold: number; unresolved: number };
+  memoryLeak: number;
   staleEvidence: number;
 }
 
@@ -38,6 +43,8 @@ export interface EvaluationScore {
   fileReads: number;
   estimatedTokens: number;
   staleEvidence: number;
+  memoryRecall: number;
+  memoryLeak: number;
 }
 
 export interface EvaluationScorer {

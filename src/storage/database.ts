@@ -12,6 +12,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
+  AdapterStateMap,
+  AdapterStats,
   AssertionStatus,
   CodeEdgeKind,
   CodeEdgeRecord,
@@ -464,6 +466,7 @@ export interface ContextMeshStorage {
   getFileHashes(): Map<string, string>;
   getIndexedFileBaseline(): IndexedFileBaseline[];
   getIndexConfigHash(): string | null;
+  getAdapterState(): AdapterStateMap;
   getFreshnessState(): FreshnessState;
   recordFreshnessStale(
     reason: string,
@@ -483,12 +486,15 @@ export interface ContextMeshStorage {
     stats: IndexCommitStats,
     diagnostics: string[],
     indexConfigHash: string,
+    adapterStats: AdapterStats[],
+    adapterState: AdapterStateMap,
   ): void;
   commitGraph(
     handle: IndexRunHandle,
     graph: ExtractedGraph,
     stats: IndexCommitStats,
     indexConfigHash: string,
+    adapterState: AdapterStateMap,
     semantic?: SemanticPlaneCommit,
     semanticClaim?: CodeIndexSemanticClaim,
   ): void;
@@ -992,6 +998,13 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     };
   }
 
+  getAdapterState(): AdapterStateMap {
+    const row = this.db
+      .prepare("SELECT adapter_state_json FROM workspaces WHERE id = ?")
+      .get(this.workspace.id);
+    return parseJson<AdapterStateMap>(row?.adapter_state_json, {});
+  }
+
   getStoredGraphPartition(language: "python" | "non-python"): StoredGraphPartition {
     const comparison = language === "python" ? "=" : "<>";
     const nodeRows = this.db.prepare(
@@ -1064,13 +1077,15 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     stats: IndexCommitStats,
     diagnostics: string[],
     indexConfigHash: string,
+    adapterStats: AdapterStats[],
+    adapterState: AdapterStateMap,
   ): void {
     const timestamp = this.nowIso();
     this.transaction(() => {
       this.db
         .prepare(
           `UPDATE index_runs SET status = 'succeeded', scanned_files = ?, changed_files = ?,
-           deleted_files = ?, failed_files = ?, diagnostics_json = ?, completed_at = ? WHERE id = ?`,
+           deleted_files = ?, failed_files = ?, diagnostics_json = ?, adapter_stats_json = ?, completed_at = ? WHERE id = ?`,
         )
         .run(
           stats.scannedFiles,
@@ -1078,15 +1093,16 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           stats.deletedFiles,
           stats.failedFiles,
           JSON.stringify(diagnostics),
+          JSON.stringify(adapterStats),
           timestamp,
           handle.id,
         );
       this.db
         .prepare(
-          `UPDATE workspaces SET index_config_hash = ?, freshness_stale = 0,
+          `UPDATE workspaces SET index_config_hash = ?, adapter_state_json = ?, freshness_stale = 0,
            freshness_stale_at = NULL, freshness_reasons_json = '[]', updated_at = ? WHERE id = ?`,
         )
-        .run(indexConfigHash, timestamp, this.workspace.id);
+        .run(indexConfigHash, JSON.stringify(adapterState), timestamp, this.workspace.id);
     });
   }
 
@@ -1756,6 +1772,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     graph: ExtractedGraph,
     stats: IndexCommitStats,
     indexConfigHash: string,
+    adapterState: AdapterStateMap,
     semantic?: SemanticPlaneCommit,
     semanticClaim?: CodeIndexSemanticClaim,
   ): void {
@@ -1915,10 +1932,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
       this.db
         .prepare(
-          `UPDATE workspaces SET current_generation = ?, index_config_hash = ?, freshness_stale = 0,
+          `UPDATE workspaces SET current_generation = ?, index_config_hash = ?, adapter_state_json = ?, freshness_stale = 0,
            freshness_stale_at = NULL, freshness_reasons_json = '[]', updated_at = ? WHERE id = ?`,
         )
-        .run(handle.generation, indexConfigHash, timestamp, this.workspace.id);
+        .run(handle.generation, indexConfigHash, JSON.stringify(adapterState), timestamp, this.workspace.id);
       if (acceptedSemantic) {
         this.applyCodeSemanticCommit(handle.generation, acceptedSemantic, timestamp);
       } else {

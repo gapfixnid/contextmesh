@@ -154,12 +154,13 @@ export class ContextMeshApp {
 
   private scope(generation = this.database.getWorkspace().currentGeneration, includeSnapshot = true): EnvelopeScope {
     const freshness = this.database.getFreshnessState();
+    const adapterState = this.database.getAdapterState();
     return {
       workspaceId: this.database.workspace.id,
       generation,
       ...(includeSnapshot ? { snapshot: {
         graphGeneration: generation,
-        precisionRevision: generation > 0 ? 1 : 0,
+        precisionRevision: adapterState["typescript/javascript"]?.precisionRevision ?? 0,
         freshness: freshness.stale ? "stale" : "fresh",
       } as const } : {}),
     };
@@ -233,10 +234,18 @@ export class ContextMeshApp {
         this.semantic.reconcileMemoryIfNeeded(true),
       ]);
     }
+    const adapterStats = this.code.indexer.adapterStats();
+    const statsByLanguage = new Map(adapterStats.map((item) => [item.language, item]));
     return this.envelope({
       ...(await this.code.status()),
-      adapters: this.code.indexer.coordinator.capabilities(),
-      adapterStats: this.code.indexer.adapterStats(),
+      adapters: this.code.indexer.coordinator.capabilities().map((capability) => ({
+        ...capability,
+        providerVersions: statsByLanguage.get(capability.language)?.providerVersions ?? {},
+        status: statsByLanguage.get(capability.language)?.status ?? "unavailable",
+        coverage: statsByLanguage.get(capability.language)?.coverage ?? 0,
+        diagnostics: statsByLanguage.get(capability.language)?.diagnostics ?? [],
+      })),
+      adapterStats,
       semantic: this.semantic?.status() ?? { enabled: false },
     });
   }
@@ -616,7 +625,7 @@ export class ContextMeshApp {
       return this.packContext(
         parsed,
         hydrated.assembled,
-        this.scope(snapshotResult.snapshot.generation, parsed.tokenBudget > 256),
+        this.scope(snapshotResult.snapshot.generation, false),
         [
           ...(stale ? [INDEX_STALE_WARNING] : []),
           ...(semanticChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
@@ -848,7 +857,11 @@ export class ContextMeshApp {
       candidateOmitted ||
       relationshipOmitted ||
       data.memories.some((memory) => memory.provenance.codeLinksOmitted > 0);
-    const envelope = stabilizeEnvelope(scope, data, warnings, truncated);
+    const snapshotScope = this.scope(scope.generation, true);
+    const finalScope = envelopeFits(snapshotScope, data, warnings, truncated, parsed.tokenBudget)
+      ? snapshotScope
+      : scope;
+    const envelope = stabilizeEnvelope(finalScope, data, warnings, truncated);
     if (envelope.estimatedTokens > parsed.tokenBudget) {
       throw new ContextMeshError("INTERNAL_ERROR", "Context token packing exceeded tokenBudget");
     }

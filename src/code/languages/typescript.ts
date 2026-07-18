@@ -12,9 +12,14 @@ export class TypeScriptLanguageAdapter implements LanguageAdapter {
   readonly ecosystem = "npm";
   readonly extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] as const;
   private readonly extractSharedProgram: SyntaxProvider["extract"];
+  private readonly refineSharedProgram: (project: ProjectDescriptor, batch: SyntaxGraphBatch) => Promise<SyntaxGraphBatch>;
 
-  constructor(extractSharedProgram: SyntaxProvider["extract"]) {
+  constructor(
+    extractSharedProgram: SyntaxProvider["extract"],
+    refineSharedProgram: (project: ProjectDescriptor, batch: SyntaxGraphBatch) => Promise<SyntaxGraphBatch>,
+  ) {
     this.extractSharedProgram = extractSharedProgram;
+    this.refineSharedProgram = refineSharedProgram;
   }
 
   discoverProject(): ProjectDescriptor {
@@ -29,11 +34,11 @@ export class TypeScriptLanguageAdapter implements LanguageAdapter {
     };
   }
 
-  createPrecisionProvider(): PrecisionProvider {
+  createPrecisionProvider(project: ProjectDescriptor): PrecisionProvider {
     return {
       id: "typescript_type_checker",
       version: ts.version,
-      refine: async (batch: SyntaxGraphBatch) => batch,
+      refine: async (batch: SyntaxGraphBatch) => this.refineSharedProgram(project, batch),
     };
   }
 }

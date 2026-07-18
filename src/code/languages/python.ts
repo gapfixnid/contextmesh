@@ -113,8 +113,14 @@ function moduleName(relativePath: string, root: string): string {
   return name || path.basename(root || relativePath);
 }
 
-function cleanImportName(text: string): string {
-  return text.trim().replace(/^from\s+/, "").replace(/\s+import[\s\S]*$/, "").replace(/\s+as\s+.*$/, "");
+function importedName(node: SyntaxNode): { name: string; alias: string | null } | null {
+  if (node.type === "aliased_import") {
+    const name = node.childForFieldName("name")?.text.trim();
+    if (!name) return null;
+    return { name, alias: node.childForFieldName("alias")?.text.trim() ?? null };
+  }
+  const name = node.text.trim();
+  return name ? { name, alias: null } : null;
 }
 
 class PythonSyntaxProvider implements SyntaxProvider {
@@ -129,6 +135,8 @@ class PythonSyntaxProvider implements SyntaxProvider {
     const unresolved = new Map<string, UnresolvedReferenceRecord>();
     const moduleIds = new Map<string, string>();
     const declarationsByName = new Map<string, string[]>();
+    const declarationIdsByPosition = new Map<string, string>();
+    const declarationOrdinals = new Map<string, number>();
     const trees: Array<{ scanned: (typeof input.files)[number]; file: IndexedSourceFile; moduleId: string; tree: ReturnType<Parser["parse"]> }> = [];
     const edgeKey = (edge: CodeEdgeRecord): string => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
 
@@ -151,7 +159,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
       };
       files.push(file);
       const localKey = `${scanned.pathKey}:module`;
-      const moduleId = sha256(`${input.workspace.id}\0${localKey}`);
+      const moduleId = sha256(`${input.workspace.id}\0python\0${localKey}`);
       const name = moduleName(scanned.relativePath, root);
       moduleIds.set(name, moduleId);
       nodes.set(moduleId, {
@@ -185,10 +193,15 @@ class PythonSyntaxProvider implements SyntaxProvider {
     const declarationPass = (entry: (typeof trees)[number]): void => {
       if (!entry.tree) return;
       const visit = (node: SyntaxNode, containerId: string, names: string[], containerKind: CodeNodeKind): void => {
+        if (node.type === "decorated_definition") {
+          const definition = node.namedChildren.at(-1);
+          if (definition) visit(definition, containerId, names, containerKind);
+          return;
+        }
         let activeId = containerId;
         let activeNames = names;
         let activeKind = containerKind;
-        const actual = node.type === "decorated_definition" ? node.namedChildren.at(-1) ?? node : node;
+        const actual = node;
         const functionLike = actual.type === "function_definition";
         const classLike = actual.type === "class_definition";
         if (functionLike || classLike) {
@@ -197,29 +210,31 @@ class PythonSyntaxProvider implements SyntaxProvider {
             const name = nameNode.text;
             const kind: CodeNodeKind = classLike ? "class" : containerKind === "class" ? "method" : "function";
             const symbolPath = [...names, name].join(".");
-            const localKey = `${entry.file.pathKey}:${kind}:${symbolPath}`;
-            const id = sha256(`${input.workspace.id}\0python\0${localKey}`);
             const content = actual.text;
+            const signature = clampText(content.split(/:\s*(?:#.*)?\r?\n/, 1)[0] ?? content, 1000);
+            const locatorKey = `${entry.file.pathKey}:${kind}:${symbolPath}`;
+            const ordinal = (declarationOrdinals.get(locatorKey) ?? 0) + 1;
+            declarationOrdinals.set(locatorKey, ordinal);
+            const declarationHash = sha256(signature.trim().replace(/\s+/g, " "));
+            const localKey = `${locatorKey}:${ordinal}:${declarationHash.slice(0, 16)}`;
+            const id = sha256(`${input.workspace.id}\0python\0${locatorKey}\0${ordinal}\0${declarationHash}`);
             nodes.set(id, {
               id, workspaceId: input.workspace.id, fileId: entry.file.id, kind, name,
               qualifiedName: `${entry.file.relativePath}#${symbolPath}`, localKey,
-              signature: clampText(content.split(/:\s*(?:#.*)?\r?\n/, 1)[0] ?? content, 1000), doc: "",
+              signature, doc: "",
               isExported: !name.startsWith("_"), startByte: actual.startIndex, endByte: actual.endIndex,
               startLine: actual.startPosition.row + 1, startColumn: actual.startPosition.column + 1,
               endLine: actual.endPosition.row + 1, endColumn: actual.endPosition.column + 1,
               contentHash: sha256(content), generation: input.generation,
-              metadata: { async: actual.namedChildren.some((child) => child.type === "async") },
+              metadata: { async: actual.namedChildren.some((child) => child.type === "async"), stableLocator: locatorKey, declarationHash, ordinal },
               language: "python", ecosystem: "pypi", nativeKind: actual.type, analysisLevel: "syntax",
             });
             const matches = declarationsByName.get(name) ?? [];
             matches.push(id); declarationsByName.set(name, matches);
+            declarationIdsByPosition.set(`${entry.file.id}:${actual.startIndex}`, id);
             addEdge(containerId, id, "CONTAINS", 1, "resolved", actual);
             activeId = id; activeNames = [...names, name]; activeKind = kind;
           }
-        }
-        if (node.type === "decorated_definition") {
-          if (actual !== node) visit(actual, containerId, names, containerKind);
-          return;
         }
         for (const child of node.namedChildren) visit(child, activeId, activeNames, activeKind);
       };
@@ -231,34 +246,57 @@ class PythonSyntaxProvider implements SyntaxProvider {
       if (!entry.tree) continue;
       const currentModule = moduleName(entry.scanned.relativePath, entry.file.sourceRoot ?? "");
       const visit = (node: SyntaxNode, callerId: string): void => {
+        if (node.type === "decorated_definition") {
+          const definition = node.namedChildren.at(-1);
+          if (definition) visit(definition, callerId);
+          return;
+        }
         const definition = node.type === "function_definition" || node.type === "class_definition" ? node : null;
-        const name = definition?.childForFieldName("name")?.text;
-        const nextCaller = name ? (declarationsByName.get(name)?.find((id) => nodes.get(id)?.fileId === entry.file.id) ?? callerId) : callerId;
+        const nextCaller = definition ? (declarationIdsByPosition.get(`${entry.file.id}:${definition.startIndex}`) ?? callerId) : callerId;
         if (node.type === "import_statement" || node.type === "import_from_statement") {
-          const raw = cleanImportName(node.text);
-          const leading = raw.match(/^\.+/)?.[0].length ?? 0;
+          const fromImport = node.type === "import_from_statement";
+          const moduleNode = fromImport ? node.namedChildren[0] : null;
+          const rawModule = fromImport ? (moduleNode?.text.trim() ?? "") : "";
+          const importNodes = fromImport ? node.namedChildren.slice(1) : node.namedChildren;
+          const names = importNodes.map(importedName).filter((item): item is NonNullable<typeof item> => item !== null);
+          const leading = rawModule.match(/^\.+/)?.[0].length ?? 0;
           const baseParts = currentModule.split(".");
           if (!entry.scanned.relativePath.endsWith("/__init__.py")) baseParts.pop();
-          const absolute = leading > 0
-            ? [...baseParts.slice(0, Math.max(0, baseParts.length - leading + 1)), raw.slice(leading)].filter(Boolean).join(".")
-            : raw;
-          const target = moduleIds.get(absolute) ?? moduleIds.get(`${absolute}.__init__`);
-          if (target) addEdge(entry.moduleId, target, "IMPORTS", 0.95, "resolved", node, { specifier: raw });
-          else if (raw) {
-            const packageName = raw.replace(/^\.+/, "").split(".")[0] ?? raw;
-            if (leading > 0) addUnresolved(entry.file, entry.moduleId, "IMPORTS", raw, node, 0.5);
-            else {
-              const localKey = `external:pypi:${packageName.toLocaleLowerCase("en-US")}`;
-              const id = sha256(`${input.workspace.id}\0${localKey}`);
-              if (!nodes.has(id)) nodes.set(id, {
-                id, workspaceId: input.workspace.id, fileId: null, kind: "external_module", name: packageName,
-                qualifiedName: packageName, localKey, signature: `external module ${packageName}`, doc: "", isExported: true,
-                startByte: 0, endByte: 0, startLine: 1, startColumn: 1, endLine: 1, endColumn: 1,
-                contentHash: sha256(packageName), generation: input.generation, metadata: { legacyAlias: `external:${packageName}` },
-                language: "python", ecosystem: "pypi", nativeKind: "external_module", analysisLevel: "syntax",
-              });
-              addEdge(entry.moduleId, id, "IMPORTS", 0.95, "resolved", node, { specifier: raw });
+          const absoluteModule = leading > 0
+            ? [...baseParts.slice(0, Math.max(0, baseParts.length - leading + 1)), rawModule.slice(leading)].filter(Boolean).join(".")
+            : rawModule;
+          const specs = fromImport ? (names.length ? names : [{ name: "", alias: null }]) : names;
+          if (specs.length === 0) addUnresolved(entry.file, entry.moduleId, "IMPORTS", node.text, node, 0.5);
+          for (const imported of specs) {
+            const specifier = fromImport ? `${rawModule} import ${imported.name}` : imported.name;
+            const candidates = fromImport && rawModule.replace(/^\.+/, "") === ""
+              ? [`${absoluteModule}.${imported.name}`.replace(/^\./, ""), absoluteModule]
+              : [absoluteModule || imported.name];
+            const resolvedName = candidates.find((candidate) => moduleIds.has(candidate));
+            const target = resolvedName ? moduleIds.get(resolvedName) : undefined;
+            if (target) {
+              addEdge(entry.moduleId, target, "IMPORTS", 0.95, "resolved", node, { specifier, alias: imported.alias });
+              continue;
             }
+            if (leading > 0) {
+              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier, node, 0.5);
+              continue;
+            }
+            const packageName = (absoluteModule || imported.name).split(".")[0];
+            if (!packageName) {
+              addUnresolved(entry.file, entry.moduleId, "IMPORTS", specifier || node.text, node, 0.5);
+              continue;
+            }
+            const localKey = `external:pypi:${packageName.toLocaleLowerCase("en-US")}`;
+            const id = sha256(`${input.workspace.id}\0${localKey}`);
+            if (!nodes.has(id)) nodes.set(id, {
+              id, workspaceId: input.workspace.id, fileId: null, kind: "external_module", name: packageName,
+              qualifiedName: packageName, localKey, signature: `external module ${packageName}`, doc: "", isExported: true,
+              startByte: 0, endByte: 0, startLine: 1, startColumn: 1, endLine: 1, endColumn: 1,
+              contentHash: sha256(packageName), generation: input.generation, metadata: { legacyAlias: `external:${packageName}` },
+              language: "python", ecosystem: "pypi", nativeKind: "external_module", analysisLevel: "syntax",
+            });
+            addEdge(entry.moduleId, id, "IMPORTS", 0.95, "resolved", node, { specifier, alias: imported.alias });
           }
         }
         if (node.type === "class_definition") {

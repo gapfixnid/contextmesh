@@ -159,6 +159,7 @@ const PROJECT_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
 const FIXTURE_DIRECTORY = path.join(PROJECT_ROOT, "evaluation", "fixtures");
 const BASELINE_V1_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "phase3-lexical-7b70d06.json");
 const BASELINE_V2_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "phase3-lexical-v2.json");
+const V03_CONTEXT_BASELINE_PATH = path.join(PROJECT_ROOT, "evaluation", "baselines", "v03-main-90b2a49-context.json");
 
 function argument(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -682,8 +683,25 @@ try {
     ...contextMetrics.map((metric) => Boolean(metric.deterministic)),
   ].every(Boolean);
   const baselineContext = lexicalBaseline?.evaluation.context;
+  const v03ContextBaseline = JSON.parse(readFileSync(V03_CONTEXT_BASELINE_PATH, "utf8")) as {
+    sourceCommit: string; macroEvidenceCoverage: number; macroDuplicateWaste: number;
+  };
+  if (v03ContextBaseline.sourceCommit !== "90b2a49") throw new Error("Unexpected v0.3 context baseline source commit");
+  const contextRegressionChecks = {
+    mainContextEvidenceCoverageNoRegression: {
+      actual: macroEvidenceCoverage,
+      baseline: v03ContextBaseline.macroEvidenceCoverage,
+      passed: macroEvidenceCoverage >= v03ContextBaseline.macroEvidenceCoverage,
+    },
+    mainContextDuplicateWasteNoRegression: {
+      actual: macroDuplicateWaste,
+      baseline: v03ContextBaseline.macroDuplicateWaste,
+      passed: macroDuplicateWaste <= v03ContextBaseline.macroDuplicateWaste,
+    },
+  };
   const gateChecks = semanticModelPath
     ? {
+        ...contextRegressionChecks,
         exactRecallAt5: {
           actual: average(currentExact.map((metric) => metric.recall)),
           minimum: 1,
@@ -756,7 +774,7 @@ try {
         warmSearchP95Ms: { actual: searchP95Ms, maximum: 250, passed: searchP95Ms <= 250 },
         warmGetContextP95Ms: { actual: getContextP95Ms, maximum: 350, passed: getContextP95Ms <= 350 },
       }
-    : {};
+    : contextRegressionChecks;
   const gatesPassed = Object.values(gateChecks).every((check) => check.passed);
   const generatedAt = fixture.version === 2
     ? sourceDateEpochIso(process.env.SOURCE_DATE_EPOCH)
@@ -850,8 +868,8 @@ try {
       getContextP95Ms,
     },
     gates: {
-      evaluated: Boolean(semanticModelPath),
-      passed: semanticModelPath ? gatesPassed : null,
+      evaluated: true,
+      passed: gatesPassed,
       checks: gateChecks,
     },
   };
@@ -873,7 +891,7 @@ try {
       process.stdout.write(serialized);
     }
   }
-  if (semanticModelPath && !gatesPassed) throw new Error("Phase 4 acceptance quality gate failed");
+  if (!gatesPassed) throw new Error("Acceptance quality regression gate failed");
 } finally {
   await app.close();
   restoreNetwork();

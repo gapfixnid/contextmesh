@@ -1,0 +1,7 @@
+{
+  "sourceCommit": "90b2a49",
+  "fixture": "acceptance-v2",
+  "tokenBudget": 2000,
+  "macroEvidenceCoverage": 0.75,
+  "macroDuplicateWaste": 0.129465
+}

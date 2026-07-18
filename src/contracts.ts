@@ -249,7 +249,27 @@ export interface AdapterStats {
   syntaxInvocations: number;
   precisionInvocations: number;
   configHash: string;
+  providerVersions?: Record<string, string>;
+  status?: "ready" | "partial" | "unavailable";
+  coverage?: number;
+  diagnostics?: AdapterDiagnostic[];
 }
+
+export interface AdapterDiagnostic {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  path?: string;
+}
+
+export interface AdapterStateRecord {
+  configHash: string;
+  lastGeneration: number;
+  precisionRevision: number;
+  stats: AdapterStats;
+}
+
+export type AdapterStateMap = Record<string, AdapterStateRecord>;
 
 export interface MemoryFragmentRecord {
   id: string;

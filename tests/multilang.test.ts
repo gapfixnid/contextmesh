@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -93,6 +93,75 @@ describe("v0.3 multilingual graph", () => {
       const py = await app.searchCode({ query: "changed_python_only" }) as Envelope<{ results: unknown[] }>;
       expect(ts.data.results).toHaveLength(1);
       expect(py.data.results).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("invalidates only Python for a pyproject-only change and preserves durable stats across restart/no-op", async () => {
+    const root = mixedWorkspace();
+    let app = new ContextMeshApp(root);
+    await app.indexWorkspace({ mode: "full" });
+    appendFileSync(path.join(root, "pyproject.toml"), "\n# layout revision\n");
+    const changed = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{
+      adapterStats: Array<{ language: string; syntaxInvocations: number; precisionInvocations: number }>;
+    }>;
+    expect(changed.data.adapterStats.find((item) => item.language === "typescript/javascript"))
+      .toMatchObject({ syntaxInvocations: 0, precisionInvocations: 0 });
+    expect(changed.data.adapterStats.find((item) => item.language === "python"))
+      .toMatchObject({ syntaxInvocations: 1, precisionInvocations: 0 });
+    await app.close();
+
+    app = new ContextMeshApp(root);
+    try {
+      const restarted = await app.workspaceStatus() as Envelope<{ adapterStats: Array<{ language: string }> }>;
+      expect(restarted.data.adapterStats.map((item) => item.language)).toEqual(["typescript/javascript", "python"]);
+      const noOp = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean; adapterStats: Array<{ language: string }> }>;
+      expect(noOp.data.noOp).toBe(true);
+      expect(noOp.data.adapterStats.map((item) => item.language)).toEqual(["typescript/javascript", "python"]);
+      const afterNoOp = await app.workspaceStatus() as Envelope<{
+        adapterStats: Array<{ providerVersions?: Record<string, string>; status?: string; coverage?: number }>;
+      }>;
+      expect(afterNoOp.data.adapterStats.every((item) => item.status === "ready" && item.coverage === 1)).toBe(true);
+      expect(afterNoOp.data.adapterStats.every((item) => Object.keys(item.providerVersions ?? {}).length > 0)).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("handles decorated declarations, relative package imports, multiple imports, aliases, and deterministic IDs", async () => {
+    const root = mixedWorkspace();
+    writeFileSync(path.join(root, "src", "acme", "helper.py"), "VALUE = 1\n");
+    writeFileSync(path.join(root, "src", "acme", "syntax_cases.py"), [
+      "import alpha, beta as bee", "from . import helper", "", "def deco(fn):", "    return fn", "",
+      "@deco", "def target():", "    return 1", "", "def caller():", "    return target()", "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const target = await app.searchCode({ query: "target", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string; localKey: string; metadata: { stableLocator?: string; declarationHash?: string } }>;
+      }>;
+      expect(target.data.results).toHaveLength(1);
+      expect(target.data.results[0]!.localKey).toMatch(/:1:[0-9a-f]{16}$/);
+      expect(target.data.results[0]!.metadata).toMatchObject({ stableLocator: expect.any(String), declarationHash: expect.any(String) });
+      const caller = await app.searchCode({ query: "caller", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", depth: 1 }) as Envelope<{
+        edges: Array<{ kind: string; confidence: number; targetId: string }>; unresolved: Array<{ rawName: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ kind: "CALLS", confidence: 0.8, targetId: target.data.results[0]!.id }));
+      expect(trace.data.unresolved.some((item) => item.rawName === "target")).toBe(false);
+      const module = await app.searchCode({ query: "syntax_cases", kinds: ["module"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const imports = await app.traceCode({ symbolId: module.data.results[0]!.id, direction: "out", depth: 1 }) as Envelope<{
+        nodes: Array<{ name: string }>; edges: Array<{ kind: string; metadata: { alias?: string | null } }>;
+      }>;
+      expect(imports.data.nodes.map((node) => node.name)).toEqual(expect.arrayContaining(["alpha", "beta", "acme.helper"]));
+      const stored = app.database.getStoredGraphPartition("python");
+      expect(stored.edges).toContainEqual(expect.objectContaining({ kind: "IMPORTS", metadata: expect.objectContaining({ alias: "bee" }) }));
+      const firstId = target.data.results[0]!.id;
+      await app.indexWorkspace({ mode: "full" });
+      const repeated = await app.searchCode({ query: "target", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      expect(repeated.data.results[0]!.id).toBe(firstId);
     } finally {
       await app.close();
     }
