@@ -5,6 +5,7 @@ import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 
 import { ContextMeshApp } from "../src/app.js";
+import type { Envelope, MemoryFragmentRecord } from "../src/contracts.js";
 import {
   scanNormalizedMatrix,
   type EncodedEntityIds,
@@ -233,9 +234,10 @@ if (configuredModelPath) {
     const crossPlaneQuery =
       "how does computeValue998 supply computeValue999 cached pricing retained dependency values";
     const memoryTypes = ["fact", "decision", "error", "preference", "procedure", "relation", "episode"] as const;
+    const linkedMemoryIds: string[] = [];
     for (let index = 0; index < 64; index += 1) {
       const type = memoryTypes[index % memoryTypes.length]!;
-      await semanticApp.remember({
+      const remembered = await semanticApp.remember({
         content: index % 2 === 0
           ? `Cached pricing dependency values are retained by ${type} policy variant ${index}.`
           : `The ${type} record ${index} preserves retained values for the cached pricing chain.`,
@@ -243,7 +245,46 @@ if (configuredModelPath) {
         type,
         keywords: ["cached", "pricing", "retained", type],
         sourceSymbolIds: [terminal.id],
-      });
+      }) as Envelope<{ fragment: MemoryFragmentRecord }>;
+      linkedMemoryIds.push(remembered.data.fragment.id);
+    }
+    await semanticApp.remember({
+      content: `softreservationprobe ${"oversized-memory-padding ".repeat(150)}`,
+      topic: "soft reservation pressure",
+      type: "fact",
+      keywords: ["softreservationprobe"],
+      sourceSymbolIds: [],
+    });
+
+    let softReservationProbe: Record<string, unknown> | null = null;
+    for (let tokenBudget = 256; tokenBudget <= 2_000; tokenBudget += 128) {
+      const codeOnly = await semanticApp.getContext({
+        query: "softreservationprobe",
+        symbolId: terminal.id,
+        include: ["code"],
+        tokenBudget,
+      }) as Envelope<{ code: Array<{ id: string }>; memories: unknown[] }>;
+      if (!codeOnly.data.code.some((node) => node.id === terminal.id)) continue;
+      const crossPlane = await semanticApp.getContext({
+        query: "softreservationprobe",
+        symbolId: terminal.id,
+        include: ["code", "memory"],
+        tokenBudget,
+      }) as Envelope<{ code: Array<{ id: string }>; memories: unknown[] }>;
+      const diagnostics = semanticApp.contextPackingDiagnostics();
+      if (
+        crossPlane.data.code.some((node) => node.id === terminal.id) &&
+        crossPlane.data.memories.length === 0 &&
+        crossPlane.truncated &&
+        diagnostics.softReservationEvaluations > 0 &&
+        diagnostics.softReservationBudgetRejections > 0
+      ) {
+        softReservationProbe = { tokenBudget, ...diagnostics };
+        break;
+      }
+    }
+    if (!softReservationProbe) {
+      throw new Error("Cross-plane benchmark did not observe a pinned-safe soft-reservation budget rejection");
     }
 
     const searchDurations: number[] = [];
@@ -287,11 +328,24 @@ if (configuredModelPath) {
       include: ["code", "memory"],
       tokenBudget: 8000,
     }) as { data: { code: Array<{ snippet: string | null }>; memories: unknown[]; relationships: unknown[] } };
+    const crossPlanePackingDiagnostics = semanticApp.contextPackingDiagnostics();
     const workspaceStatus = await semanticApp.workspaceStatus() as {
       data: { counts: { files: number; nodes: number; edges: number; memories: number } };
     };
+    const paraphraseQuery = "persisted upstream results survive for later dependent calculations";
+    const paraphraseCandidates = await semanticApp.semantic!.searchContext(paraphraseQuery, true, true, 100);
+    const lexicalParaphraseIds = new Set(
+      semanticApp.database.searchCode(paraphraseQuery, undefined, 100).map((candidate) => candidate.id),
+    );
+    const semanticOnlyParaphraseHits = (paraphraseCandidates.code?.candidates ?? []).filter(
+      (candidate) => !lexicalParaphraseIds.has(candidate.id),
+    ).length;
     const memoryVectorCount = semanticApp.database.loadSemanticEmbeddings("memory", APPROVED_MODEL_KEY).length;
     const finalPlanes = new Set(assembled.candidates.map((candidate) => candidate.kind));
+    const codeMemoryRelationships = [...semanticApp.database.getMemoryCodeProvenance(linkedMemoryIds).values()]
+      .reduce((count, links) => count + links.length, 0);
+    const unifiedMmrCodeInputs = assembled.rankingDiagnostics.inputByNormalizationGroup.code ?? 0;
+    const unifiedMmrMemoryInputs = assembled.rankingDiagnostics.inputByNormalizationGroup.memory ?? 0;
     const observedWorkload = {
       files: workspaceStatus.data.counts.files,
       memoryVectorCount,
@@ -300,6 +354,11 @@ if (configuredModelPath) {
       packedMemory: packed.data.memories.length,
       packedRelationships: packed.data.relationships.length,
       assembledCandidates: assembled.candidates.length,
+      codeMemoryRelationships,
+      rankingDiagnostics: assembled.rankingDiagnostics,
+      semanticOnlyParaphraseHits,
+      softReservationProbe,
+      crossPlanePackingDiagnostics,
     };
     if (
       workspaceStatus.data.counts.files !== 1_000 ||
@@ -308,7 +367,14 @@ if (configuredModelPath) {
       !finalPlanes.has("memory") ||
       packed.data.code.length === 0 ||
       packed.data.memories.length === 0 ||
-      packed.data.relationships.length === 0
+      packed.data.relationships.length === 0 ||
+      codeMemoryRelationships !== linkedMemoryIds.length ||
+      unifiedMmrCodeInputs === 0 ||
+      unifiedMmrMemoryInputs === 0 ||
+      assembled.rankingDiagnostics.nearDuplicatePairs === 0 ||
+      semanticOnlyParaphraseHits === 0 ||
+      crossPlanePackingDiagnostics.softReservationEvaluations === 0 ||
+      crossPlanePackingDiagnostics.softReservationFits === 0
     ) {
       throw new Error(
         `Cross-plane get_context benchmark did not exercise its required workload: ${JSON.stringify(observedWorkload)}`,
@@ -322,16 +388,22 @@ if (configuredModelPath) {
       ftsCandidates: semanticApp.database.searchCode("computeValue999 cached pricing", undefined, 100).length,
       memoryVectors: memoryVectorCount,
       memoryTypes: memoryTypes.length,
-      codeMemoryRelationships: 64,
+      codeMemoryRelationships,
       unifiedMmrCandidates: assembled.candidates.length,
       unifiedMmrPlanes: [...finalPlanes].sort(),
+      unifiedMmrInputByPlane: {
+        code: unifiedMmrCodeInputs,
+        memory: unifiedMmrMemoryInputs,
+      },
+      nearDuplicatePairs: assembled.rankingDiagnostics.nearDuplicatePairs,
+      hardDeduplicatedCandidates: assembled.rankingDiagnostics.hardDeduplicatedCandidates,
       snippetHydrationCount: packed.data.code.filter((node) => node.snippet !== null).length,
       resultCodeCount: packed.data.code.length,
       resultMemoryCount: packed.data.memories.length,
       resultRelationshipCount: packed.data.relationships.length,
-      semanticParaphrases: true,
-      nearDuplicateCandidates: true,
-      softReservationQueryEvaluated: true,
+      semanticOnlyParaphraseHits,
+      softReservationProbe,
+      crossPlanePackingDiagnostics,
     };
   } finally {
     await semanticApp.close();

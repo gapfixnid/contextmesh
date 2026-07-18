@@ -1,10 +1,22 @@
 import type { CodeNodeRecord, MemoryFragmentRecord } from "../contracts.js";
 import { sha256, tokenizeIdentifier, unique } from "../utils.js";
+import { controlDigest } from "./control-json.js";
 
 export interface SemanticDocument {
   entityId: string;
   sourceHash: string;
   text: string;
+}
+
+export function semanticDocumentSetDigest(
+  documents: readonly Pick<SemanticDocument, "entityId" | "sourceHash">[],
+): string {
+  return controlDigest(
+    documents
+      .map(({ entityId, sourceHash }) => [entityId, sourceHash] as [string, string])
+      .sort(([leftId, leftHash], [rightId, rightHash]) =>
+        leftId < rightId ? -1 : leftId > rightId ? 1 : leftHash < rightHash ? -1 : leftHash > rightHash ? 1 : 0),
+  );
 }
 
 function normalizeText(value: string): string {

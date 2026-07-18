@@ -67,6 +67,11 @@ try {
     cwd: consumer,
     stdio: "inherit",
   });
+  execFileSync(
+    process.execPath,
+    ["--import", "tsx", path.join(root, "scripts", "audit-production.ts"), "--cwd", consumer],
+    { cwd: root, stdio: "inherit" },
+  );
   process.stdout.write(
     `${JSON.stringify({ dryRunFiles: files.length, installedVersion: packageJson.version, forbiddenFiles: leaked }, null, 2)}\n`,
   );

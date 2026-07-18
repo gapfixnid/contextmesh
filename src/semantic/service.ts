@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import { performance } from "node:perf_hooks";
 import type {
   CodeNodeKind,
   ExtractedGraph,
@@ -7,6 +8,7 @@ import type {
   MemoryType,
 } from "../contracts.js";
 import type {
+  CodeIndexSemanticClaim,
   ContextMeshStorage,
   MemorySemanticCapture,
   SemanticCommitEntry,
@@ -16,7 +18,12 @@ import type {
   SemanticStateRecord,
   StoredSemanticEmbedding,
 } from "../storage/database.js";
-import { buildCodeSemanticDocument, buildMemorySemanticDocument, type SemanticDocument } from "./documents.js";
+import {
+  buildCodeSemanticDocument,
+  buildMemorySemanticDocument,
+  semanticDocumentSetDigest,
+  type SemanticDocument,
+} from "./documents.js";
 import type {
   EmbeddingBackend,
   EmbeddingBackendFactory,
@@ -47,15 +54,17 @@ import {
   VECTOR_CODEC,
 } from "./vector-codec.js";
 import {
-  encodeEntityIds,
   scanNormalizedMatrix,
-  writeSha256Hex,
   type EncodedEntityIds,
 } from "./exact-scan.js";
 
 export const MAX_EXACT_SCAN_ENTITIES = 50_000;
 const EMBEDDING_BATCH_SIZE = 16;
-const PACKED_HYDRATION_MIN_ENTITIES = 10_000;
+const UNAVAILABLE_MATERIAL_PROBE_INTERVAL_MS = 10_000;
+const SOURCE_HASH_BYTES = 32;
+const CODE_ENTITY_KEY_BYTES = 32;
+const CODE_ENTITY_ID_BYTES = CODE_ENTITY_KEY_BYTES * 2;
+const HEX_ASCII = Buffer.from("0123456789abcdef", "ascii");
 
 export const SEMANTIC_UNAVAILABLE_WARNING = "SEMANTIC_UNAVAILABLE";
 export const SEMANTIC_PARTIAL_WARNING = "SEMANTIC_PARTIAL";
@@ -77,6 +86,16 @@ export interface SemanticSearchResult {
   queryVector?: Float32Array;
 }
 
+export interface SemanticHydrationProfile {
+  stateReadMs: number;
+  modelLookupMs: number;
+  rowIterationMs: number;
+  decodeValidationMs: number;
+  idHashPackingMs: number;
+  sqliteReleaseMs: number;
+  totalHydrationMs: number;
+}
+
 interface MatrixCache {
   key: string;
   entityIds: EncodedEntityIds;
@@ -96,6 +115,20 @@ interface PlaneAssessment {
 export interface SemanticServiceOptions {
   modelPath: string;
   backendFactory?: EmbeddingBackendFactory;
+  materialFingerprint?: (modelPath: string) => Promise<string>;
+  monotonicNow?: () => number;
+  materialProbeIntervalMs?: number;
+}
+
+interface MaterialProbeState {
+  fingerprint: string;
+  probedAt: number;
+}
+
+export interface PreparedCodeSemanticCommit {
+  commit?: SemanticPlaneCommit;
+  claim?: CodeIndexSemanticClaim;
+  stopHeartbeat(): void;
 }
 
 function encodedVectorDefectCode(error: unknown): string {
@@ -119,10 +152,16 @@ export class SemanticService {
   readonly modelKey = APPROVED_MODEL_KEY;
   private readonly database: ContextMeshStorage;
   private readonly backendFactory: EmbeddingBackendFactory;
+  private readonly materialFingerprint: (modelPath: string) => Promise<string>;
+  private readonly monotonicNow: () => number;
+  private readonly materialProbeIntervalMs: number;
   private readonly pipeline: PipelineLifecycle<EmbeddingBackend>;
   private readonly caches = new Map<SemanticPlane, MatrixCache>();
   private readonly reconciliationPromises = new Map<SemanticPlane, Promise<void>>();
   private readonly reconciliationWarnings = new Map<SemanticPlane, string[]>();
+  private readonly materialProbes = new Map<SemanticPlane, MaterialProbeState>();
+  private readonly materialProbeCounts = new Map<SemanticPlane, number>();
+  private lastHydrationProfile: SemanticHydrationProfile | null = null;
   private readonly reconciliationOwner: SemanticReconciliationOwner = {
     ownerUuid: randomUUID(),
     ownerPid: process.pid,
@@ -133,6 +172,9 @@ export class SemanticService {
     this.database = database;
     this.modelPath = options.modelPath;
     this.backendFactory = options.backendFactory ?? createTransformersEmbeddingBackend;
+    this.materialFingerprint = options.materialFingerprint ?? modelMaterialFingerprint;
+    this.monotonicNow = options.monotonicNow ?? (() => performance.now());
+    this.materialProbeIntervalMs = options.materialProbeIntervalMs ?? UNAVAILABLE_MATERIAL_PROBE_INTERVAL_MS;
     this.pipeline = new PipelineLifecycle(() => this.backendFactory(this.modelPath));
     this.database.configureSemanticModel({
       modelKey: APPROVED_MODEL_KEY,
@@ -142,6 +184,23 @@ export class SemanticService {
       vectorCodec: VECTOR_CODEC,
     });
     this.database.backfillSemanticSourceHashes();
+  }
+
+  private async probeMaterial(plane: SemanticPlane, force: boolean): Promise<MaterialProbeState> {
+    const now = this.monotonicNow();
+    const cached = this.materialProbes.get(plane);
+    if (!force && cached && now - cached.probedAt < this.materialProbeIntervalMs) return cached;
+    const fingerprint = await this.materialFingerprint(this.modelPath);
+    const probe = { fingerprint, probedAt: now };
+    this.materialProbes.set(plane, probe);
+    this.materialProbeCounts.set(plane, (this.materialProbeCounts.get(plane) ?? 0) + 1);
+    return probe;
+  }
+
+  materialProbeDiagnostics(): { code: number; memory: number; total: number } {
+    const code = this.materialProbeCounts.get("code") ?? 0;
+    const memory = this.materialProbeCounts.get("memory") ?? 0;
+    return { code, memory, total: code + memory };
   }
 
   private async withBackend<T>(
@@ -314,9 +373,11 @@ export class SemanticService {
     return primary;
   }
 
-  private warningForFailure(failure: SemanticFailureDiagnostic): string {
+  private warningForFailure(plane: SemanticPlane, failure: SemanticFailureDiagnostic): string {
+    const state = this.database.getSemanticState(plane);
     const prefix =
-      failure.failureClass === "data_repairable"
+      failure.failureClass === "data_repairable" ||
+      (failure.failureClass === "runtime_retryable" && (state?.validEmbeddingCount ?? 0) > 0)
         ? SEMANTIC_PARTIAL_WARNING
         : SEMANTIC_UNAVAILABLE_WARNING;
     return `${prefix}: ${failure.safeSummary}`;
@@ -328,14 +389,8 @@ export class SemanticService {
     return warnings;
   }
 
-  private durableUnavailableFailure(plane: SemanticPlane): SemanticFailureDiagnostic | null {
-    const state = this.database.getSemanticState(plane);
-    if (
-      !state?.failureClass ||
-      state.failureClass === "data_repairable"
-    ) {
-      return null;
-    }
+  private failureFromState(state: SemanticStateRecord | null): SemanticFailureDiagnostic | null {
+    if (!state?.failureClass) return null;
     return {
       failureClass: state.failureClass,
       code: state.normalizedErrorCode ?? state.failureClass.toUpperCase(),
@@ -345,10 +400,22 @@ export class SemanticService {
     };
   }
 
+  private durableUnavailableFailure(plane: SemanticPlane): SemanticFailureDiagnostic | null {
+    const state = this.database.getSemanticState(plane);
+    if (
+      !state?.failureClass ||
+      state.failureClass === "data_repairable" ||
+      (state.failureClass === "runtime_retryable" && state.validEmbeddingCount > 0)
+    ) {
+      return null;
+    }
+    return this.failureFromState(state);
+  }
+
   private async prepareCommit(
     plane: SemanticPlane,
     documents: SemanticDocument[],
-    claim?: SemanticReconciliationClaim,
+    claim?: SemanticReconciliationClaim | CodeIndexSemanticClaim,
     observedMaterialFingerprint: string | null = null,
   ): Promise<SemanticPlaneCommit> {
     if (documents.length > MAX_EXACT_SCAN_ENTITIES) {
@@ -383,7 +450,11 @@ export class SemanticService {
     const diagnostics: SemanticFailureDiagnostic[] = [];
     let newVectorCount = 0;
     const heartbeat = (): void => {
-      if (claim && !this.database.heartbeatSemanticReconciliation(claim)) throw new SemanticLeaseLostError();
+      if (!claim) return;
+      const alive = "operation" in claim
+        ? this.database.heartbeatCodeIndexEmbedding(claim)
+        : this.database.heartbeatSemanticReconciliation(claim);
+      if (!alive) throw new SemanticLeaseLostError();
     };
     if (missing.length > 0) {
       try {
@@ -423,47 +494,107 @@ export class SemanticService {
       codec: VECTOR_CODEC,
       entries: documents.map((document) => entries.get(document.entityId)!),
       lastError: failure?.safeSummary ?? null,
-      unavailable: failure?.failureClass === "material_sticky" || failure?.failureClass === "runtime_retryable",
+      unavailable:
+        failure?.failureClass === "material_sticky" ||
+        (failure?.failureClass === "runtime_retryable" &&
+          ![...entries.values()].some((entry) => entry.reuse || entry.vector)),
       ...(failure ? { failure, diagnostics } : {}),
       newVectorCount,
     };
   }
 
-  async prepareCodeCommit(graph: ExtractedGraph): Promise<SemanticPlaneCommit> {
+  async prepareCodeCommit(
+    graph: ExtractedGraph,
+    targetGeneration: number,
+  ): Promise<PreparedCodeSemanticCommit> {
     const relativePathByFileId = new Map(graph.files.map((file) => [file.id, file.relativePath]));
     const documents = graph.nodes.map((node) =>
       buildCodeSemanticDocument(node, node.fileId ? (relativePathByFileId.get(node.fileId) ?? null) : null),
     );
-    const fingerprint = await modelMaterialFingerprint(this.modelPath);
-    return this.prepareCommit("code", documents, undefined, fingerprint);
+    const fingerprint = (await this.probeMaterial("code", true)).fingerprint;
+    const current = this.database.getWorkspace();
+    const claimed = this.database.claimCodeIndexEmbedding(
+      {
+        expectedCurrentGeneration: current.currentGeneration,
+        targetGeneration,
+        modelKey: this.modelKey,
+        eligibleEntityCount: documents.length,
+        documentSetDigest: semanticDocumentSetDigest(documents),
+        materialFingerprint: fingerprint,
+      },
+      this.reconciliationOwner,
+    );
+    if (!claimed.claim) return { stopHeartbeat: () => undefined };
+
+    const claim = claimed.claim;
+    let leaseLost = false;
+    const timer = setInterval(() => {
+      if (!this.database.heartbeatCodeIndexEmbedding(claim)) leaseLost = true;
+    }, 5_000);
+    timer.unref();
+    const stopHeartbeat = (): void => clearInterval(timer);
+    try {
+      const commit = await this.prepareCommit("code", documents, claim, fingerprint);
+      if (leaseLost || !this.database.heartbeatCodeIndexEmbedding(claim)) {
+        return { claim, stopHeartbeat };
+      }
+      return { commit, claim, stopHeartbeat };
+    } catch (error) {
+      if (error instanceof SemanticLeaseLostError) return { claim, stopHeartbeat };
+      stopHeartbeat();
+      this.database.abandonCodeIndexClaim(claim, "index_failed");
+      throw error;
+    }
   }
 
-  async reconcileCodeIfNeeded(): Promise<void> {
-    return this.reconcileIfNeeded("code");
+  async reconcileCodeIfNeeded(forceMaterialProbe = false): Promise<void> {
+    return this.reconcileIfNeeded("code", forceMaterialProbe);
   }
 
-  async reconcileMemoryIfNeeded(): Promise<void> {
-    return this.reconcileIfNeeded("memory");
+  async reconcileMemoryIfNeeded(forceMaterialProbe = false): Promise<void> {
+    return this.reconcileIfNeeded("memory", forceMaterialProbe);
   }
 
-  private reconcileIfNeeded(plane: SemanticPlane): Promise<void> {
+  private reconcileIfNeeded(plane: SemanticPlane, forceMaterialProbe: boolean): Promise<void> {
     const current = this.reconciliationPromises.get(plane);
     if (current) return current;
-    const promise = this.reconcilePlane(plane).finally(() => {
+    const promise = this.reconcilePlane(plane, forceMaterialProbe).finally(() => {
       if (this.reconciliationPromises.get(plane) === promise) this.reconciliationPromises.delete(plane);
     });
     this.reconciliationPromises.set(plane, promise);
     return promise;
   }
 
-  private async reconcilePlane(plane: SemanticPlane): Promise<void> {
+  private async reconcilePlane(plane: SemanticPlane, forceMaterialProbe: boolean): Promise<void> {
     const initialState = this.database.getSemanticState(plane);
     if (initialState?.status === "ready" && !initialState.failureClass) return;
-    const materialFingerprint = await modelMaterialFingerprint(this.modelPath);
+    const cachedProbe = this.materialProbes.get(plane);
+    const now = this.monotonicNow();
+    const unavailableLatch =
+      initialState?.failureClass === "material_sticky" || initialState?.failureClass === "runtime_retryable";
+    if (
+      !forceMaterialProbe &&
+      unavailableLatch &&
+      cachedProbe &&
+      now - cachedProbe.probedAt < this.materialProbeIntervalMs
+    ) {
+      const failure = this.failureFromState(initialState);
+      if (failure) this.reconciliationWarnings.set(plane, [this.warningForFailure(plane, failure)]);
+      return;
+    }
+    const materialFingerprint = (await this.probeMaterial(plane, forceMaterialProbe)).fingerprint;
+    if (
+      initialState?.failureClass === "material_sticky" &&
+      initialState.materialFingerprint === materialFingerprint
+    ) {
+      const failure = this.durableUnavailableFailure(plane);
+      if (failure) this.reconciliationWarnings.set(plane, [this.warningForFailure(plane, failure)]);
+      return;
+    }
     let assessment = this.assessPlane(plane, materialFingerprint);
     this.recordAssessment(plane, assessment);
     if (assessment.primary) {
-      this.reconciliationWarnings.set(plane, [this.warningForFailure(assessment.primary)]);
+      this.reconciliationWarnings.set(plane, [this.warningForFailure(plane, assessment.primary)]);
     }
     // Canonical source-hash repair is a fenced state transition. Assess first so
     // the request still reports the transient partial condition, then rebuild
@@ -540,8 +671,8 @@ export class SemanticService {
       if (committed) this.caches.delete("memory");
       return [];
     } catch (error) {
-      const fingerprint = await modelMaterialFingerprint(this.modelPath);
-      return [this.warningForFailure(this.recordOperationFailure("memory", error, fingerprint))];
+      const fingerprint = (await this.probeMaterial("memory", true)).fingerprint;
+      return [this.warningForFailure("memory", this.recordOperationFailure("memory", error, fingerprint))];
     }
   }
 
@@ -578,8 +709,8 @@ export class SemanticService {
       if (committed) this.caches.delete("memory");
       return [];
     } catch (error) {
-      const fingerprint = await modelMaterialFingerprint(this.modelPath);
-      return [this.warningForFailure(this.recordOperationFailure("memory", error, fingerprint))];
+      const fingerprint = (await this.probeMaterial("memory", true)).fingerprint;
+      return [this.warningForFailure("memory", this.recordOperationFailure("memory", error, fingerprint))];
     }
   }
 
@@ -597,68 +728,142 @@ export class SemanticService {
   }
 
   /** Explicitly hydrate a ready plane without query inference or exact scanning. */
-  warmCache(plane: SemanticPlane): { validEmbeddingCount: number; invalidRows: number } {
+  warmCache(plane: SemanticPlane): {
+    validEmbeddingCount: number;
+    invalidRows: number;
+    profile?: SemanticHydrationProfile;
+  } {
+    const profiling = process.env.CONTEXTMESH_HYDRATION_PROFILE === "1";
+    const stateStarted = profiling ? performance.now() : 0;
     const state = this.database.getSemanticState(plane);
     if (!state?.modelKey) return { validEmbeddingCount: 0, invalidRows: 0 };
+    const stateReadMs = profiling ? performance.now() - stateStarted : 0;
     const cache = this.hydrateCache(plane, state);
-    return { validEmbeddingCount: cache.entityIds.count, invalidRows: cache.invalidRows };
+    if (this.lastHydrationProfile) this.lastHydrationProfile.stateReadMs = stateReadMs;
+    return {
+      validEmbeddingCount: cache.entityIds.count,
+      invalidRows: cache.invalidRows,
+      ...(this.lastHydrationProfile ? { profile: this.lastHydrationProfile } : {}),
+    };
   }
 
   private hydrateCache(plane: SemanticPlane, state: SemanticStateRecord): MatrixCache {
+    const profiling = process.env.CONTEXTMESH_HYDRATION_PROFILE === "1";
+    const totalStarted = profiling ? performance.now() : 0;
+    let modelLookupMs = 0;
+    let rowIterationMs = 0;
+    let decodeValidationMs = 0;
+    let idHashPackingMs = 0;
+    let sqliteReleaseMs = 0;
+    this.lastHydrationProfile = null;
     const key = this.cacheKey(plane, state);
     const existing = this.caches.get(plane);
     if (existing?.key === key) return existing;
     const dimensions = APPROVED_MODEL_MANIFEST.model.dimensions;
     let capacity = Math.max(1, state.eligibleEntityCount, state.validEmbeddingCount);
-    if (capacity >= PACKED_HYDRATION_MIN_ENTITIES) {
-      const packed = this.database.hydrateSemanticMatrix(plane, this.modelKey, dimensions);
-      if (packed) {
-        const cache = {
-          key,
-          entityIds: {
-            bytes: packed.entityIdBytes,
-            offsets: packed.entityIdOffsets,
-            count: packed.entityIdOffsets.length - 1,
-          },
-          sourceHashBytes: packed.sourceHashBytes,
-          matrix: packed.matrix,
-          invalidRows: packed.invalidRows,
-        };
-        this.caches.set(plane, cache);
-        return cache;
-      }
-    }
     let matrix = new Float32Array(capacity * dimensions);
-    const ids: string[] = [];
-    let sourceHashBytes = new Uint8Array(capacity * 32);
+    let sourceHashBytes = new Uint8Array(capacity * SOURCE_HASH_BYTES);
+    let entityIdOffsets = new Uint32Array(capacity + 1);
+    let entityIdBytes = new Uint8Array(
+      plane === "code" ? capacity * CODE_ENTITY_ID_BYTES : Math.max(1_024, capacity * 24),
+    );
+    let validCount = 0;
+    let entityIdByteLength = 0;
     let invalidRows = 0;
-    for (const row of this.database.iterateSemanticEmbeddings(plane, this.modelKey)) {
+    const modelStarted = profiling ? performance.now() : 0;
+    const model = this.database.getSemanticHydrationModel(this.modelKey);
+    if (profiling) modelLookupMs = performance.now() - modelStarted;
+    const modelMetadataValid = model?.dimensions === dimensions && model.codec === VECTOR_CODEC;
+    const rows = model ? this.database.iterateSemanticHydrationRows(plane, model.modelId) : [];
+    const iterator = rows[Symbol.iterator]();
+    while (true) {
+      const rowStarted = profiling ? performance.now() : 0;
+      const next = iterator.next();
+      if (profiling) rowIterationMs += performance.now() - rowStarted;
+      if (next.done) break;
+      const row = next.value;
       try {
-        if (row.dimensions !== APPROVED_MODEL_MANIFEST.model.dimensions || row.codec !== VECTOR_CODEC) {
-          throw new Error("Embedding metadata mismatch");
-        }
-        if (ids.length === capacity) {
-          const nextCapacity = Math.min(MAX_EXACT_SCAN_ENTITIES, Math.max(capacity * 2, ids.length + 1));
+        if (!modelMetadataValid) throw new Error("Embedding metadata mismatch");
+        if (validCount === capacity) {
+          const nextCapacity = Math.min(MAX_EXACT_SCAN_ENTITIES, Math.max(capacity * 2, validCount + 1));
           if (nextCapacity <= capacity) throw new Error("Semantic cache exceeds the exact-scan limit");
           const grownMatrix = new Float32Array(nextCapacity * dimensions);
           grownMatrix.set(matrix);
           matrix = grownMatrix;
-          const grownHashes = new Uint8Array(nextCapacity * 32);
+          const grownHashes = new Uint8Array(nextCapacity * SOURCE_HASH_BYTES);
           grownHashes.set(sourceHashBytes);
           sourceHashBytes = grownHashes;
+          const grownOffsets = new Uint32Array(nextCapacity + 1);
+          grownOffsets.set(entityIdOffsets);
+          entityIdOffsets = grownOffsets;
           capacity = nextCapacity;
         }
-        decodeVectorInto(row.vector, row.dimensions, matrix, ids.length * dimensions);
-        writeSha256Hex(sourceHashBytes, ids.length * 32, row.sourceHash);
-        ids.push(row.entityId);
+        const decodeStarted = profiling ? performance.now() : 0;
+        decodeVectorInto(row.vector, dimensions, matrix, validCount * dimensions);
+        if (profiling) decodeValidationMs += performance.now() - decodeStarted;
+        const packingStarted = profiling ? performance.now() : 0;
+        if (row.sourceHash.byteLength !== SOURCE_HASH_BYTES) throw new Error("Embedding source hash mismatch");
+        if (plane === "code" && row.entityKey.byteLength !== CODE_ENTITY_KEY_BYTES) {
+          throw new Error("Code embedding entity key mismatch");
+        }
+        if (plane === "memory" && row.entityKey.byteLength === 0) throw new Error("Memory embedding entity key mismatch");
+        const idLength = plane === "code" ? CODE_ENTITY_ID_BYTES : row.entityKey.byteLength;
+        const requiredIdBytes = entityIdByteLength + idLength;
+        if (requiredIdBytes > entityIdBytes.byteLength) {
+          let nextIdCapacity = entityIdBytes.byteLength;
+          while (nextIdCapacity < requiredIdBytes) nextIdCapacity = Math.max(nextIdCapacity * 2, requiredIdBytes);
+          const grownIds = new Uint8Array(nextIdCapacity);
+          grownIds.set(entityIdBytes.subarray(0, entityIdByteLength));
+          entityIdBytes = grownIds;
+        }
+        if (plane === "memory") {
+          for (const byte of row.entityKey) {
+            if (byte > 0x7f) throw new Error("Semantic memory entity IDs must be ASCII");
+          }
+        }
+        sourceHashBytes.set(row.sourceHash, validCount * SOURCE_HASH_BYTES);
+        if (plane === "code") {
+          for (let index = 0; index < CODE_ENTITY_KEY_BYTES; index += 1) {
+            const byte = row.entityKey[index]!;
+            entityIdBytes[entityIdByteLength++] = HEX_ASCII[byte >>> 4]!;
+            entityIdBytes[entityIdByteLength++] = HEX_ASCII[byte & 0x0f]!;
+          }
+        } else {
+          entityIdBytes.set(row.entityKey, entityIdByteLength);
+          entityIdByteLength += row.entityKey.byteLength;
+        }
+        validCount += 1;
+        entityIdOffsets[validCount] = entityIdByteLength;
+        if (profiling) idHashPackingMs += performance.now() - packingStarted;
       } catch {
         invalidRows += 1;
       }
     }
+    const releaseStarted = profiling ? performance.now() : 0;
     this.database.releaseTransientSemanticReadMemory();
-    matrix = matrix.subarray(0, ids.length * dimensions);
-    sourceHashBytes = sourceHashBytes.subarray(0, ids.length * 32);
-    const cache = { key, entityIds: encodeEntityIds(ids), sourceHashBytes, matrix, invalidRows };
+    if (profiling) sqliteReleaseMs = performance.now() - releaseStarted;
+    matrix = matrix.subarray(0, validCount * dimensions);
+    sourceHashBytes = sourceHashBytes.subarray(0, validCount * SOURCE_HASH_BYTES);
+    entityIdOffsets = entityIdOffsets.subarray(0, validCount + 1);
+    entityIdBytes = entityIdBytes.subarray(0, entityIdByteLength);
+    const cache = {
+      key,
+      entityIds: { bytes: entityIdBytes, offsets: entityIdOffsets, count: validCount },
+      sourceHashBytes,
+      matrix,
+      invalidRows,
+    };
+    if (profiling) {
+      this.lastHydrationProfile = {
+        stateReadMs: 0,
+        modelLookupMs,
+        rowIterationMs,
+        decodeValidationMs,
+        idHashPackingMs,
+        sqliteReleaseMs,
+        totalHydrationMs: performance.now() - totalStarted,
+      };
+    }
     this.caches.set(plane, cache);
     return cache;
   }
@@ -770,7 +975,7 @@ export class SemanticService {
     if (durableFailure) {
       return appendReconciliationWarnings({
         candidates: [],
-        warnings: [this.warningForFailure(durableFailure)],
+        warnings: [this.warningForFailure(plane, durableFailure)],
         eligibleEntityCount: eligible.size,
         validEmbeddingCount: this.database.getSemanticState(plane)?.validEmbeddingCount ?? 0,
         snapshotKey: this.currentStateKey(plane),
@@ -785,7 +990,7 @@ export class SemanticService {
       const failure = classifySemanticFailure(error);
       return appendReconciliationWarnings({
         candidates: [],
-        warnings: [this.warningForFailure(failure)],
+        warnings: [this.warningForFailure(plane, failure)],
         eligibleEntityCount: eligible.size,
         validEmbeddingCount: 0,
         snapshotKey: this.currentStateKey(plane),
@@ -881,7 +1086,7 @@ export class SemanticService {
         failure: SemanticFailureDiagnostic,
       ): SemanticSearchResult => ({
         candidates: [],
-        warnings: [this.warningForFailure(failure)],
+        warnings: [this.warningForFailure(plane, failure)],
         eligibleEntityCount: count,
         validEmbeddingCount: this.database.getSemanticState(plane)?.validEmbeddingCount ?? 0,
         snapshotKey: this.currentStateKey(plane),
@@ -909,7 +1114,7 @@ export class SemanticService {
       const unavailable = (plane: SemanticPlane, count: number): SemanticSearchResult => {
         return {
           candidates: [],
-          warnings: [this.warningForFailure(failure)],
+          warnings: [this.warningForFailure(plane, failure)],
           eligibleEntityCount: count,
           validEmbeddingCount: 0,
           snapshotKey: this.currentStateKey(plane),
@@ -946,7 +1151,7 @@ export class SemanticService {
       const derivedStatus =
         primary?.failureClass === "material_sticky" ||
         primary?.failureClass === "scale_limit" ||
-        primary?.failureClass === "runtime_retryable"
+        (primary?.failureClass === "runtime_retryable" && valid === 0)
           ? "unavailable"
           : valid === eligible.size
             ? "ready"

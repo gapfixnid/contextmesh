@@ -7,6 +7,7 @@ import type {
 import { fuseAndDiversify, type RankingItem } from "./ranking.js";
 import type { SemanticSearchResult } from "./service.js";
 import { APPROVED_MODEL_KEY } from "./manifest.js";
+import { buildCodeRedundancyText, buildMemoryRedundancyText } from "./redundancy.js";
 
 const MAX_SOURCE_DEPTH = 10_100;
 
@@ -14,14 +15,6 @@ export interface HybridCodeResult {
   results: CodeSearchResult[];
   truncated: boolean;
   nextOffset: number | null;
-}
-
-function codeText(node: CodeSearchResult): string {
-  return [node.kind, node.name, node.qualifiedName, node.relativePath ?? "", node.signature, node.doc].join("\n");
-}
-
-function memoryText(memory: MemoryFragmentRecord): string {
-  return [memory.type, memory.topic, memory.keywords.join(" "), memory.content, memory.assertionStatus].join("\n");
 }
 
 export function hybridCodeSearch(
@@ -36,7 +29,7 @@ export function hybridCodeSearch(
   const lexicalItems: RankingItem<CodeSearchResult>[] = lexical.map((node) => ({
     id: node.id,
     value: node,
-    text: codeText(node),
+    text: buildCodeRedundancyText(node),
     ...(semanticById.get(node.id)?.vector
       ? { vector: semanticById.get(node.id)!.vector, vectorModelKey: APPROVED_MODEL_KEY }
       : {}),
@@ -44,7 +37,7 @@ export function hybridCodeSearch(
   const semanticItems: RankingItem<CodeSearchResult>[] = semanticNodes.map((node) => ({
     id: node.id,
     value: node,
-    text: codeText(node),
+    text: buildCodeRedundancyText(node),
     vector: semanticById.get(node.id)!.vector,
     vectorModelKey: APPROVED_MODEL_KEY,
   }));
@@ -87,7 +80,7 @@ export function hybridMemoryRecall(
   const lexicalItems: RankingItem<MemoryFragmentRecord>[] = lexical.fragments.map((memory) => ({
     id: memory.id,
     value: memory,
-    text: memoryText(memory),
+    text: buildMemoryRedundancyText(memory),
     ...(semanticById.get(memory.id)?.vector
       ? { vector: semanticById.get(memory.id)!.vector, vectorModelKey: APPROVED_MODEL_KEY }
       : {}),
@@ -95,7 +88,7 @@ export function hybridMemoryRecall(
   const semanticItems: RankingItem<MemoryFragmentRecord>[] = semanticMemories.map((memory) => ({
     id: memory.id,
     value: memory,
-    text: memoryText(memory),
+    text: buildMemoryRedundancyText(memory),
     vector: semanticById.get(memory.id)!.vector,
     vectorModelKey: APPROVED_MODEL_KEY,
   }));

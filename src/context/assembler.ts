@@ -8,8 +8,14 @@ import type {
 } from "../storage/database.js";
 import type { CodeIndexer } from "../code/indexer.js";
 import { APPROVED_MODEL_KEY } from "../semantic/manifest.js";
-import { fuseAndDiversify, type RankingItem, type RankingSource } from "../semantic/ranking.js";
+import {
+  fuseAndDiversify,
+  type RankingDiagnostics,
+  type RankingItem,
+  type RankingSource,
+} from "../semantic/ranking.js";
 import type { SemanticSearchResult } from "../semantic/service.js";
+import { buildCodeRedundancyText, buildMemoryRedundancyText } from "../semantic/redundancy.js";
 
 export interface ContextCodeItem extends CodeSearchResult {
   snippet: string | null;
@@ -28,6 +34,7 @@ export interface AssembledContext {
   relationships: TraceEdgeResult[];
   candidateTruncated: boolean;
   warnings: string[];
+  rankingDiagnostics: RankingDiagnostics;
 }
 
 export interface ContextCandidate {
@@ -45,26 +52,14 @@ type UnifiedContextValue =
   | { kind: "code"; value: CodeSearchResult }
   | { kind: "memory"; value: MemoryFragmentRecord };
 
-function codeRedundancyText(node: CodeSearchResult): string {
-  return [node.kind, node.name, node.qualifiedName, node.relativePath ?? "", node.signature, node.doc].join("\n");
-}
-
-function memoryRedundancyText(memory: MemoryFragmentRecord): string {
-  return [memory.type, memory.topic, memory.keywords.join(" "), memory.content, memory.assertionStatus].join("\n");
-}
-
-function interleavePlanes<T extends UnifiedContextValue>(items: readonly RankingItem<T>[]): RankingItem<T>[] {
-  const code = items.filter((item) => item.value.kind === "code");
-  const memory = items.filter((item) => item.value.kind === "memory");
-  const result: RankingItem<T>[] = [];
-  const length = Math.max(code.length, memory.length);
-  for (let index = 0; index < length; index += 1) {
-    const codeItem = code[index];
-    const memoryItem = memory[index];
-    if (codeItem) result.push(codeItem);
-    if (memoryItem) result.push(memoryItem);
-  }
-  return result;
+function planeSources<T extends UnifiedContextValue>(
+  items: readonly RankingItem<T>[],
+  weight: number,
+): RankingSource<T>[] {
+  return (["code", "memory"] as const).flatMap((plane) => {
+    const planeItems = items.filter((item) => item.value.kind === plane);
+    return planeItems.length > 0 ? [{ weight, items: planeItems, normalizationGroup: plane }] : [];
+  });
 }
 
 export class ContextAssembler {
@@ -107,7 +102,7 @@ export class ContextAssembler {
       return {
         id: `code:${node.id}`,
         value: { kind: "code", value: node },
-        text: codeRedundancyText(node),
+        text: buildCodeRedundancyText(node),
         ...(vector ? { vector, vectorModelKey: APPROVED_MODEL_KEY } : {}),
       };
     };
@@ -116,7 +111,7 @@ export class ContextAssembler {
       return {
         id: `memory:${memory.id}`,
         value: { kind: "memory", value: memory },
-        text: memoryRedundancyText(memory),
+        text: buildMemoryRedundancyText(memory),
         ...(vector ? { vector, vectorModelKey: APPROVED_MODEL_KEY } : {}),
       };
     };
@@ -219,10 +214,17 @@ export class ContextAssembler {
     }
 
     const sources: RankingSource<UnifiedContextValue>[] = [];
-    if (lexicalItems.length > 0) sources.push({ weight: 1, items: interleavePlanes(lexicalItems) });
-    if (semanticItems.length > 0) sources.push({ weight: 1, items: interleavePlanes(semanticItems) });
-    if (graphItems.length > 0) sources.push({ weight: 0.75, items: interleavePlanes(graphItems) });
-    const fused = fuseAndDiversify(sources, pinnedIds, pinnedItems);
+    sources.push(...planeSources(lexicalItems, 1));
+    sources.push(...planeSources(semanticItems, 1));
+    sources.push(...planeSources(graphItems, 0.75));
+    const rankingDiagnostics: RankingDiagnostics = {
+      inputByNormalizationGroup: {},
+      uniqueCandidates: 0,
+      nearDuplicatePairs: 0,
+      hardDeduplicatedCandidates: 0,
+      selectedCandidates: 0,
+    };
+    const fused = fuseAndDiversify(sources, pinnedIds, pinnedItems, rankingDiagnostics);
 
     let order = 0;
     const candidates: ContextCandidate[] = fused.map((candidate) => {
@@ -285,6 +287,7 @@ export class ContextAssembler {
       relationships,
       candidateTruncated,
       warnings: [...new Set(warnings)],
+      rankingDiagnostics,
     };
   }
 

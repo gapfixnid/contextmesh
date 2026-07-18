@@ -29,8 +29,7 @@ import {
 } from "./context/assembler.js";
 import { asContextMeshError, ContextMeshError } from "./errors.js";
 import { MemoryService } from "./memory/service.js";
-import type { EmbeddingBackendFactory } from "./semantic/backend.js";
-import { SemanticService } from "./semantic/service.js";
+import { SemanticService, type SemanticServiceOptions } from "./semantic/service.js";
 import { nearDuplicateText } from "./semantic/ranking.js";
 import {
   ContextMeshDatabase,
@@ -40,6 +39,7 @@ import {
 import { envelopeFits, stabilizeEnvelope, type EnvelopeScope } from "./token-budget.js";
 import { nowIso } from "./utils.js";
 import type { FreshnessMode, RequestGenerationState } from "./code/indexer.js";
+import { buildCodeRedundancyText, buildMemoryRedundancyText } from "./semantic/redundancy.js";
 
 const QUERY_TRUNCATED_WARNING = "QUERY_TRUNCATED";
 const PAGINATION_STALLED_WARNING = "PAGINATION_STALLED";
@@ -80,11 +80,14 @@ function validate<T>(schema: { parse(input: unknown): T }, input: unknown): T {
 
 export interface ContextMeshAppOptions {
   freshnessMode?: FreshnessMode;
-  semantic?: {
-    modelPath: string;
-    backendFactory?: EmbeddingBackendFactory;
-  };
+  semantic?: SemanticServiceOptions;
   clock?: () => Date;
+}
+
+export interface ContextPackingDiagnostics {
+  softReservationEvaluations: number;
+  softReservationFits: number;
+  softReservationBudgetRejections: number;
 }
 
 export class ContextMeshApp {
@@ -96,6 +99,11 @@ export class ContextMeshApp {
   private activeIndex: Promise<Envelope<unknown>> | null = null;
   private closePromise: Promise<void> | null = null;
   private closing = false;
+  private lastPackingDiagnostics: ContextPackingDiagnostics = {
+    softReservationEvaluations: 0,
+    softReservationFits: 0,
+    softReservationBudgetRejections: 0,
+  };
 
   constructor(
     rootPath: string,
@@ -103,14 +111,7 @@ export class ContextMeshApp {
     options: ContextMeshAppOptions = {},
   ) {
     this.database = new ContextMeshDatabase(rootPath, databasePath, options.clock ? { clock: options.clock } : {});
-    this.semantic = options.semantic
-      ? new SemanticService(
-          this.database,
-          options.semantic.backendFactory
-            ? { modelPath: options.semantic.modelPath, backendFactory: options.semantic.backendFactory }
-            : { modelPath: options.semantic.modelPath },
-        )
-      : null;
+    this.semantic = options.semantic ? new SemanticService(this.database, options.semantic) : null;
     this.code = new CodeService(this.database, options.freshnessMode ?? "fast", this.semantic);
     this.memory = new MemoryService(this.database, this.semantic);
     this.context = new ContextAssembler(this.database, this.code.indexer);
@@ -127,6 +128,10 @@ export class ContextMeshApp {
     } catch (error) {
       console.error(`[ContextMesh] Automatic indexing failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  contextPackingDiagnostics(): Readonly<ContextPackingDiagnostics> {
+    return { ...this.lastPackingDiagnostics };
   }
 
   async close(): Promise<void> {
@@ -216,6 +221,12 @@ export class ContextMeshApp {
 
   async workspaceStatus(): Promise<Envelope<unknown>> {
     this.assertOpen();
+    if (this.semantic) {
+      await Promise.all([
+        this.semantic.reconcileCodeIfNeeded(true),
+        this.semantic.reconcileMemoryIfNeeded(true),
+      ]);
+    }
     return this.envelope({ ...(await this.code.status()), semantic: this.semantic?.status() ?? { enabled: false } });
   }
 
@@ -612,6 +623,12 @@ export class ContextMeshApp {
     staleWarnings: string[],
     forceTruncated: boolean,
   ): Envelope<unknown> {
+    const packingDiagnostics: ContextPackingDiagnostics = {
+      softReservationEvaluations: 0,
+      softReservationFits: 0,
+      softReservationBudgetRejections: 0,
+    };
+    this.lastPackingDiagnostics = packingDiagnostics;
     const accessTimestamp = nowIso();
     const provenance = new Map<string, MemoryCodeProvenance[]>();
     for (const candidate of result.candidates) {
@@ -649,36 +666,9 @@ export class ContextMeshApp {
         parsed.tokenBudget,
       );
 
-    let candidateOmitted = false;
-    for (const candidate of result.candidates) {
-      const crossPlaneRepresentative = selectedPlanes.size > 0 && !selectedPlanes.has(candidate.kind);
-      if (candidate.priority >= 2 && crossPlaneRepresentative && candidate.relevance < 0.35) {
-        candidateOmitted = true;
-        continue;
-      }
-      if (candidate.kind === "code") {
-        const code = candidate.value as ContextCodeItem;
-        const candidateText = code.snippet ?? `${code.signature}\n${code.doc}`;
-        if (
-          candidate.priority >= 2 &&
-          !candidate.hasVector &&
-          selectedTexts.some((selected) => nearDuplicateText(candidateText, selected))
-        ) {
-          candidateOmitted = true;
-          continue;
-        }
-        const tentative = { ...data, code: [...data.code, code] };
-        if (fitsWithReservedRelationships(tentative)) {
-          data = tentative;
-          selectedTexts.push(candidateText);
-          selectedPlanes.add("code");
-        } else candidateOmitted = true;
-        continue;
-      }
-
-      const memory = candidate.value as ContextMemoryItem;
+    const prepareMemory = (memory: ContextMemoryItem): ContextMemoryItem => {
       const links = provenance.get(memory.id) ?? [];
-      const prepared: ContextMemoryItem = {
+      return {
         ...memory,
         accessCount: memory.accessCount + 1,
         lastAccessedAt: accessTimestamp,
@@ -688,19 +678,100 @@ export class ContextMeshApp {
           codeLinksOmitted: links.length,
         },
       };
+    };
+    const representatives = new Map<"code" | "memory", (typeof result.candidates)[number]>();
+    for (const candidate of result.candidates) {
+      if (candidate.priority < 2 || candidate.relevance < 0.35 || representatives.has(candidate.kind)) continue;
+      representatives.set(candidate.kind, candidate);
+    }
+    const selectedKeys = new Set<string>();
+    const fitsWithSoftReservations = (
+      candidateData: ContextData,
+      current: (typeof result.candidates)[number],
+    ): boolean => {
+      packingDiagnostics.softReservationEvaluations += 1;
+      let reserved = candidateData;
+      for (const [plane, representative] of representatives) {
+        if (
+          selectedPlanes.has(plane) ||
+          plane === current.kind ||
+          representative.key === current.key ||
+          selectedKeys.has(representative.key)
+        ) {
+          continue;
+        }
+        if (plane === "code") {
+          reserved = {
+            ...reserved,
+            code: [...reserved.code, representative.value as ContextCodeItem],
+          };
+        } else {
+          reserved = {
+            ...reserved,
+            memories: [
+              ...reserved.memories,
+              prepareMemory(representative.value as ContextMemoryItem),
+            ],
+          };
+        }
+      }
+      const fits = fitsWithReservedRelationships(reserved);
+      if (fits) packingDiagnostics.softReservationFits += 1;
+      else packingDiagnostics.softReservationBudgetRejections += 1;
+      return fits;
+    };
+
+    let candidateOmitted = false;
+    for (const candidate of result.candidates) {
+      const crossPlaneRepresentative = selectedPlanes.size > 0 && !selectedPlanes.has(candidate.kind);
+      if (candidate.priority >= 2 && crossPlaneRepresentative && candidate.relevance < 0.35) {
+        candidateOmitted = true;
+        continue;
+      }
+      if (candidate.kind === "code") {
+        const code = candidate.value as ContextCodeItem;
+        const candidateText = buildCodeRedundancyText(code);
+        if (
+          candidate.priority >= 2 &&
+          !candidate.hasVector &&
+          selectedTexts.some((selected) => nearDuplicateText(candidateText, selected))
+        ) {
+          candidateOmitted = true;
+          continue;
+        }
+        const tentative = { ...data, code: [...data.code, code] };
+        const fits = candidate.priority < 2
+          ? fitsWithReservedRelationships(tentative)
+          : fitsWithSoftReservations(tentative, candidate);
+        if (fits) {
+          data = tentative;
+          selectedTexts.push(candidateText);
+          selectedPlanes.add("code");
+          selectedKeys.add(candidate.key);
+        } else candidateOmitted = true;
+        continue;
+      }
+
+      const memory = candidate.value as ContextMemoryItem;
+      const prepared = prepareMemory(memory);
+      const candidateText = buildMemoryRedundancyText(prepared);
       if (
         candidate.priority >= 2 &&
         !candidate.hasVector &&
-        selectedTexts.some((selected) => nearDuplicateText(prepared.content, selected))
+        selectedTexts.some((selected) => nearDuplicateText(candidateText, selected))
       ) {
         candidateOmitted = true;
         continue;
       }
       const tentative = { ...data, memories: [...data.memories, prepared] };
-      if (fitsWithReservedRelationships(tentative)) {
+      const fits = candidate.priority < 2
+        ? fitsWithReservedRelationships(tentative)
+        : fitsWithSoftReservations(tentative, candidate);
+      if (fits) {
         data = tentative;
-        selectedTexts.push(prepared.content);
+        selectedTexts.push(candidateText);
         selectedPlanes.add("memory");
+        selectedKeys.add(candidate.key);
       }
       else candidateOmitted = true;
     }

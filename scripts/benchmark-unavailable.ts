@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -8,14 +8,46 @@ import type { Envelope } from "../src/contracts.js";
 import type { ContextCodeItem, ContextMemoryItem } from "../src/context/assembler.js";
 import {
   APPROVED_MODEL_KEY,
-  SemanticModelValidationError,
+  APPROVED_MODEL_MANIFEST,
+  modelMaterialFingerprint,
 } from "../src/semantic/manifest.js";
+import { createTransformersEmbeddingBackend } from "../src/semantic/transformers-backend.js";
 
 const FILE_COUNT = 1_000;
 const MEMORY_COUNT = 64;
 const WARMUPS = 5;
 const SAMPLES = 50;
 const limits = { searchCodeP95Ms: 100, getContextP95Ms: 150 };
+
+function modelPathArgument(): string {
+  const index = process.argv.indexOf("--model-path");
+  const configured = index >= 0 ? process.argv[index + 1] : process.env.CONTEXTMESH_SEMANTIC_MODEL;
+  if (!configured) {
+    throw new Error("Pass --model-path or set CONTEXTMESH_SEMANTIC_MODEL for the material-corruption benchmark");
+  }
+  return path.resolve(configured);
+}
+
+function searchRankingState(result: Envelope<{ results: Array<{ id: string; score: number }>; nextOffset: number | null }>): string {
+  return JSON.stringify({
+    results: result.data.results.map((node) => [node.id, node.score]),
+    nextOffset: result.data.nextOffset,
+    truncated: result.truncated,
+  });
+}
+
+function contextRankingState(result: Envelope<{
+  code: ContextCodeItem[];
+  memories: ContextMemoryItem[];
+  relationships: Array<{ sourceId: string; targetId: string; kind: string; depth: number }>;
+}>): string {
+  return JSON.stringify({
+    code: result.data.code.map((node) => [node.id, node.score, node.source]),
+    memories: result.data.memories.map((memory) => [memory.id, memory.source]),
+    relationships: result.data.relationships.map((edge) => [edge.sourceId, edge.targetId, edge.kind, edge.depth]),
+    truncated: result.truncated,
+  });
+}
 
 function p95(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
@@ -78,21 +110,48 @@ try {
       sourceSymbolIds: [terminal.id],
     });
   }
+  const baselineSearch = await app.searchCode({ query: "symbol999 retry fallback", limit: 20 }) as Envelope<{
+    results: Array<{ id: string; score: number }>;
+    nextOffset: number | null;
+  }>;
+  const baselineContext = await app.getContext({
+    query: "symbol999",
+    symbolId: terminal.id,
+    include: ["code", "memory"],
+    tokenBudget: 8_000,
+  }) as Envelope<{
+    code: ContextCodeItem[];
+    memories: ContextMemoryItem[];
+    relationships: Array<{ sourceId: string; targetId: string; kind: string; depth: number }>;
+  }>;
+  const expectedSearchState = searchRankingState(baselineSearch);
+  const expectedContextState = contextRankingState(baselineContext);
   const databasePath = app.database.dbPath;
   await app.close();
 
-  let backendFactoryCalls = 0;
-  let shaValidationCount = 0;
+  const corruptedModelPath = path.join(root, "corrupted-approved-model");
+  cpSync(modelPathArgument(), corruptedModelPath, { recursive: true });
+  const corruptionTarget = APPROVED_MODEL_MANIFEST.files.at(-1)!;
+  const corruptionPath = path.join(corruptedModelPath, corruptionTarget.path);
+  const corruptedBytes = readFileSync(corruptionPath);
+  if (corruptedBytes.length !== corruptionTarget.sizeBytes || corruptedBytes.length === 0) {
+    throw new Error(`Approved corruption target is not valid: ${corruptionTarget.path}`);
+  }
+  corruptedBytes[0] = (corruptedBytes[0] ?? 0) ^ 0xff;
+  writeFileSync(corruptionPath, corruptedBytes);
+
+  let fullValidationCount = 0;
+  let metadataProbeCount = 0;
   app = new ContextMeshApp(root, databasePath, {
     semantic: {
-      modelPath: path.join(root, "configured-but-invalid-model"),
-      backendFactory: async () => {
-        backendFactoryCalls += 1;
-        shaValidationCount += 1;
-        throw new SemanticModelValidationError(
-          "MODEL_FILE_HASH_MISMATCH",
-          "approved material hash mismatch",
-        );
+      modelPath: corruptedModelPath,
+      backendFactory: async (modelPath) => {
+        fullValidationCount += 1;
+        return createTransformersEmbeddingBackend(modelPath);
+      },
+      materialFingerprint: async (modelPath) => {
+        metadataProbeCount += 1;
+        return modelMaterialFingerprint(modelPath);
       },
     },
   });
@@ -100,6 +159,9 @@ try {
     const result = await app.searchCode({ query: "symbol999 retry fallback", limit: 20 });
     if (!result.warnings.some((warning) => warning.startsWith("SEMANTIC_UNAVAILABLE"))) {
       throw new Error("Configured-unavailable search omitted the semantic warning");
+    }
+    if (searchRankingState(result as typeof baselineSearch) !== expectedSearchState) {
+      throw new Error("Configured-unavailable search diverged from semantic-off ranking state");
     }
   };
   const contextOperation = async (): Promise<void> => {
@@ -111,10 +173,13 @@ try {
     }) as Envelope<{
       code: ContextCodeItem[];
       memories: ContextMemoryItem[];
-      relationships: unknown[];
+      relationships: Array<{ sourceId: string; targetId: string; kind: string; depth: number }>;
     }>;
     if (!result.warnings.some((warning) => warning.startsWith("SEMANTIC_UNAVAILABLE"))) {
       throw new Error("Configured-unavailable context omitted the semantic warning");
+    }
+    if (contextRankingState(result) !== expectedContextState) {
+      throw new Error("Configured-unavailable context diverged from semantic-off ranking state");
     }
     if (result.data.code.length === 0 || result.data.memories.length === 0 || result.data.relationships.length === 0) {
       const rawTrace = app.database.traceCode(terminal.id, "both", undefined, 1, 50);
@@ -143,13 +208,25 @@ try {
     embeddingCount:
       app.database.loadSemanticEmbeddings("code", APPROVED_MODEL_KEY).length +
       app.database.loadSemanticEmbeddings("memory", APPROVED_MODEL_KEY).length,
-    backendFactoryCalls,
-    shaValidationCount,
+    fullValidationCount,
+    metadataProbeCount,
+    serviceMaterialProbeCount: app.semantic?.materialProbeDiagnostics().total ?? 0,
     reconciliationClaimCount:
       app.database.getSemanticClaimDiagnostics("code").claimCount +
       app.database.getSemanticClaimDiagnostics("memory").claimCount,
+    reconciliationTakeoverCount:
+      app.database.getSemanticClaimDiagnostics("code").takeoverCount +
+      app.database.getSemanticClaimDiagnostics("memory").takeoverCount,
+    reconciliationSupersedeCount:
+      app.database.getSemanticClaimDiagnostics("code").supersedeCount +
+      app.database.getSemanticClaimDiagnostics("memory").supersedeCount,
   });
   const invariantBefore = stateSnapshot();
+  for (let index = 0; index < 20; index += 1) await searchOperation();
+  const invariantAfter = stateSnapshot();
+  if (JSON.stringify(invariantAfter) !== JSON.stringify(invariantBefore)) {
+    throw new Error(`Configured-unavailable control state changed: ${JSON.stringify({ invariantBefore, invariantAfter })}`);
+  }
   const searchDurations: number[] = [];
   const contextDurations: number[] = [];
   for (let index = 0; index < SAMPLES; index += 1) {
@@ -161,12 +238,6 @@ try {
     const started = performance.now();
     await contextOperation();
     contextDurations.push(performance.now() - started);
-  }
-  // The contract calls for 20 identical searches; the 50 measured samples are
-  // a stronger superset and all control counters must still be unchanged.
-  const invariantAfter = stateSnapshot();
-  if (JSON.stringify(invariantAfter) !== JSON.stringify(invariantBefore)) {
-    throw new Error(`Configured-unavailable control state changed: ${JSON.stringify({ invariantBefore, invariantAfter })}`);
   }
   const status = await app.workspaceStatus() as Envelope<{
     counts: { files: number; nodes: number; edges: number; memories: number };
@@ -185,6 +256,7 @@ try {
     warmups: WARMUPS,
     samples: SAMPLES,
     p95Method: "sort-ascending-index-floor(n*0.95)",
+    corruptedApprovedFile: corruptionTarget.path,
     searchCodeP95Ms: round(searchCodeP95Ms),
     getContextP95Ms: round(getContextP95Ms),
     invariantBefore,

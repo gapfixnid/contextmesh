@@ -15,7 +15,7 @@ npm run check
 npm run benchmark
 npm run benchmark:semantic
 npm run benchmark:hydration
-npm run benchmark:unavailable
+npm run benchmark:unavailable -- --model-path C:/models/multilingual-e5-small
 npm run verify:package
 ```
 
@@ -95,7 +95,7 @@ Fast freshness compares the configured path set, size, and modification time, th
 - Symbol traversal depth and result counts are bounded.
 - Memory is returned as untrusted contextual data, never promoted to system instructions.
 - Add project-specific exclusions to `.contextmeshignore` using `.gitignore` syntax.
-- Run only one `index_workspace` writer process for a workspace. Multiple reader processes and generation-change detection are supported; cross-process concurrent index writers are not.
+- Run only one `index_workspace` writer process for a workspace. Multiple reader processes and generation-change detection are supported; cross-process concurrent index writers are not. Index-time code embedding additionally acquires a DB lease fenced to the pending target generation before inference.
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 

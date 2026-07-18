@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -46,7 +46,11 @@ const forbidden = [
 ];
 
 try {
-  execFileSync("git", ["archive", "--format=zip", `--output=${archive}`, "HEAD"], { cwd: project });
+  execFileSync(
+    "git",
+    ["archive", "--format=zip", `--add-virtual-file=SOURCE_COMMIT:${sourceCommit}`, `--output=${archive}`, "HEAD"],
+    { cwd: project },
+  );
   if (process.platform === "win32") {
     mkdirSync(extracted, { recursive: true });
     execFileSync("tar.exe", ["-xf", archive, "-C", extracted], { stdio: "inherit" });
@@ -54,6 +58,9 @@ try {
     execFileSync("unzip", ["-q", archive, "-d", extracted], { stdio: "inherit" });
   }
   const files = walk(extracted);
+  if (readFileSync(path.join(extracted, "SOURCE_COMMIT"), "utf8") !== sourceCommit) {
+    throw new Error("Source ZIP commit provenance does not match HEAD");
+  }
   const leaked = files.filter((file) => forbidden.some((pattern) => pattern.test(file)));
   if (leaked.length > 0) throw new Error(`Source ZIP contains forbidden files: ${leaked.join(", ")}`);
   execFileSync(process.execPath, [npmCli, "ci"], { cwd: extracted, stdio: "inherit" });

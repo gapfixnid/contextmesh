@@ -46,6 +46,95 @@ async function configuredApp(): Promise<{ app: ContextMeshApp; root: string }> {
 }
 
 describe("semantic reconciliation DB claims", () => {
+  it("fences a future-generation code index claim when the base graph advances", async () => {
+    const { app } = await configuredApp();
+    const state = app.database.getSemanticState("code")!;
+    const currentGeneration = app.database.getWorkspace().currentGeneration;
+    const claimed = app.database.claimCodeIndexEmbedding(
+      {
+        expectedCurrentGeneration: currentGeneration,
+        targetGeneration: currentGeneration + 1,
+        modelKey: state.modelKey!,
+        eligibleEntityCount: state.eligibleEntityCount,
+        documentSetDigest: "future-generation-document-set",
+        materialFingerprint: "future-generation-material",
+      },
+      owner("future-index-owner"),
+    );
+    expect(claimed.reason).toBe("acquired");
+    expect(claimed.claim?.baseGraphGeneration).toBe(currentGeneration);
+    expect(claimed.claim?.targetGraphGeneration).toBe(currentGeneration + 1);
+
+    const raw = new DatabaseSync(app.database.dbPath);
+    raw.prepare("UPDATE workspaces SET current_generation = current_generation + 1").run();
+    raw.prepare(
+      `UPDATE workspace_semantic_state
+       SET graph_generation = graph_generation + 1, semantic_revision = semantic_revision + 1
+       WHERE plane = 'code'`,
+    ).run();
+    raw.close();
+    expect(app.database.heartbeatCodeIndexEmbedding(claimed.claim!)).toBe(false);
+    await app.close();
+  });
+
+  it("renews a live same-owner code index lease but counts its expired reacquisition as a takeover", async () => {
+    const { app } = await configuredApp();
+    const state = app.database.getSemanticState("code")!;
+    const currentGeneration = app.database.getWorkspace().currentGeneration;
+    const input = {
+      expectedCurrentGeneration: currentGeneration,
+      targetGeneration: currentGeneration + 1,
+      modelKey: state.modelKey!,
+      eligibleEntityCount: state.eligibleEntityCount,
+      documentSetDigest: "same-owner-index-document-set",
+      materialFingerprint: "same-owner-index-material",
+    };
+    const leaseOwner = owner("same-index-owner");
+    expect(app.database.claimCodeIndexEmbedding(input, leaseOwner).reason).toBe("acquired");
+    expect(app.database.claimCodeIndexEmbedding(input, leaseOwner).reason).toBe("acquired");
+    expect(app.database.getSemanticClaimDiagnostics("code")).toMatchObject({
+      claimCount: 1,
+      takeoverCount: 0,
+    });
+
+    const raw = new DatabaseSync(app.database.dbPath);
+    raw.prepare(
+      "UPDATE semantic_reconciliation_claims SET lease_expiry_epoch = unixepoch('now') - 1 WHERE plane = 'code'",
+    ).run();
+    raw.close();
+
+    expect(app.database.claimCodeIndexEmbedding(input, leaseOwner).reason).toBe("acquired");
+    expect(app.database.getSemanticClaimDiagnostics("code")).toMatchObject({
+      claimCount: 1,
+      takeoverCount: 1,
+    });
+    await app.close();
+  });
+
+  it("renews a live same-owner reconciliation lease but counts its expired reacquisition as a takeover", async () => {
+    const { app } = await configuredApp();
+    const leaseOwner = owner("same-reconciliation-owner");
+    expect(app.database.claimSemanticReconciliation("code", leaseOwner).reason).toBe("acquired");
+    expect(app.database.claimSemanticReconciliation("code", leaseOwner).reason).toBe("acquired");
+    expect(app.database.getSemanticClaimDiagnostics("code")).toMatchObject({
+      claimCount: 1,
+      takeoverCount: 0,
+    });
+
+    const raw = new DatabaseSync(app.database.dbPath);
+    raw.prepare(
+      "UPDATE semantic_reconciliation_claims SET lease_expiry_epoch = unixepoch('now') - 1 WHERE plane = 'code'",
+    ).run();
+    raw.close();
+
+    expect(app.database.claimSemanticReconciliation("code", leaseOwner).reason).toBe("acquired");
+    expect(app.database.getSemanticClaimDiagnostics("code")).toMatchObject({
+      claimCount: 1,
+      takeoverCount: 1,
+    });
+    await app.close();
+  });
+
   it("blocks a completed attempt token and counts expiry takeover separately", async () => {
     const { app } = await configuredApp();
     const first = app.database.claimSemanticReconciliation("code", owner("owner-a"));

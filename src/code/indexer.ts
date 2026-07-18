@@ -492,13 +492,32 @@ export class CodeIndexer {
             deletedFiles,
             failedFiles: graph.files.filter((file) => file.parseStatus !== "ok").length,
           };
-          const semanticCommit = this.semantic ? await this.semantic.prepareCodeCommit(graph) : undefined;
+          const preparedSemantic = this.semantic
+            ? await this.semantic.prepareCodeCommit(graph, handle.generation)
+            : undefined;
+          const semanticCommit = preparedSemantic?.commit;
           if (semanticCommit?.lastError) {
             graph.diagnostics.push(
               `${semanticCommit.unavailable ? "SEMANTIC_UNAVAILABLE" : "SEMANTIC_PARTIAL"}: ${semanticCommit.lastError}`,
             );
           }
-          this.database.commitGraph(handle, graph, stats, compiler.configHash, semanticCommit);
+          try {
+            this.database.commitGraph(
+              handle,
+              graph,
+              stats,
+              compiler.configHash,
+              semanticCommit,
+              preparedSemantic?.claim,
+            );
+          } catch (error) {
+            if (preparedSemantic?.claim) {
+              this.database.abandonCodeIndexClaim(preparedSemantic.claim, "index_failed");
+            }
+            throw error;
+          } finally {
+            preparedSemantic?.stopHeartbeat();
+          }
           result = {
             generation: handle.generation,
             mode,

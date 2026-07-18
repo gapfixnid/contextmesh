@@ -3,13 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 18 * * *"
   workflow_dispatch:
-    inputs:
-      verify_source_zip:
-        description: Re-run acceptance and offline smoke from a clean source ZIP
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -37,6 +33,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run verify:package
+        if: matrix.os == 'ubuntu-latest'
+      - run: npm run audit:production
         if: matrix.os == 'ubuntu-latest'
 
   actual-model-smoke:
@@ -138,13 +136,17 @@ jobs:
           node-version: 24.18.0
           cache: npm
       - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/contextmesh-approved-model
+          key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
+      - run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
       - run: npm run benchmark
-      - run: npm run benchmark:unavailable
+      - run: npm run benchmark:unavailable -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
 
   fixed-windows-performance:
-    if: vars.CONTEXTMESH_PERF_RUNNER_ENABLED == 'true'
     needs: actual-model-smoke
-    runs-on: [self-hosted, Windows, X64, contextmesh-performance]
+    runs-on: [self-hosted, Windows, X64, contextmesh-perf-v1]
     concurrency:
       group: contextmesh-fixed-windows-performance
       cancel-in-progress: false
@@ -164,29 +166,37 @@ jobs:
       - id: runner
         run: npx tsx scripts/assert-performance-runner.ts
       - uses: actions/cache@v4
-        if: steps.runner.outputs.eligible == 'true'
         with:
           path: ${{ runner.temp }}/contextmesh-approved-model
           key: semantic-model-${{ env.MODEL_REVISION }}-${{ env.MODEL_MANIFEST_DIGEST }}-${{ runner.os }}-${{ runner.arch }}-transformers-${{ env.TRANSFORMERS_VERSION }}-ort-${{ env.ORT_VERSION }}
-      - if: steps.runner.outputs.eligible == 'true'
-        run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
-      - if: steps.runner.outputs.eligible == 'true'
-        run: npm run benchmark
-      - if: steps.runner.outputs.eligible == 'true'
-        run: npm run benchmark:unavailable
-      - if: steps.runner.outputs.eligible == 'true'
-        run: npm run benchmark:hydration
-      - if: steps.runner.outputs.eligible == 'true'
-        run: npm run benchmark:semantic -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
+      - run: npm run fetch:semantic-smoke-model -- --output "${{ runner.temp }}/contextmesh-approved-model"
+      - run: npm run benchmark
+      - run: npm run benchmark:unavailable -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
+      - run: npm run benchmark:hydration
+      - run: npm run benchmark:semantic -- --model-path "${{ runner.temp }}/contextmesh-approved-model"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: fixed-windows-performance-${{ github.sha }}
           path: performance-runner.json
 
+  phase4-release-gate:
+    if: always()
+    needs: [hosted-quality, actual-model-smoke, ubuntu-windows-parity, fixed-windows-performance, clean-source-zip-release-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every blocking Phase 4 job
+        if: >-
+          needs.hosted-quality.result != 'success' ||
+          needs.actual-model-smoke.result != 'success' ||
+          needs.ubuntu-windows-parity.result != 'success' ||
+          needs.fixed-windows-performance.result != 'success' ||
+          needs.clean-source-zip-release-gate.result != 'success'
+        run: exit 1
+      - run: echo "Phase 4 release gates passed"
+
   clean-source-zip-release-gate:
-    if: github.event_name == 'workflow_dispatch' && inputs.verify_source_zip
-    needs: [ubuntu-windows-parity, actual-model-smoke]
+    needs: [hosted-quality, actual-model-smoke, ubuntu-windows-parity, fixed-windows-performance]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+
 export interface DisposablePipeline {
   dispose(): Promise<void>;
 }
@@ -41,7 +43,7 @@ export class PipelineLifecycle<T extends DisposablePipeline> {
   constructor(
     private readonly factory: () => Promise<T>,
     private readonly cooldownMs = 5_000,
-    private readonly now: () => number = Date.now,
+    private readonly now: () => number = () => performance.now(),
   ) {}
 
   peek(): T | null {

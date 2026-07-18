@@ -59,3 +59,6 @@ if (process.env.GITHUB_OUTPUT) {
   appendFileSync(process.env.GITHUB_OUTPUT, `eligible=${matches ? "true" : "false"}\n`, "utf8");
 }
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+if (!matches) {
+  throw new Error("RUNNER_CONFIGURATION_FAILURE: fixed performance runner does not match its manifest");
+}

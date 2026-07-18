@@ -61,6 +61,56 @@ afterEach(() => {
 });
 
 describe("token envelope and memory selection hardening", () => {
+  it("keeps a fitting direct symbol when an oversized cross-plane representative is omitted", async () => {
+    const root = temporaryWorkspace();
+    writeWorkspaceFile(
+      root,
+      "src/pinned.ts",
+      `export function pinnedGateway(value: number): number {\n  ${"// retain direct context padding\n  ".repeat(90)}return value;\n}\n`,
+    );
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const direct = app.database.searchCode("pinnedGateway", ["function"], 1)[0];
+      expect(direct).toBeDefined();
+      await app.remember({
+        content: `oversized-cross-plane ${"memory-padding ".repeat(260)}`,
+        topic: "oversized cross-plane representative",
+        type: "fact",
+        keywords: ["oversized-cross-plane"],
+        importance: 3,
+        sourceSymbolIds: [],
+      });
+
+      const codeOnly = await app.getContext({
+        query: "oversized-cross-plane",
+        symbolId: direct!.id,
+        include: ["code"],
+        tokenBudget: 2_000,
+      }) as Envelope<{ code: CodeSearchResult[]; memories: MemoryView[] }>;
+      expect(codeOnly.data.code.some((node) => node.id === direct!.id)).toBe(true);
+
+      const crossPlane = await app.getContext({
+        query: "oversized-cross-plane",
+        symbolId: direct!.id,
+        include: ["code", "memory"],
+        tokenBudget: 2_000,
+      }) as Envelope<{ code: CodeSearchResult[]; memories: MemoryView[] }>;
+      expect(crossPlane.data.code.some((node) => node.id === direct!.id)).toBe(true);
+      expect(crossPlane.data.memories).toHaveLength(0);
+      expect(crossPlane.truncated).toBe(true);
+      expect(app.contextPackingDiagnostics()).toMatchObject({
+        softReservationEvaluations: expect.any(Number),
+        softReservationBudgetRejections: expect.any(Number),
+      });
+      expect(app.contextPackingDiagnostics().softReservationEvaluations).toBeGreaterThan(0);
+      expect(app.contextPackingDiagnostics().softReservationBudgetRejections).toBeGreaterThan(0);
+      expectBudget(crossPlane, 2_000);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("packs final envelopes after provenance and truncates queries and code links within budget", async () => {
     const root = createFixtureWorkspace();
     cleanupPaths.push(root);

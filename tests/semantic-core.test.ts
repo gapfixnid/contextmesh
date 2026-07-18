@@ -6,10 +6,13 @@ import {
   rankScore,
   rankingRedundancy,
   textRedundancy,
+  type RankingDiagnostics,
 } from "../src/semantic/ranking.js";
 import { PipelineCooldownError, PipelineLifecycle } from "../src/semantic/pipeline-lifecycle.js";
+import { buildCodeRedundancyText, buildMemoryRedundancyText } from "../src/semantic/redundancy.js";
+import { semanticDocumentSetDigest } from "../src/semantic/documents.js";
 import { MAX_EXACT_SCAN_ENTITIES, SemanticService } from "../src/semantic/service.js";
-import { decodeVector, encodeVector } from "../src/semantic/vector-codec.js";
+import { decodeVector, decodeVectorInto, encodeVector } from "../src/semantic/vector-codec.js";
 import type { ContextMeshStorage, SemanticStateRecord } from "../src/storage/database.js";
 
 describe("semantic vector codec", () => {
@@ -24,6 +27,32 @@ describe("semantic vector codec", () => {
   it("rejects corrupt and non-normalized vectors", () => {
     expect(() => decodeVector(new Uint8Array(3), 2)).toThrow(/byte length mismatch/);
     expect(() => encodeVector(new Float32Array([1, 1]), 2)).toThrow(/not L2-normalized/);
+  });
+
+  it("bulk-decodes into an offset range without changing adjacent values", () => {
+    const value = Math.fround(1 / Math.sqrt(2));
+    const bytes = encodeVector(new Float32Array([value, value]), 2);
+    const target = new Float32Array([7, 0, 0, 9]);
+    decodeVectorInto(bytes, 2, target, 1);
+    expect([...target]).toEqual([7, value, value, 9]);
+
+    const corrupt = bytes.slice();
+    new DataView(corrupt.buffer, corrupt.byteOffset, corrupt.byteLength).setFloat32(0, Number.NaN, true);
+    expect(() => decodeVectorInto(corrupt, 2, target, 1)).toThrow(/non-finite/);
+  });
+});
+
+describe("semantic document controls", () => {
+  it("digests sorted entity and source-hash pairs independently of extraction order", () => {
+    const left = [
+      { entityId: "b", sourceHash: "02" },
+      { entityId: "a", sourceHash: "01" },
+    ];
+    const right = [...left].reverse();
+    expect(semanticDocumentSetDigest(left)).toBe(semanticDocumentSetDigest(right));
+    expect(semanticDocumentSetDigest([{ entityId: "a", sourceHash: "03" }])).not.toBe(
+      semanticDocumentSetDigest([{ entityId: "a", sourceHash: "01" }]),
+    );
   });
 });
 
@@ -58,6 +87,31 @@ describe("hybrid ranking", () => {
     expect(textRedundancy("alpha beta", "alpha gamma", false)).toBeCloseTo(1 / 3);
   });
 
+  it("normalizes plane RRF independently before unified MMR", () => {
+    const diagnostics: RankingDiagnostics = {
+      inputByNormalizationGroup: {},
+      uniqueCandidates: 0,
+      nearDuplicatePairs: 0,
+      hardDeduplicatedCandidates: 0,
+      selectedCandidates: 0,
+    };
+    const ranked = fuseAndDiversify([
+      {
+        weight: 1,
+        normalizationGroup: "code",
+        items: [{ id: "code", value: "code", text: "code result" }],
+      },
+      {
+        weight: 1,
+        normalizationGroup: "memory",
+        items: [{ id: "memory", value: "memory", text: "memory result" }],
+      },
+    ], [], [], diagnostics);
+    expect(ranked.map((candidate) => candidate.relevance)).toEqual([1, 1]);
+    expect(diagnostics.inputByNormalizationGroup).toEqual({ code: 1, memory: 1 });
+    expect(diagnostics).toMatchObject({ uniqueCandidates: 2, selectedCandidates: 2 });
+  });
+
   it("uses cosine only for same-model vectors and lets pinned text remove a later vectorless duplicate", () => {
     const left = { id: "left", value: null, text: "alpha beta", vector: new Float32Array([1, 0]), vectorModelKey: "a" };
     const right = { id: "right", value: null, text: "alpha gamma", vector: new Float32Array([1, 0]), vectorModelKey: "b" };
@@ -73,6 +127,29 @@ describe("hybrid ranking", () => {
   it("uses a 1e-5 internal ordering bucket while preserving 1e-6 public score precision", () => {
     expect(rankScore(0.500001)).toBe(rankScore(0.500004));
     expect(rankScore(0.500006)).toBeGreaterThan(rankScore(0.500004));
+  });
+
+  it("uses only the contracted code and memory fields for redundancy text", () => {
+    const code = {
+      name: "retryGateway",
+      qualifiedName: "Gateway.retryGateway",
+      signature: "retryGateway(): void",
+      doc: "Retries transient failures.",
+    };
+    const memory = {
+      topic: "gateway retry",
+      keywords: ["transient", "retry"],
+      content: "Retry the gateway after transient failures.",
+    };
+    expect(buildCodeRedundancyText(code)).toBe(
+      "retryGateway\nGateway.retryGateway\nretryGateway(): void\nRetries transient failures.",
+    );
+    expect(buildMemoryRedundancyText(memory)).toBe(
+      "gateway retry\nretry transient\nRetry the gateway after transient failures.",
+    );
+    expect(buildMemoryRedundancyText({ ...memory, keywords: ["retry", "transient"] })).toBe(
+      buildMemoryRedundancyText(memory),
+    );
   });
 });
 

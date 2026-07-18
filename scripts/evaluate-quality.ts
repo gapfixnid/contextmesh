@@ -100,6 +100,60 @@ interface BaselineEvaluation {
   };
 }
 
+function searchRankingSignature(
+  result: Envelope<{ results: CodeSearchResult[]; nextOffset?: number | null }>,
+): string {
+  return JSON.stringify({
+    results: result.data.results.map((node) => ({ id: node.localKey, score: node.score })),
+    nextOffset: result.data.nextOffset ?? null,
+    truncated: result.truncated,
+    warnings: result.warnings,
+  });
+}
+
+function memoryRankingSignature(
+  result: Envelope<{ fragments: MemoryFragmentRecord[]; nextOffset?: number | null }>,
+  memoryIdToKey: ReadonlyMap<string, string>,
+): string {
+  return JSON.stringify({
+    fragments: result.data.fragments.map((memory) => ({
+      id: memoryIdToKey.get(memory.id) ?? memory.id,
+      anchor: memory.isAnchor,
+      score: "score" in memory ? memory.score : null,
+    })),
+    nextOffset: result.data.nextOffset ?? null,
+    truncated: result.truncated,
+    warnings: result.warnings,
+  });
+}
+
+function contextRankingSignature(
+  result: Envelope<{
+    code: ContextCodeItem[];
+    memories: ContextMemoryItem[];
+    relationships?: Array<{ sourceId: string; targetId: string; kind: string; depth: number }>;
+  }>,
+  memoryIdToKey: ReadonlyMap<string, string>,
+): string {
+  return JSON.stringify({
+    code: result.data.code.map((node) => ({ id: node.localKey, score: node.score, source: node.source })),
+    memories: result.data.memories.map((memory) => ({
+      id: memoryIdToKey.get(memory.id) ?? memory.id,
+      source: memory.source,
+      anchor: memory.isAnchor,
+      score: "score" in memory ? memory.score : null,
+    })),
+    relationships: (result.data.relationships ?? []).map((edge) => ({
+      sourceId: edge.sourceId,
+      targetId: edge.targetId,
+      kind: edge.kind,
+      depth: edge.depth,
+    })),
+    truncated: result.truncated,
+    warnings: result.warnings,
+  });
+}
+
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
 const FIXTURE_DIRECTORY = path.join(PROJECT_ROOT, "evaluation", "fixtures");
@@ -350,14 +404,16 @@ try {
   for (const query of fixture.queries.code) {
     const result = await app.searchCode({ query: query.query, limit: query.k }) as Envelope<{
       results: CodeSearchResult[];
+      nextOffset: number | null;
     }>;
-    const signature = JSON.stringify(result.data.results.map((node) => [node.localKey, node.score]));
+    const signature = searchRankingSignature(result);
     let deterministic = true;
     for (let run = 1; run < 20; run += 1) {
       const repeated = await app.searchCode({ query: query.query, limit: query.k }) as Envelope<{
         results: CodeSearchResult[];
+        nextOffset: number | null;
       }>;
-      if (JSON.stringify(repeated.data.results.map((node) => [node.localKey, node.score])) !== signature) {
+      if (searchRankingSignature(repeated) !== signature) {
         deterministic = false;
       }
     }
@@ -378,8 +434,8 @@ try {
       includeAnchors: query.includeAnchors ?? false,
       limit: query.k,
       tokenBudget: 4000,
-    }) as Envelope<{ fragments: MemoryFragmentRecord[] }>;
-    const signature = JSON.stringify(result.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id));
+    }) as Envelope<{ fragments: MemoryFragmentRecord[]; nextOffset: number | null }>;
+    const signature = memoryRankingSignature(result, memoryIdToKey);
     let deterministic = true;
     for (let run = 1; run < 20; run += 1) {
       const repeated = await app.recall({
@@ -387,11 +443,8 @@ try {
         includeAnchors: query.includeAnchors ?? false,
         limit: query.k,
         tokenBudget: 4000,
-      }) as Envelope<{ fragments: MemoryFragmentRecord[] }>;
-      if (
-        JSON.stringify(repeated.data.fragments.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id)) !==
-        signature
-      ) {
+      }) as Envelope<{ fragments: MemoryFragmentRecord[]; nextOffset: number | null }>;
+      if (memoryRankingSignature(repeated, memoryIdToKey) !== signature) {
         deterministic = false;
       }
     }
@@ -410,7 +463,11 @@ try {
       query: query.query,
       tokenBudget: query.tokenBudget,
       include: ["code", "memory"],
-    }) as Envelope<{ code: ContextCodeItem[]; memories: ContextMemoryItem[] }>;
+    }) as Envelope<{
+      code: ContextCodeItem[];
+      memories: ContextMemoryItem[];
+      relationships: Array<{ sourceId: string; targetId: string; kind: string; depth: number }>;
+    }>;
     const returned = new Set([
       ...result.data.code.map((node) => node.localKey),
       ...result.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
@@ -431,21 +488,19 @@ try {
       ...result.data.code.map((node) => node.snippet ?? `${node.signature} ${node.doc}`),
       ...result.data.memories.map((memory) => memory.content),
     ];
-    const signature = JSON.stringify({
-      code: result.data.code.map((node) => [node.localKey, node.score]),
-      memories: result.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
-    });
+    const signature = contextRankingSignature(result, memoryIdToKey);
     let deterministic = true;
     for (let run = 1; run < 20; run += 1) {
       const repeated = await app.getContext({
         query: query.query,
         tokenBudget: query.tokenBudget,
         include: ["code", "memory"],
-      }) as Envelope<{ code: ContextCodeItem[]; memories: ContextMemoryItem[] }>;
-      const repeatedSignature = JSON.stringify({
-        code: repeated.data.code.map((node) => [node.localKey, node.score]),
-        memories: repeated.data.memories.map((memory) => memoryIdToKey.get(memory.id) ?? memory.id),
-      });
+      }) as Envelope<{
+        code: ContextCodeItem[];
+        memories: ContextMemoryItem[];
+        relationships: Array<{ sourceId: string; targetId: string; kind: string; depth: number }>;
+      }>;
+      const repeatedSignature = contextRankingSignature(repeated, memoryIdToKey);
       if (repeatedSignature !== signature) deterministic = false;
     }
     contextMetrics.push({
@@ -555,6 +610,10 @@ try {
     withGateGroups(metrics).filter(
       (metric) => metric.gateGroup === "semantic_challenge_en" || metric.gateGroup === "semantic_challenge_ko_en",
     );
+  const nonChallengeMetrics = (metrics: RankedMetric[]): RankedMetric[] =>
+    withGateGroups(metrics).filter(
+      (metric) => metric.gateGroup !== "semantic_challenge_en" && metric.gateGroup !== "semantic_challenge_ko_en",
+    );
   const baselineCode = withGateGroups(lexicalBaseline?.evaluation.code.queries ?? []);
   const baselineMemory = withGateGroups(lexicalBaseline?.evaluation.memory?.queries ?? []);
   const currentExact = metricsForGateGroup(codeMetrics, "exact");
@@ -563,6 +622,24 @@ try {
   const currentMemoryChallenges = challengeMetrics(memoryMetrics);
   const baselineCodeChallenges = challengeMetrics(baselineCode);
   const baselineMemoryChallenges = challengeMetrics(baselineMemory);
+  const currentCodeControls = nonChallengeMetrics(codeMetrics);
+  const currentMemoryControls = nonChallengeMetrics(memoryMetrics);
+  const baselineCodeControls = nonChallengeMetrics(baselineCode);
+  const baselineMemoryControls = nonChallengeMetrics(baselineMemory);
+  const noRegression = (
+    current: RankedMetric[],
+    baseline: RankedMetric[],
+    field: "recall" | "reciprocalRank" | "ndcg",
+  ) => {
+    const actual = average(current.map((metric) => metric[field]));
+    const reference = average(baseline.map((metric) => metric[field]));
+    return {
+      actual,
+      baseline: reference,
+      minimum: reference,
+      passed: current.length > 0 && baseline.length > 0 && actual >= reference,
+    };
+  };
   const rankedGate = (current: RankedMetric[], baseline: RankedMetric[]) => {
     const baselineRecall = average(baseline.map((metric) => metric.recall));
     const actualRecall = average(current.map((metric) => metric.recall));
@@ -619,6 +696,36 @@ try {
             average(currentExact.map((metric) => metric.reciprocalRank)) >=
             average(baselineExact.map((metric) => metric.reciprocalRank)),
         },
+        codeNonChallengeRecallNoRegression: noRegression(
+          currentCodeControls,
+          baselineCodeControls,
+          "recall",
+        ),
+        codeNonChallengeMrrNoRegression: noRegression(
+          currentCodeControls,
+          baselineCodeControls,
+          "reciprocalRank",
+        ),
+        codeNonChallengeNdcgNoRegression: noRegression(
+          currentCodeControls,
+          baselineCodeControls,
+          "ndcg",
+        ),
+        memoryNonChallengeRecallNoRegression: noRegression(
+          currentMemoryControls,
+          baselineMemoryControls,
+          "recall",
+        ),
+        memoryNonChallengeMrrNoRegression: noRegression(
+          currentMemoryControls,
+          baselineMemoryControls,
+          "reciprocalRank",
+        ),
+        memoryNonChallengeNdcgNoRegression: noRegression(
+          currentMemoryControls,
+          baselineMemoryControls,
+          "ndcg",
+        ),
         codeSemanticChallengeRecallAt10: codeChallengeGate.recall,
         codeSemanticChallengeNdcgAt10: codeChallengeGate.ndcg,
         memorySemanticChallengeRecallAt10: memoryChallengeGate.recall,
@@ -659,7 +766,7 @@ try {
   );
   const result = {
     schemaVersion: fixture.version === 2 ? 2 : 1,
-    evaluatorVersion: fixture.version === 2 ? "acceptance-v2@2" : "acceptance-v1@1",
+    evaluatorVersion: fixture.version === 2 ? "acceptance-v2@3" : "acceptance-v1@1",
     fixture: {
       name: fixture.name,
       version: fixture.version,

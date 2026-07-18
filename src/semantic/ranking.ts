@@ -17,6 +17,7 @@ export interface RankingItem<T> {
 export interface RankingSource<T> {
   weight: number;
   items: RankingItem<T>[];
+  normalizationGroup?: string;
 }
 
 export interface FusedRankingItem<T> extends RankingItem<T> {
@@ -24,6 +25,14 @@ export interface FusedRankingItem<T> extends RankingItem<T> {
   mmrScore: number;
   rankScore: number;
   sourceRanks: number[];
+}
+
+export interface RankingDiagnostics {
+  inputByNormalizationGroup: Record<string, number>;
+  uniqueCandidates: number;
+  nearDuplicatePairs: number;
+  hardDeduplicatedCandidates: number;
+  selectedCandidates: number;
 }
 
 export function quantizeScore(value: number): number {
@@ -124,15 +133,32 @@ export function fuseAndDiversify<T>(
   sources: RankingSource<T>[],
   pinnedIds: readonly string[] = [],
   pinnedItems: readonly RankingItem<T>[] = [],
+  diagnostics?: RankingDiagnostics,
 ): FusedRankingItem<T>[] {
   const candidates = new Map<
     string,
-    { item: RankingItem<T>; contribution: number; sourceRanks: number[] }
+    { item: RankingItem<T>; contribution: number; sourceRanks: number[]; normalizationGroup: string }
   >();
-  const maximumContribution = sources.reduce((sum, source) => sum + source.weight / (RRF_K + 1), 0);
+  const maximumContribution = new Map<string, number>();
+  for (const source of sources) {
+    const group = source.normalizationGroup ?? "default";
+    maximumContribution.set(
+      group,
+      (maximumContribution.get(group) ?? 0) + source.weight / (RRF_K + 1),
+    );
+  }
   sources.forEach((source, sourceIndex) => {
+    const normalizationGroup = source.normalizationGroup ?? "default";
     source.items.forEach((item, index) => {
-      const existing = candidates.get(item.id) ?? { item, contribution: 0, sourceRanks: [] };
+      const existing = candidates.get(item.id) ?? {
+        item,
+        contribution: 0,
+        sourceRanks: [],
+        normalizationGroup,
+      };
+      if (existing.normalizationGroup !== normalizationGroup) {
+        throw new Error(`Ranking item ${item.id} appears in multiple normalization groups`);
+      }
       existing.contribution += source.weight / (RRF_K + index + 1);
       existing.sourceRanks[sourceIndex] = index + 1;
       if (!existing.item.vector && item.vector) existing.item = item;
@@ -140,16 +166,32 @@ export function fuseAndDiversify<T>(
     });
   });
   for (const item of pinnedItems) {
-    if (!candidates.has(item.id)) candidates.set(item.id, { item, contribution: 0, sourceRanks: [] });
+    if (!candidates.has(item.id)) {
+      candidates.set(item.id, { item, contribution: 0, sourceRanks: [], normalizationGroup: "default" });
+    }
+  }
+  if (diagnostics) {
+    diagnostics.inputByNormalizationGroup = {};
+    for (const candidate of candidates.values()) {
+      diagnostics.inputByNormalizationGroup[candidate.normalizationGroup] =
+        (diagnostics.inputByNormalizationGroup[candidate.normalizationGroup] ?? 0) + 1;
+    }
+    diagnostics.uniqueCandidates = candidates.size;
+    diagnostics.nearDuplicatePairs = 0;
+    diagnostics.hardDeduplicatedCandidates = 0;
+    diagnostics.selectedCandidates = 0;
   }
 
-  const fused = [...candidates.values()].map(({ item, contribution, sourceRanks }) => ({
-    ...item,
-    relevance: quantizeScore(maximumContribution === 0 ? 0 : Math.min(1, contribution / maximumContribution)),
-    mmrScore: 0,
-    rankScore: 0,
-    sourceRanks,
-  }));
+  const fused = [...candidates.values()].map(({ item, contribution, sourceRanks, normalizationGroup }) => {
+    const maximum = maximumContribution.get(normalizationGroup) ?? 0;
+    return {
+      ...item,
+      relevance: quantizeScore(maximum === 0 ? 0 : Math.min(1, contribution / maximum)),
+      mmrScore: 0,
+      rankScore: 0,
+      sourceRanks,
+    };
+  });
   const byId = new Map(fused.map((candidate) => [candidate.id, candidate]));
   const selected: FusedRankingItem<T>[] = [];
   for (const id of pinnedIds) {
@@ -166,6 +208,27 @@ export function fuseAndDiversify<T>(
   const preparedText = new Map(
     fused.map((candidate) => [candidate.id, prepareRedundancyText(candidate.text)]),
   );
+  const nearDuplicatePairs = new Set<string>();
+  const recordRedundancy = (
+    left: FusedRankingItem<T>,
+    right: FusedRankingItem<T>,
+    redundancy: number,
+  ): number => {
+    if (redundancy >= 0.8) {
+      nearDuplicatePairs.add(left.id < right.id ? `${left.id}\0${right.id}` : `${right.id}\0${left.id}`);
+    }
+    return redundancy;
+  };
+  const textOnlyRedundancy = (left: FusedRankingItem<T>, right: FusedRankingItem<T>): number =>
+    recordRedundancy(
+      left,
+      right,
+      preparedTextRedundancy(
+        preparedText.get(left.id)!,
+        preparedText.get(right.id)!,
+        left.id === right.id,
+      ),
+    );
   const cachedRedundancy = (left: FusedRankingItem<T>, right: FusedRankingItem<T>): number => {
     if (
       left.vector &&
@@ -173,29 +236,23 @@ export function fuseAndDiversify<T>(
       left.vectorModelKey &&
       left.vectorModelKey === right.vectorModelKey
     ) {
-      return Math.max(0, Math.min(1, (dotProduct(left.vector, right.vector) + 1) / 2));
+      return recordRedundancy(
+        left,
+        right,
+        Math.max(0, Math.min(1, (dotProduct(left.vector, right.vector) + 1) / 2)),
+      );
     }
-    return preparedTextRedundancy(
-      preparedText.get(left.id)!,
-      preparedText.get(right.id)!,
-      left.id === right.id,
-    );
+    return textOnlyRedundancy(left, right);
   };
   const maximumRedundancy = new Map<string, number>();
   for (let index = remaining.length - 1; index >= 0; index -= 1) {
     const candidate = remaining[index]!;
     if (
       !candidate.vector &&
-      selected.some(
-        (previous) =>
-          preparedTextRedundancy(
-            preparedText.get(candidate.id)!,
-            preparedText.get(previous.id)!,
-            candidate.id === previous.id,
-          ) >= 0.8,
-      )
+      selected.some((previous) => textOnlyRedundancy(candidate, previous) >= 0.8)
     ) {
       remaining.splice(index, 1);
+      if (diagnostics) diagnostics.hardDeduplicatedCandidates += 1;
       continue;
     }
     maximumRedundancy.set(
@@ -224,14 +281,11 @@ export function fuseAndDiversify<T>(
       const candidate = remaining[index]!;
       if (
         !candidate.vector &&
-        preparedTextRedundancy(
-          preparedText.get(candidate.id)!,
-          preparedText.get(next.id)!,
-          candidate.id === next.id,
-        ) >= 0.8
+        textOnlyRedundancy(candidate, next) >= 0.8
       ) {
         remaining.splice(index, 1);
         maximumRedundancy.delete(candidate.id);
+        if (diagnostics) diagnostics.hardDeduplicatedCandidates += 1;
         continue;
       }
       maximumRedundancy.set(
@@ -239,6 +293,10 @@ export function fuseAndDiversify<T>(
         Math.max(maximumRedundancy.get(candidate.id) ?? 0, cachedRedundancy(candidate, next)),
       );
     }
+  }
+  if (diagnostics) {
+    diagnostics.nearDuplicatePairs = nearDuplicatePairs.size;
+    diagnostics.selectedCandidates = selected.length;
   }
   return selected;
 }
