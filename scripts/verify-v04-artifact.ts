@@ -79,7 +79,11 @@ interface Artifact {
 const artifactPath = path.resolve(process.argv[2] ?? "artifacts/v04-performance.json");
 const source = readFileSync(artifactPath, "utf8");
 const artifact = JSON.parse(source) as Artifact;
-requireCondition(source === `${stableStringify(artifact)}\n`, "file is not canonical stable JSON");
+const canonicalSource = stableStringify(artifact);
+requireCondition(
+  source === `${canonicalSource}\n` || source === `${canonicalSource}\r\n`,
+  "file is not canonical stable JSON",
+);
 requireCondition(artifact.schemaVersion === 2, "schemaVersion must be 2");
 requireCondition(artifact.git.baseline === "e37977199e231fc95b581e6254003941b8f447b2", "baseline mismatch");
 requireCondition(/^[0-9a-f]{40}$/.test(artifact.git.commit), "source commit must be a full SHA");
