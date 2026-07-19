@@ -52,6 +52,26 @@ type UnifiedContextValue =
   | { kind: "code"; value: CodeSearchResult }
   | { kind: "memory"; value: MemoryFragmentRecord };
 
+const SNIPPET_READ_CONCURRENCY = 8;
+
+async function mapConcurrent<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await operation(values[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
+  return results;
+}
+
 function planeSources<T extends UnifiedContextValue>(
   items: readonly RankingItem<T>[],
   weight: number,
@@ -303,13 +323,19 @@ export class ContextAssembler {
     const warnings = [...assembled.warnings];
     let generationChanged = false;
     const candidates: ContextCandidate[] = [];
+    const codeCandidates = assembled.candidates.filter((candidate) => candidate.kind === "code");
+    const snippets = await mapConcurrent(codeCandidates, SNIPPET_READ_CONCURRENCY, async (candidate) => {
+      const item = candidate.value as ContextCodeItem;
+      return this.indexer.readSnippet(item, item.source === "graph" ? 0 : 2);
+    });
+    let codeIndex = 0;
     for (const candidate of assembled.candidates) {
       if (candidate.kind !== "code") {
         candidates.push(candidate);
         continue;
       }
       const item = candidate.value as ContextCodeItem;
-      const snippet = await this.indexer.readSnippet(item, item.source === "graph" ? 0 : 2);
+      const snippet = snippets[codeIndex++]!;
       if (snippet.warning) warnings.push(snippet.warning);
       if (snippet.staleReason) {
         const recorded = await this.indexer.recordStaleIfCurrent(

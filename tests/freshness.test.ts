@@ -255,4 +255,53 @@ describe("Phase 3 freshness coordination", () => {
       app.close();
     }
   });
+
+  it("hydrates snippets with bounded concurrency while preserving candidate order", async () => {
+    const root = createFixtureWorkspace();
+    workspaces.push(root);
+    for (let index = 0; index < 12; index += 1) {
+      writeWorkspaceFile(root, `src/parallel-${index}.ts`, `export function parallel(): number { return ${index}; }\n`);
+    }
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const assembled = app.context.assembleDatabase({
+        query: "parallel",
+        include: ["code"],
+        tokenBudget: 8_000,
+      });
+      const expectedPaths = assembled.candidates
+        .filter((candidate) => candidate.kind === "code")
+        .map((candidate) => (candidate.value as CodeSearchResult).relativePath);
+      expect(expectedPaths.length).toBeGreaterThan(8);
+
+      let active = 0;
+      let maxActive = 0;
+      vi.spyOn(app.code.indexer, "readSnippet").mockImplementation(async (node) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        try {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          return { snippet: node.relativePath, warning: null, staleReason: null };
+        } finally {
+          active -= 1;
+        }
+      });
+      const state = app.database.getFreshnessState();
+      const hydrated = await app.context.hydrateSnippets(
+        assembled,
+        state.currentGeneration,
+        state.successFenceGeneration,
+      );
+      const hydratedPaths = hydrated.assembled.candidates
+        .filter((candidate) => candidate.kind === "code")
+        .map((candidate) => candidate.value as { snippet: string | null })
+        .map((candidate) => candidate.snippet);
+      expect(maxActive).toBeGreaterThan(1);
+      expect(maxActive).toBeLessThanOrEqual(8);
+      expect(hydratedPaths).toEqual(expectedPaths);
+    } finally {
+      app.close();
+    }
+  });
 });
