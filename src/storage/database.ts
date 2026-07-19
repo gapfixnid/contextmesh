@@ -82,6 +82,7 @@ export interface IndexedFileBaseline {
 
 export interface FreshnessState {
   currentGeneration: number;
+  precisionRevision: number;
   successFenceGeneration: number;
   failureFenceGeneration: number;
   freshnessStale: boolean;
@@ -942,26 +943,25 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   getFreshnessState(): FreshnessState {
     const workspace = this.db
       .prepare(
-        `SELECT current_generation, freshness_stale, freshness_stale_at,
-                freshness_reasons_json, last_strict_check_at
-         FROM workspaces WHERE id = ?`,
+        `SELECT workspace.current_generation, workspace.precision_revision,
+                workspace.freshness_stale, workspace.freshness_stale_at,
+                workspace.freshness_reasons_json, workspace.last_strict_check_at,
+                coalesce(max(CASE WHEN run.status IN ('succeeded', 'partial') THEN run.generation END), 0) AS success_generation,
+                coalesce(max(CASE WHEN run.status IN ('failed', 'running') THEN run.generation END), 0) AS failure_generation
+         FROM workspaces workspace
+         LEFT JOIN index_runs run ON run.workspace_id = workspace.id
+         WHERE workspace.id = ?
+         GROUP BY workspace.id`,
       )
       .get(this.workspace.id);
     if (!workspace) throw new ContextMeshError("INTERNAL_ERROR", "Workspace record is missing");
-    const fences = this.db
-      .prepare(
-        `SELECT
-           coalesce(max(CASE WHEN status IN ('succeeded', 'partial') THEN generation END), 0) AS success_generation,
-           coalesce(max(CASE WHEN status IN ('failed', 'running') THEN generation END), 0) AS failure_generation
-         FROM index_runs WHERE workspace_id = ?`,
-      )
-      .get(this.workspace.id);
     const currentGeneration = numberValue(workspace.current_generation);
-    const successFenceGeneration = numberValue(fences?.success_generation);
-    const failureFenceGeneration = numberValue(fences?.failure_generation);
+    const successFenceGeneration = numberValue(workspace.success_generation);
+    const failureFenceGeneration = numberValue(workspace.failure_generation);
     const freshnessStale = numberValue(workspace.freshness_stale) === 1;
     return {
       currentGeneration,
+      precisionRevision: numberValue(workspace.precision_revision),
       successFenceGeneration,
       failureFenceGeneration,
       freshnessStale,

@@ -939,7 +939,7 @@ export class CodeIndexer {
     const state = this.database.getFreshnessState();
     return {
       generation: state.currentGeneration,
-      precisionRevision: this.database.getPrecisionRevision(),
+      precisionRevision: state.precisionRevision,
       successFence: state.successFenceGeneration,
       stale: state.stale,
     };
@@ -957,7 +957,7 @@ export class CodeIndexer {
     const state = this.database.getFreshnessState();
     if (state.currentGeneration === 0) {
       this.runtime.baseline = null;
-      return { generation: 0, precisionRevision: this.database.getPrecisionRevision(), successFence: state.successFenceGeneration, stale: false };
+      return { generation: 0, precisionRevision: state.precisionRevision, successFence: state.successFenceGeneration, stale: false };
     }
     if (mode === "fast" && state.stale) return this.requestState(state);
 
@@ -976,7 +976,7 @@ export class CodeIndexer {
   private requestState(state: FreshnessState, forceStale = false): RequestGenerationState {
     return {
       generation: state.currentGeneration,
-      precisionRevision: this.database.getPrecisionRevision(),
+      precisionRevision: state.precisionRevision,
       successFence: state.successFenceGeneration,
       stale: state.stale || forceStale,
     };

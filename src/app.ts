@@ -175,7 +175,7 @@ export class ContextMeshApp {
       generation,
       ...(includeSnapshot ? { snapshot: {
         graphGeneration: generation,
-        precisionRevision: this.database.getPrecisionRevision(),
+        precisionRevision: freshness.precisionRevision,
         freshness: freshness.stale ? "stale" : "fresh",
       } as const } : {}),
     };
@@ -297,7 +297,7 @@ export class ContextMeshApp {
       const state = this.database.getFreshnessState();
       const snapshot: RequestGenerationState = {
         generation: state.currentGeneration,
-        precisionRevision: this.database.getPrecisionRevision(),
+        precisionRevision: state.precisionRevision,
         successFence: state.successFenceGeneration,
         stale: state.stale,
       };
@@ -391,7 +391,7 @@ export class ContextMeshApp {
       const initial = await this.code.freshnessState();
       const snapshotResult = await this.database.withReadSnapshot(() => {
         const state = this.database.getFreshnessState();
-        const snapshot: RequestGenerationState = { generation: state.currentGeneration, precisionRevision: this.database.getPrecisionRevision(), successFence: state.successFenceGeneration, stale: state.stale };
+        const snapshot: RequestGenerationState = { generation: state.currentGeneration, precisionRevision: state.precisionRevision, successFence: state.successFenceGeneration, stale: state.stale };
         const assembled = this.context.assembleDatabase({ query: parsed.query, ...(parsed.symbolId ? { symbolId: parsed.symbolId } : {}), tokenBudget: parsed.tokenBudget, include: ["code"] });
         const focused = parsed.symbolId ? this.code.trace({ symbolId: parsed.symbolId, direction: "both", depth: parsed.depth, limit: parsed.limit }) : null;
         return { snapshot, assembled, focused };
@@ -653,7 +653,7 @@ export class ContextMeshApp {
         const state = this.database.getFreshnessState();
         const snapshot: RequestGenerationState = {
           generation: state.currentGeneration,
-          precisionRevision: this.database.getPrecisionRevision(),
+          precisionRevision: state.precisionRevision,
           successFence: state.successFenceGeneration,
           stale: state.stale,
         };
