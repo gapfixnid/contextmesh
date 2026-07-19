@@ -36,10 +36,11 @@ import {
 import {
   hydrateScannedFile,
   scanWorkspaceMetadata,
-  scanWorkspaceMetadataAsync,
+  scanWorkspaceMetadataFast,
   type ScannedFile,
   type ScannedFileMetadata,
 } from "./scanner.js";
+import { MetadataStatPool } from "./metadata-stat-pool.js";
 import { PythonLanguageAdapter, PYTHON_PROVIDER_VERSIONS } from "./languages/python.js";
 import { CoreLanguageAdapter, CORE_LANGUAGE_IDS } from "./languages/core.js";
 import { TypeScriptLanguageAdapter, type TypeScriptCompilerConfiguration, type TypeScriptProjectRuntime } from "./languages/typescript.js";
@@ -382,6 +383,7 @@ function asTypeScriptSyntaxView(graph: ExtractedGraph): ExtractedGraph {
 }
 
 export class CodeIndexer {
+  private readonly metadataStats = new MetadataStatPool();
   private readonly database: ContextMeshStorage;
   private readonly rootPath: string;
   private readonly caseSensitivePaths: boolean;
@@ -459,6 +461,7 @@ export class CodeIndexer {
   dispose(): void {
     // A process-local baseline is cheap to rebuild and must never survive an app lifecycle as if it were durable.
     this.runtime.baseline = null;
+    this.metadataStats.dispose();
   }
 
   async checkFreshness(mode: FreshnessMode = this.freshnessMode): Promise<RequestGenerationState> {
@@ -1141,7 +1144,11 @@ export class CodeIndexer {
   }
 
   private async loadMetadataProjectAsync(): Promise<MetadataProjectScan> {
-    const scan = await scanWorkspaceMetadataAsync(this.rootPath, this.caseSensitivePaths);
+    const scan = await scanWorkspaceMetadataFast(
+      this.rootPath,
+      this.caseSensitivePaths,
+      this.metadataStats,
+    );
     return this.buildMetadataProject(scan);
   }
 

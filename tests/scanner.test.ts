@@ -4,9 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MetadataStatPool } from "../src/code/metadata-stat-pool.js";
 import {
   scanWorkspaceMetadata,
-  scanWorkspaceMetadataAsync,
+  scanWorkspaceMetadataFast,
 } from "../src/code/scanner.js";
 import { removeFixtureWorkspace, writeWorkspaceFile } from "./helpers.js";
 
@@ -31,7 +32,13 @@ describe("workspace metadata scanner", () => {
     writeWorkspaceFile(root, "README.md", "not a supported source file\n");
 
     const synchronous = scanWorkspaceMetadata(root, false, 32);
-    const asynchronous = await scanWorkspaceMetadataAsync(root, false, 32);
+    const pool = new MetadataStatPool();
+    let asynchronous: Awaited<ReturnType<typeof scanWorkspaceMetadataFast>>;
+    try {
+      asynchronous = await scanWorkspaceMetadataFast(root, false, pool, 32);
+    } finally {
+      pool.dispose();
+    }
 
     expect(asynchronous).toEqual(synchronous);
     expect(asynchronous.files.map((file) => file.relativePath)).toEqual([
@@ -41,5 +48,44 @@ describe("workspace metadata scanner", () => {
     expect(asynchronous.diagnostics).toEqual([
       "Skipped oversized file (64 bytes): src/oversized.ts",
     ]);
+  });
+
+  it("rejects malformed worker responses instead of trusting incomplete metadata", async () => {
+    const pool = new MetadataStatPool({
+      workers: 1,
+      workerSource: String.raw`
+        const { parentPort } = require("node:worker_threads");
+        parentPort.on("message", ({ requestId }) => {
+          parentPort.postMessage({ requestId, stats: [] });
+        });
+      `,
+    });
+    try {
+      await expect(pool.inspect(["missing.ts"])).rejects.toThrow("METADATA_STAT_PROTOCOL_INVALID");
+      const root = mkdtempSync(path.join(tmpdir(), "contextmesh-scanner-fallback-"));
+      cleanupPaths.push(root);
+      writeWorkspaceFile(root, "src/fallback.ts", "export const fallback = true;\n");
+      await expect(scanWorkspaceMetadataFast(root, true, pool)).resolves.toEqual(
+        scanWorkspaceMetadata(root, true),
+      );
+    } finally {
+      pool.dispose();
+    }
+  });
+
+  it("bounds an unresponsive metadata worker", async () => {
+    const pool = new MetadataStatPool({
+      workers: 1,
+      timeoutMs: 50,
+      workerSource: String.raw`
+        const { parentPort } = require("node:worker_threads");
+        parentPort.on("message", () => {});
+      `,
+    });
+    try {
+      await expect(pool.inspect(["missing.ts"])).rejects.toThrow("METADATA_STAT_TIMEOUT");
+    } finally {
+      pool.dispose();
+    }
   });
 });

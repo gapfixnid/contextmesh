@@ -7,13 +7,13 @@ import {
   readdirSync,
   realpathSync,
 } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import createIgnore, { type Ignore } from "ignore";
 
 import type { IndexedSourceFile } from "../contracts.js";
 import { isPathInside, normalizeRelativePath, sha256 } from "../utils.js";
+import type { MetadataStatPool } from "./metadata-stat-pool.js";
 
 export interface ScannedFileMetadata {
   absolutePath: string;
@@ -59,26 +59,6 @@ const SECRET_PATTERNS = [
   /\.(?:pem|key|p12|pfx|jks)$/i,
   /(^|\/)(?:credentials?|secrets?)(?:\.|\/|$)/i,
 ];
-
-const METADATA_STAT_CONCURRENCY = 16;
-
-async function mapConcurrent<T, R>(
-  values: readonly T[],
-  concurrency: number,
-  operation: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let nextIndex = 0;
-  const worker = async (): Promise<void> => {
-    while (nextIndex < values.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await operation(values[index]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
-  return results;
-}
 
 function languageForFile(fileName: string): ScannedFileMetadata["language"] | null {
   const lower = fileName.toLocaleLowerCase("en-US");
@@ -171,19 +151,20 @@ export function scanWorkspaceMetadata(
   return { files, diagnostics };
 }
 
-export async function scanWorkspaceMetadataAsync(
+export async function scanWorkspaceMetadataFast(
   rootPath: string,
   caseSensitivePaths: boolean,
+  statPool: MetadataStatPool,
   maximumFileBytes = 2 * 1024 * 1024,
 ): Promise<MetadataScanResult> {
   const rules = loadIgnoreRules(rootPath);
   const candidates: Array<Omit<ScannedFileMetadata, "sizeBytes" | "mtimeMs">> = [];
   const events: Array<{ diagnostic: string } | { candidateIndex: number }> = [];
 
-  const visitDirectory = async (directory: string): Promise<void> => {
+  const visitDirectory = (directory: string): void => {
     let entries;
     try {
-      entries = await readdir(directory, { withFileTypes: true });
+      entries = readdirSync(directory, { withFileTypes: true });
     } catch (error) {
       events.push({
         diagnostic: `Cannot read directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
@@ -201,7 +182,7 @@ export async function scanWorkspaceMetadataAsync(
         continue;
       }
       if (entry.isDirectory()) {
-        await visitDirectory(absolutePath);
+        visitDirectory(absolutePath);
         continue;
       }
       if (!entry.isFile() || SECRET_PATTERNS.some((pattern) => pattern.test(relativePath))) continue;
@@ -217,28 +198,13 @@ export async function scanWorkspaceMetadataAsync(
     }
   };
 
-  await visitDirectory(rootPath);
-  const inspected = await mapConcurrent(candidates, METADATA_STAT_CONCURRENCY, async (candidate) => {
-    try {
-      const linkStatus = await lstat(candidate.absolutePath);
-      if (!linkStatus.isFile()) return { file: null, diagnostic: null };
-      if (linkStatus.size > maximumFileBytes) {
-        return {
-          file: null,
-          diagnostic: `Skipped oversized file (${linkStatus.size} bytes): ${candidate.relativePath}`,
-        };
-      }
-      return {
-        file: { ...candidate, sizeBytes: linkStatus.size, mtimeMs: linkStatus.mtimeMs },
-        diagnostic: null,
-      };
-    } catch (error) {
-      return {
-        file: null,
-        diagnostic: `Cannot read file ${candidate.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  });
+  visitDirectory(rootPath);
+  let inspected;
+  try {
+    inspected = await statPool.inspect(candidates.map((candidate) => candidate.absolutePath));
+  } catch {
+    return scanWorkspaceMetadata(rootPath, caseSensitivePaths, maximumFileBytes);
+  }
   const files: ScannedFileMetadata[] = [];
   const diagnostics: string[] = [];
   for (const event of events) {
@@ -246,9 +212,15 @@ export async function scanWorkspaceMetadataAsync(
       diagnostics.push(event.diagnostic);
       continue;
     }
+    const candidate = candidates[event.candidateIndex]!;
     const result = inspected[event.candidateIndex]!;
-    if (result.file) files.push(result.file);
-    if (result.diagnostic) diagnostics.push(result.diagnostic);
+    if (result.error) {
+      diagnostics.push(`Cannot read file ${candidate.relativePath}: ${result.error}`);
+    } else if (result.isFile && result.sizeBytes > maximumFileBytes) {
+      diagnostics.push(`Skipped oversized file (${result.sizeBytes} bytes): ${candidate.relativePath}`);
+    } else if (result.isFile) {
+      files.push({ ...candidate, sizeBytes: result.sizeBytes, mtimeMs: result.mtimeMs });
+    }
   }
   files.sort((left, right) => left.pathKey.localeCompare(right.pathKey));
   return { files, diagnostics };
