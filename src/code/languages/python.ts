@@ -13,10 +13,10 @@ import type {
 } from "../../contracts.js";
 import { clampText, sha256 } from "../../utils.js";
 import { extractPythonKernelFacts, type KernelSpan } from "../native-kernel.js";
-import type { LanguageAdapter, ProjectDescriptor, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
+import type { LanguageAdapter, OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
 
 export const PYTHON_PROVIDER_VERSIONS = {
-  runtime: "contextmesh-graph-kernel@0.4.0",
+  runtime: "contextmesh-graph-kernel@0.5.0",
   portableRuntime: "web-tree-sitter@0.26.11",
   grammar: "tree-sitter-python@0.25.0",
   manifest: "smol-toml@1.7.0",
@@ -93,7 +93,7 @@ export function discoverPythonProject(rootPath: string): ProjectDescriptor {
   };
 }
 
-function evidence(source: CodeEvidence["source"], confidence: number, node?: KernelSpan, provider = "contextmesh_graph_kernel", providerVersion = "0.4.0"): CodeEvidence[] {
+function evidence(source: CodeEvidence["source"], confidence: number, node?: KernelSpan, provider = "contextmesh_graph_kernel", providerVersion = "0.5.0"): CodeEvidence[] {
   return [{
     provider,
     providerVersion,
@@ -126,7 +126,7 @@ function moduleName(relativePath: string, root: string, packageDirectories: Pyth
 
 class PythonSyntaxProvider implements SyntaxProvider {
   readonly id = "contextmesh_graph_kernel";
-  readonly version = "0.4.0";
+  readonly version = "0.5.0";
 
   async extract(input: Parameters<SyntaxProvider["extract"]>[0]): Promise<SyntaxGraphBatch> {
     const kernel = await extractPythonKernelFacts(input.files.filter((file) => file.language === "python"), undefined, input.mode === "full");
@@ -297,10 +297,118 @@ class PythonSyntaxProvider implements SyntaxProvider {
   }
 }
 
+function pythonMask(source: string): string {
+  return source.replace(/#[^\r\n]*/g, (value) => " ".repeat(value.length))
+    .replace(/'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g,
+      (value) => value.replace(/[^\r\n]/g, " "));
+}
+
+class PythonResolvedProvider implements OverlayPrecisionProvider {
+  readonly id = "contextmesh_python_resolver";
+  readonly version = "0.5.0";
+  readonly capability = "resolved" as const;
+
+  async available(): Promise<{ available: boolean }> { return { available: true }; }
+
+  async analyze(batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch> {
+    const pythonNodes = batch.nodes.filter((node) => node.language === "python");
+    const nodesByFile = new Map<string, CodeNodeRecord[]>();
+    const moduleByFile = new Map<string, CodeNodeRecord>();
+    const modulesByName = new Map<string, CodeNodeRecord[]>();
+    for (const node of pythonNodes) {
+      if (!node.fileId) continue;
+      const values = nodesByFile.get(node.fileId) ?? []; values.push(node); nodesByFile.set(node.fileId, values);
+      if (node.kind === "module") {
+        moduleByFile.set(node.fileId, node);
+        const modules = modulesByName.get(node.name) ?? []; modules.push(node); modulesByName.set(node.name, modules);
+      }
+    }
+    for (const values of nodesByFile.values()) values.sort((a, b) => a.startByte - b.startByte || a.id.localeCompare(b.id));
+    const nodeByModuleAndName = (moduleName: string, name: string): CodeNodeRecord[] =>
+      (modulesByName.get(moduleName) ?? []).flatMap((module) => (nodesByFile.get(module.fileId!) ?? []).filter((node) => node.name === name && node.kind !== "module"));
+    const evidence = (confidence: number, details: Record<string, unknown>) => [{ provider: this.id, providerVersion: this.version, source: "resolver" as const, confidence, details }];
+    const overlays = new Map<string, PrecisionOverlayBatch["edges"][number]>();
+    const key = (edge: Pick<PrecisionOverlayBatch["edges"][number], "sourceId" | "targetId" | "kind">) => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
+    let eligibleEdges = 0;
+
+    for (const file of batch.files.filter((item) => item.language === "python")) {
+      const module = moduleByFile.get(file.id);
+      if (!module) continue;
+      const aliases = new Map<string, { module: string; symbol: string | null }>();
+      for (const match of file.content.matchAll(/^\s*from\s+([.\w]+)\s+import\s+([^#\r\n]+)/gm)) {
+        const importedModule = match[1] ?? "";
+        for (const part of (match[2] ?? "").split(",")) {
+          const item = part.trim().match(/^([\w]+)(?:\s+as\s+([\w]+))?/);
+          if (item?.[1]) aliases.set(item[2] ?? item[1], { module: importedModule.replace(/^\.+/, ""), symbol: item[1] });
+        }
+      }
+      for (const match of file.content.matchAll(/^\s*import\s+([\w.]+)(?:\s+as\s+([\w]+))?/gm)) {
+        if (match[1]) aliases.set(match[2] ?? match[1].split(".")[0]!, { module: match[1], symbol: null });
+      }
+      const masked = pythonMask(file.content);
+      for (const match of masked.matchAll(/\b(?:(\w+)\.)?(\w+)\s*\(/g)) {
+        if (match.index === undefined || !match[2] || ["if", "for", "while", "def", "class", "return", "with", "lambda", "print", "super"].includes(match[2])) continue;
+        const prefix = masked.slice(Math.max(0, match.index - 12), match.index);
+        if (/\b(?:def|class)\s*$/.test(prefix)) continue;
+        eligibleEdges += 1;
+        const byte = Buffer.byteLength(file.content.slice(0, match.index), "utf8");
+        const owner = (nodesByFile.get(file.id) ?? []).filter((node) => (node.kind === "function" || node.kind === "method") && node.startByte <= byte && node.endByte >= byte)
+          .sort((a, b) => (a.endByte - a.startByte) - (b.endByte - b.startByte))[0] ?? module;
+        const qualifier = match[1] ?? null;
+        const name = match[2];
+        let targets: CodeNodeRecord[] = [];
+        if (qualifier && aliases.has(qualifier)) {
+          const imported = aliases.get(qualifier)!;
+          targets = nodeByModuleAndName(imported.module, imported.symbol ?? name);
+        } else if (!qualifier && aliases.has(name)) {
+          const imported = aliases.get(name)!;
+          targets = nodeByModuleAndName(imported.module, imported.symbol ?? name);
+        } else if (!qualifier) {
+          targets = (nodesByFile.get(file.id) ?? []).filter((node) => node.name === name && node.kind !== "module");
+        }
+        const uniqueTargets = [...new Map(targets.map((target) => [target.id, target])).values()];
+        if (uniqueTargets.length !== 1 || !uniqueTargets[0]) continue;
+        const target = uniqueTargets[0];
+        const resolved = { sourceId: owner.id, targetId: target.id, kind: "CALLS" as const, status: "resolved" as const,
+          confidence: 0.95, resolutionKind: target.fileId === file.id ? "local" as const : "import" as const,
+          evidence: evidence(0.95, { rawName: qualifier ? `${qualifier}.${name}` : name }) };
+        overlays.set(key(resolved), resolved);
+        for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === owner.id && edge.status === "candidate" && edge.targetId !== target.id)) {
+          const rejected = { sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind, status: "rejected" as const,
+            confidence: 0.95, resolutionKind: candidate.resolutionKind,
+            evidence: evidence(0.95, { reason: "resolver_selected_different_target", selectedTargetId: target.id }) };
+          overlays.set(key(rejected), rejected);
+        }
+      }
+      for (const match of masked.matchAll(/^\s*class\s+(\w+)\s*\(([^)]*)\)/gm)) {
+        const owner = (nodesByFile.get(file.id) ?? []).find((node) => node.kind === "class" && node.name === match[1]);
+        if (!owner) continue;
+        for (const rawBase of (match[2] ?? "").split(",").map((item) => item.trim()).filter(Boolean)) {
+          eligibleEdges += 1;
+          const parts = rawBase.split(".");
+          const name = parts.at(-1)!;
+          const imported = parts.length > 1 ? aliases.get(parts[0]!) : aliases.get(name);
+          const targets = imported ? nodeByModuleAndName(imported.module, imported.symbol ?? name)
+            : pythonNodes.filter((node) => (node.kind === "class" || node.kind === "interface") && node.name === name);
+          const uniqueTargets = [...new Map(targets.map((target) => [target.id, target])).values()];
+          if (uniqueTargets.length !== 1 || !uniqueTargets[0]) continue;
+          const resolved = { sourceId: owner.id, targetId: uniqueTargets[0].id, kind: "EXTENDS" as const, status: "resolved" as const,
+            confidence: 0.95, resolutionKind: uniqueTargets[0].fileId === file.id ? "local" as const : "import" as const,
+            evidence: evidence(0.95, { rawName: rawBase }) };
+          overlays.set(key(resolved), resolved);
+        }
+      }
+    }
+    return { language: "python", provider: this.id, providerVersion: this.version, capability: this.capability,
+      baseGeneration, edges: [...overlays.values()].sort((a, b) => key(a).localeCompare(key(b))), eligibleEdges, diagnostics: [] };
+  }
+}
+
 export class PythonLanguageAdapter implements LanguageAdapter {
   readonly languageId = "python";
   readonly ecosystem = "pypi";
   readonly extensions = [".py"] as const;
   discoverProject(rootPath: string): ProjectDescriptor { return discoverPythonProject(rootPath); }
   createSyntaxProvider(): SyntaxProvider { return new PythonSyntaxProvider(); }
+  createOverlayPrecisionProvider(): OverlayPrecisionProvider { return new PythonResolvedProvider(); }
 }

@@ -170,13 +170,12 @@ export class ContextMeshApp {
 
   private scope(generation = this.database.getWorkspace().currentGeneration, includeSnapshot = true): EnvelopeScope {
     const freshness = this.database.getFreshnessState();
-    const adapterState = this.database.getAdapterState();
     return {
       workspaceId: this.database.workspace.id,
       generation,
       ...(includeSnapshot ? { snapshot: {
         graphGeneration: generation,
-        precisionRevision: adapterState["typescript/javascript"]?.precisionRevision ?? 0,
+        precisionRevision: this.database.getPrecisionRevision(),
         freshness: freshness.stale ? "stale" : "fresh",
       } as const } : {}),
     };
@@ -260,7 +259,7 @@ export class ContextMeshApp {
     const kernelFailure = operational.graph_kernel?.status === "failed" ? operational.graph_kernel.diagnostic : null;
     return this.envelope({
       ...codeStatus,
-      adapters: this.code.indexer.coordinator.capabilities().map((capability) => ({
+      adapters: this.code.indexer.coordinator.capabilities(this.database.rootPath).map((capability) => ({
         ...capability,
         providerVersions: statsByLanguage.get(capability.language)?.providerVersions ?? {},
         status: statsByLanguage.get(capability.language)?.status ?? "unavailable",
@@ -270,7 +269,7 @@ export class ContextMeshApp {
       adapterStats,
       graphKernel: {
         protocol: "contextmesh.graph-kernel/v1",
-        version: "0.4.0",
+        version: "0.5.0",
         mode: process.env.CONTEXTMESH_KERNEL_POLICY === "portable" ? "portable" : "sidecar",
         status: kernelFailure ? "failed" : process.env.CONTEXTMESH_KERNEL_POLICY === "portable" || graphKernelExecutablePath() ? "ready" : "unavailable",
         diagnostics: kernelFailure ? [{ code: kernelFailure.split(":", 1)[0], severity: "error", message: kernelFailure }] : [],
@@ -298,6 +297,7 @@ export class ContextMeshApp {
       const state = this.database.getFreshnessState();
       const snapshot: RequestGenerationState = {
         generation: state.currentGeneration,
+        precisionRevision: this.database.getPrecisionRevision(),
         successFence: state.successFenceGeneration,
         stale: state.stale,
       };
@@ -306,8 +306,10 @@ export class ContextMeshApp {
     const final = await this.code.indexer.readFinalRequestState();
     const generationChanged =
       initial.generation !== snapshotResult.snapshot.generation ||
+      initial.precisionRevision !== snapshotResult.snapshot.precisionRevision ||
       initial.successFence !== snapshotResult.snapshot.successFence ||
       final.generation !== snapshotResult.snapshot.generation ||
+      final.precisionRevision !== snapshotResult.snapshot.precisionRevision ||
       final.successFence !== snapshotResult.snapshot.successFence;
     return {
       ...snapshotResult,
@@ -389,14 +391,14 @@ export class ContextMeshApp {
       const initial = await this.code.freshnessState();
       const snapshotResult = await this.database.withReadSnapshot(() => {
         const state = this.database.getFreshnessState();
-        const snapshot: RequestGenerationState = { generation: state.currentGeneration, successFence: state.successFenceGeneration, stale: state.stale };
+        const snapshot: RequestGenerationState = { generation: state.currentGeneration, precisionRevision: this.database.getPrecisionRevision(), successFence: state.successFenceGeneration, stale: state.stale };
         const assembled = this.context.assembleDatabase({ query: parsed.query, ...(parsed.symbolId ? { symbolId: parsed.symbolId } : {}), tokenBudget: parsed.tokenBudget, include: ["code"] });
         const focused = parsed.symbolId ? this.code.trace({ symbolId: parsed.symbolId, direction: "both", depth: parsed.depth, limit: parsed.limit }) : null;
         return { snapshot, assembled, focused };
       });
       const hydrated = await this.context.hydrateSnippets(snapshotResult.assembled, snapshotResult.snapshot.generation, snapshotResult.snapshot.successFence);
       const final = await this.code.indexer.readFinalRequestState();
-      const generationChanged = hydrated.generationChanged || initial.generation !== snapshotResult.snapshot.generation || final.generation !== snapshotResult.snapshot.generation || final.successFence !== snapshotResult.snapshot.successFence;
+      const generationChanged = hydrated.generationChanged || initial.generation !== snapshotResult.snapshot.generation || initial.precisionRevision !== snapshotResult.snapshot.precisionRevision || final.generation !== snapshotResult.snapshot.generation || final.precisionRevision !== snapshotResult.snapshot.precisionRevision || final.successFence !== snapshotResult.snapshot.successFence;
       if (generationChanged && attempt === 0) continue;
       const relations = (snapshotResult.focused?.edges ?? hydrated.assembled.relationships)
         .filter((edge) => parsed.intent !== "architecture" || ["CONTAINS", "IMPORTS", "EXTENDS", "IMPLEMENTS", "EXPORTS"].includes(edge.kind))
@@ -651,6 +653,7 @@ export class ContextMeshApp {
         const state = this.database.getFreshnessState();
         const snapshot: RequestGenerationState = {
           generation: state.currentGeneration,
+          precisionRevision: this.database.getPrecisionRevision(),
           successFence: state.successFenceGeneration,
           stale: state.stale,
         };
@@ -678,8 +681,10 @@ export class ContextMeshApp {
       const generationChanged =
         hydrated.generationChanged ||
         initial.generation !== snapshotResult.snapshot.generation ||
+        initial.precisionRevision !== snapshotResult.snapshot.precisionRevision ||
         initial.successFence !== snapshotResult.snapshot.successFence ||
         final.generation !== snapshotResult.snapshot.generation ||
+        final.precisionRevision !== snapshotResult.snapshot.precisionRevision ||
         final.successFence !== snapshotResult.snapshot.successFence;
       const semanticChanged = Boolean(
         this.semantic &&

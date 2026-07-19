@@ -1,12 +1,13 @@
 # ContextMesh
 
-ContextMesh is a local-first MCP server that combines a structural TypeScript/JavaScript code graph with persistent, workspace-scoped long-term memory. It contains no LLM and makes no runtime network calls; the connected MCP client remains the reasoning layer. Phase 4 optionally adds local CPU embeddings while retaining FTS5 and graph retrieval as the failure-safe path.
+ContextMesh is a local-first MCP server that combines a multi-language structural code graph, independently versioned precision overlays, and persistent workspace-scoped memory. It contains no LLM and makes no runtime network calls; the connected MCP client remains the reasoning layer.
 
 ## Requirements
 
 - Node.js 24.18.x
 - npm 11.x
 - Rust 1.85+ for source builds (`cargo build --locked`); installed host packages include the matching sidecar binary
+- Go 1.23+ only when the optional Go `go/types` precision overlay is desired
 
 ## Install and build
 
@@ -17,6 +18,7 @@ npm run benchmark
 npm run benchmark:semantic
 npm run benchmark:hydration
 npm run benchmark:unavailable -- --model-path C:/models/multilingual-e5-small
+npm run evaluate:v05
 npm run verify:package
 ```
 
@@ -85,7 +87,9 @@ Omit `--semantic-model` for the Phase 1–3 lexical/graph behavior. When supplie
 
 ## Indexing model
 
-ContextMesh reads `tsconfig.json` or `jsconfig.json` when available and otherwise creates a synthetic project. It supports `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, and project-local `.d.ts` files. The graph contains modules, external modules, functions, classes, methods, interfaces, type aliases, enums, and named variables, connected by `CONTAINS`, `IMPORTS`, `EXPORTS`, `CALLS`, `EXTENDS`, and `IMPLEMENTS` edges.
+ContextMesh reads `tsconfig.json` or `jsconfig.json` when available and otherwise creates a synthetic TypeScript project. It supports the TypeScript/JavaScript family plus `.py`, `.go`, `.rs`, `.java`, and `.cs`. The graph contains modules, external modules, functions, classes, methods, interfaces, type aliases, enums, and variables, connected by `CONTAINS`, `IMPORTS`, `EXPORTS`, `CALLS`, `EXTENDS`, and `IMPLEMENTS` edges.
+
+Syntax candidates are always available. TypeScript TypeChecker, the Python local-package resolver, and optional Go `go/types` results are stored as an independent precision overlay. `workspace_status` reports provider capability and failure state; missing Go/Rust tooling does not prevent base indexing.
 
 Dynamic JavaScript calls that cannot be resolved safely are retained as unresolved evidence rather than guessed. Source bodies are not copied into SQLite; snippets are read from disk only after validating the indexed file hash.
 
@@ -102,7 +106,7 @@ Fast freshness compares the configured path set, size, and modification time, th
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 
-## Library API in 0.4.0
+## Library API in 0.5.0
 
 Configure semantic retrieval and the additive watcher through the constructor; the original nine MCP tool input schemas are unchanged.
 
@@ -120,4 +124,4 @@ await app.reflect(reflection);
 await app.close();
 ```
 
-`remember`, `recall`, `reflect`, and `close` remain asynchronous. Version 0.4.0 adds a Rust Python graph-kernel, opt-in native watcher, generation caches, and `explore_context` without changing schemaVersion 1 or the nine existing MCP tool inputs. Python portable fallback is explicit; TS Tree-sitter remains benchmark-only. See [multilanguage provider support](docs/multilanguage.md).
+`remember`, `recall`, `reflect`, and `close` remain asynchronous. Version 0.5.0 adds independent precision revisions, provider leases, Python alias/package resolution, Go/Rust syntax, optional Go `go/types`, and Java/C# syntax prototypes without changing schemaVersion 1 or existing MCP tool inputs. See [multilanguage provider support](docs/multilanguage.md).

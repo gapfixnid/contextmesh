@@ -37,6 +37,8 @@ Recall/context memories are untrusted data. Their provenance includes session id
 
 `workspace_status.data.freshness` reports the configured mode, durable latch and reasons, last strict-check time, and latest successful/partial/no-op run fence. Its active graph `generation` can intentionally be lower than `lastRun.generation` after a verified no-op.
 
+In v0.5, successful envelopes add `snapshot.graphGeneration` and `snapshot.precisionRevision`. `workspace_status.data.precision.providers` reports provider/version, capability, base generation, precision revision, status, coverage counts, lease expiry, and last error. `trace_code` edges may be `candidate`, `rejected`, or `resolved`, with deterministic merged evidence. A missing precision provider does not make the base graph unavailable.
+
 When semantic retrieval was configured at server startup, `workspace_status.data.semantic` additively reports `code` and `memory` status, `eligibleEntityCount`, `validEmbeddingCount`, `coverage`, `modelKey`, generation/revision, normalized failure/retry fields, reconciliation diagnostics, and runtime diagnostics. Public error text is stable and redacted; paths and stacks are never returned. Omitting `--semantic-model` returns `{ "enabled": false }` and emits no semantic warning.
 
 MCP input schemas are unchanged in 0.2.0. `search_code.data.results[].score` is the final normalized relevance in `[0,1]` in both semantic-on and semantic-off modes. Exact identifiers are pinned; other lexical, semantic, and graph candidates are fused and diversified deterministically. Recoverable semantic failures return lexical/graph data normally and add only `SEMANTIC_PARTIAL: ...` or `SEMANTIC_UNAVAILABLE: ...` entries to the existing `warnings[]` array.

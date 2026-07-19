@@ -84,7 +84,7 @@ describe("v0.3 multilingual graph", () => {
       expect(indexed.generation).toBe(1);
       expect(indexed.data.adapterStats.map((item) => item.language)).toEqual(["typescript/javascript", "python"]);
       const status = await app.workspaceStatus() as Envelope<{ adapters: Array<{ language: string }> }>;
-      expect(status.data.adapters.map((item) => item.language)).toEqual(["python", "typescript/javascript"]);
+      expect(status.data.adapters.map((item) => item.language)).toEqual(["csharp", "go", "java", "python", "rust", "typescript/javascript"]);
 
       const ts = await app.searchCode({ query: "typescriptEntry" }) as Envelope<{ results: Array<{ language: string }> }>;
       const py = await app.searchCode({ query: "Worker" }) as Envelope<{ results: Array<{ id: string; language: string; analysisLevel: string }> }>;
@@ -109,7 +109,7 @@ describe("v0.3 multilingual graph", () => {
       })).toBe(false);
       const run = await app.searchCode({ query: "run", kinds: ["method"] }) as Envelope<{ results: Array<{ id: string }> }>;
       const context = await app.getContext({ query: "run", symbolId: run.data.results[0]!.id, tokenBudget: 2000, include: ["code"] });
-      expect(context.warnings).toContainEqual(expect.stringContaining("SOURCE_VERIFICATION_REQUIRED"));
+      expect(context.warnings).toContainEqual(expect.stringContaining("unresolved code reference"));
     } finally {
       await app.close();
     }
@@ -151,7 +151,7 @@ describe("v0.3 multilingual graph", () => {
       .toMatchObject({ syntaxInvocations: 0, precisionInvocations: 0 });
     expect(app.code.indexer.typeScriptInstrumentation()).toEqual({ programCreations: 0, syntaxWorkItems: 0, precisionWorkItems: 0 });
     expect(changed.data.adapterStats.find((item) => item.language === "python"))
-      .toMatchObject({ syntaxInvocations: 1, precisionInvocations: 0 });
+      .toMatchObject({ syntaxInvocations: 1, precisionInvocations: 1 });
     await app.close();
 
     app = new ContextMeshApp(root);
@@ -217,7 +217,7 @@ describe("v0.3 multilingual graph", () => {
       const trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", depth: 1 }) as Envelope<{
         edges: Array<{ kind: string; confidence: number; targetId: string }>; unresolved: Array<{ rawName: string }>;
       }>;
-      expect(trace.data.edges).toContainEqual(expect.objectContaining({ kind: "CALLS", confidence: 0.8, targetId: target.data.results[0]!.id }));
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ kind: "CALLS", confidence: 0.95, targetId: target.data.results[0]!.id }));
       expect(trace.data.unresolved.some((item) => item.rawName === "target")).toBe(false);
       const module = await app.searchCode({ query: "syntax_cases", kinds: ["module"] }) as Envelope<{ results: Array<{ id: string }> }>;
       const imports = await app.traceCode({ symbolId: module.data.results[0]!.id, direction: "out", depth: 1 }) as Envelope<{

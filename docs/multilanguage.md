@@ -1,13 +1,26 @@
-# Multilanguage providers (v0.4)
+# Multilanguage providers (v0.5)
 
-ContextMesh 0.4 indexes TypeScript/JavaScript and Python into one atomic graph generation. The TypeScript Compiler AST remains the production syntax source and its TypeChecker is the typed precision provider; both reuse one `Program`. Python parsing and extraction use the Rust graph-kernel sidecar with `tree-sitter-python@0.25.0`. The explicit portable policy retains the v0.3 `web-tree-sitter@0.26.11` provider and must produce the exact same ordered canonical graph.
+ContextMesh 0.5 indexes TypeScript/JavaScript, Python, Go, Rust, Java, and C# into one base graph generation. Syntax extraction always completes independently of optional precision tooling. Precision results are committed later under a separate `precisionRevision`; a provider failure or missing executable never removes the last committed base graph.
 
-Python capability is deliberately `syntax`: modules, functions, async functions, classes, methods, imports (including relative imports), inheritance, and unambiguous simple-call candidates. Candidate calls have confidence 0.80 and remain candidates; dynamic/attribute calls and ambiguous targets are unresolved. ContextMesh never confirms an edge across languages based on a name match. HTTP/RPC/queue/DB boundary linking is not available until v0.6.
+| Language | Syntax provider | Precision provider | Capability |
+| --- | --- | --- | --- |
+| TypeScript/JavaScript | TypeScript Compiler AST | TypeScript TypeChecker | typed |
+| Python | Rust graph-kernel / Tree-sitter | `contextmesh_python_resolver` | resolved |
+| Go | deterministic syntax adapter | standard-library `go/types` helper | typed when Go is installed |
+| Rust | deterministic syntax adapter | optional `rust-analyzer` contract | syntax by default |
+| Java | deterministic prototype adapter | not configured | syntax prototype |
+| C# | deterministic prototype adapter | not configured | syntax prototype |
 
-Source roots include the workspace root, conventional `src`, `__init__.py` packages, PEP 420 namespace packages, and static setuptools `tool.setuptools.package-dir` / `tool.setuptools.packages.find.where` entries, including multiple roots. Unsupported Poetry/PDM/Hatch dynamic layout or invalid TOML produces `PYTHON_LAYOUT_FALLBACK` and continues with root plus `src`.
+The Python resolver handles local-package and imported aliases for calls and inheritance. Go `go/types` is invoked only when the local `go` command is available; `CONTEXTMESH_GO_TYPES_DISABLE=1` forces the base-only policy. Rust, Java, and C# continue to expose usable syntax graphs and explicit capability state without claiming typed accuracy.
 
-## Supply chain and operating systems
+Every edge carries provider/version/source/confidence evidence. Syntax candidates remain `candidate`; a precision provider can publish `resolved` or `rejected` adjudications. Query-time merging is deterministic, preserves all evidence, and uses `resolved > rejected > candidate` for the effective view. Providers are protected by a database lease and base-generation fence. `workspace_status.precision` reports revision, provider version, status (`not_configured`, `running`, `ready`, `stale`, `failed`, or `partial`), coverage, and last error.
 
-`tree-sitter-python@0.25.0`, the Rust runtime crates, `web-tree-sitter@0.26.11`, and `smol-toml@1.7.0` are exactly pinned. [graph-kernel.manifest.json](./graph-kernel.manifest.json), Rust `Cargo.lock`, and [python-parser.manifest.json](./python-parser.manifest.json) record the supply-chain contract. Runtime network use is zero. A release is supported only after Windows, Ubuntu, and macOS native build/contract jobs pass.
+Provider updates do not advance `graphGeneration`. A base commit marks prior overlays stale, deletes generation-bound overlay rows through foreign keys, and then allows each provider to refresh independently. Cache keys include both graph generation and precision revision, and public reads retry once if either changes.
 
-Runtime parsing performs no external network calls. Package acquisition is an install-time operation governed by `package-lock.json`; source files continue through the common ignore, secret, symlink, and size policy.
+ContextMesh never confirms an edge across language families based on a name match. HTTP/RPC/queue/DB boundary linking remains v0.6 scope.
+
+## Conformance and supply chain
+
+All adapters share scanner ignore/secret/symlink/size policy, deterministic IDs and ordering, UTF-8 byte spans, partial-parse diagnostics, unresolved evidence, and language-specific gold fixtures. `npm run evaluate:v05` enforces Tier 1 resolved-edge precision/recall, base-only operation, provider health, and generation independence. CI installs Go 1.23 and compiles/tests the standard-library helper before running that gate.
+
+Python's native/portable supply chain remains pinned in [graph-kernel.manifest.json](./graph-kernel.manifest.json), Rust `Cargo.lock`, and [python-parser.manifest.json](./python-parser.manifest.json). The Go helper has no third-party modules and is packaged from `native/go-provider`.

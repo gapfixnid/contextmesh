@@ -35,8 +35,20 @@ jobs:
         with:
           node-version: 24.18.0
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
       - run: npm ci
+      - run: go test ./...
+        working-directory: native/go-provider
       - run: npm run check
+      - run: npm run evaluate:v05 -- --output artifacts/v05-quality.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v05-quality-${{ runner.os }}-${{ github.sha }}
+          path: artifacts/v05-quality.json
+          if-no-files-found: error
       - run: npm run verify:native-supply-chain
       - run: npm run verify:v04-artifact
       - run: npm run evaluate:multilang

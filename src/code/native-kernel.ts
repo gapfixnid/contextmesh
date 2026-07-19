@@ -558,7 +558,7 @@ export async function extractPythonKernelFacts(
         mode: policy === "portable" ? "portable" as const : "sidecar" as const,
         providerVersion: policy === "portable"
           ? "web-tree-sitter@0.26.11/tree-sitter-python@0.25.0"
-          : "contextmesh-graph-kernel@0.4.0/tree-sitter-python@0.25.0",
+          : "contextmesh-graph-kernel@0.5.0/tree-sitter-python@0.25.0",
         diagnostics: [],
         filesParsed: 0,
         kernelRssBytes: 0,

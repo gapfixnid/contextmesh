@@ -6,6 +6,7 @@ interface CacheEntry<T> { value: T; used: number }
 
 export class GenerationGraphCache {
   private generation = -1;
+  private precisionRevision = -1;
   private tick = 0;
   private readonly searchEntries = new Map<string, CacheEntry<unknown>>();
   private readonly traceEntries = new Map<string, CacheEntry<TraceResult>>();
@@ -18,7 +19,8 @@ export class GenerationGraphCache {
 
   hydrate(): void {
     const generation = this.database.getWorkspace().currentGeneration;
-    if (generation === this.generation) return;
+    const precisionRevision = this.database.getPrecisionRevision();
+    if (generation === this.generation && precisionRevision === this.precisionRevision) return;
     const partitions = [this.database.getStoredGraphPartition("non-python"), this.database.getStoredGraphPartition("python")];
     const forward = new Map<string, CodeEdgeRecord[]>();
     const reverse = new Map<string, CodeEdgeRecord[]>();
@@ -38,16 +40,16 @@ export class GenerationGraphCache {
     }
     for (const values of unresolved.values()) values.sort((a, b) => a.line - b.line || a.column - b.column || a.rawName.localeCompare(b.rawName));
     // Replace every generation-owned structure together only after the durable commit is visible.
-    this.forward = forward; this.reverse = reverse; this.nodes = new Map(hydratedNodes.map((node) => [node.id, node])); this.unresolved = unresolved; this.generation = generation;
+    this.forward = forward; this.reverse = reverse; this.nodes = new Map(hydratedNodes.map((node) => [node.id, node])); this.unresolved = unresolved; this.generation = generation; this.precisionRevision = precisionRevision;
     this.searchEntries.clear(); this.traceEntries.clear(); this.tick = 0;
   }
 
   search<T>(key: string, load: () => T): T {
-    return this.cached(this.searchEntries, `${this.generation}\0${key}`, load) as T;
+    return this.cached(this.searchEntries, `${this.generation}\0${this.precisionRevision}\0${key}`, load) as T;
   }
 
   trace(key: string, load: () => TraceResult): TraceResult {
-    return this.cached(this.traceEntries, `${this.generation}\0${key}`, load);
+    return this.cached(this.traceEntries, `${this.generation}\0${this.precisionRevision}\0${key}`, load);
   }
 
   traceGraph(symbolId: string, direction: "in" | "out" | "both", edgeKinds: CodeEdgeKind[] | undefined, maxDepth: number, limit: number): TraceResult | null {

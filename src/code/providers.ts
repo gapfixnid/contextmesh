@@ -6,6 +6,8 @@ import type {
   IndexedSourceFile,
   UnresolvedReferenceRecord,
   WorkspaceRecord,
+  AnalysisLevel,
+  EdgeStatus,
 } from "../contracts.js";
 import type { ScannedFile } from "./scanner.js";
 
@@ -50,6 +52,36 @@ export interface PrecisionProvider {
   refine(batch: SyntaxGraphBatch): Promise<SyntaxGraphBatch>;
 }
 
+export interface PrecisionOverlayEdge {
+  sourceId: string;
+  targetId: string;
+  kind: CodeEdgeRecord["kind"];
+  status: EdgeStatus;
+  confidence: number;
+  resolutionKind: CodeEdgeRecord["resolutionKind"];
+  evidence: NonNullable<CodeEdgeRecord["evidence"]>;
+}
+
+export interface PrecisionOverlayBatch {
+  language: string;
+  provider: string;
+  providerVersion: string;
+  capability: Exclude<AnalysisLevel, "syntax">;
+  baseGeneration: number;
+  edges: PrecisionOverlayEdge[];
+  eligibleEdges: number;
+  diagnostics: string[];
+  partial?: boolean;
+}
+
+export interface OverlayPrecisionProvider {
+  readonly id: string;
+  readonly version: string;
+  readonly capability: Exclude<AnalysisLevel, "syntax">;
+  available(): Promise<{ available: boolean; diagnostic?: string }>;
+  analyze(batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch>;
+}
+
 export interface LanguageAdapter {
   readonly languageId: string;
   readonly ecosystem: string;
@@ -57,6 +89,17 @@ export interface LanguageAdapter {
   discoverProject(rootPath: string, input?: ProjectDiscoveryInput): ProjectDescriptor;
   createSyntaxProvider(project: ProjectDescriptor): SyntaxProvider;
   createPrecisionProvider?(project: ProjectDescriptor): PrecisionProvider;
+  createOverlayPrecisionProvider?(project: ProjectDescriptor): OverlayPrecisionProvider | undefined;
+}
+
+function evidenceKey(item: NonNullable<CodeEdgeRecord["evidence"]>[number]): string {
+  return `${item.provider}\0${item.providerVersion}\0${item.source}\0${item.confidence}\0${JSON.stringify(item.sourceSpan ?? null)}\0${JSON.stringify(item.details ?? null)}`;
+}
+
+export function mergeEvidence(...groups: Array<CodeEdgeRecord["evidence"]>): NonNullable<CodeEdgeRecord["evidence"]> {
+  const merged = new Map<string, NonNullable<CodeEdgeRecord["evidence"]>[number]>();
+  for (const item of groups.flatMap((group) => group ?? [])) merged.set(evidenceKey(item), item);
+  return [...merged.values()].sort((left, right) => evidenceKey(left).localeCompare(evidenceKey(right)));
 }
 
 export function mergeGraphBatches(
@@ -100,13 +143,18 @@ export class GraphIndexCoordinator {
     return adapter.discoverProject(rootPath, input);
   }
 
-  capabilities(): Array<{ language: string; ecosystem: string; extensions: readonly string[] }> {
+  capabilities(rootPath = process.cwd()): Array<{ language: string; ecosystem: string; extensions: readonly string[]; syntaxProvider: string; precisionProvider: string | null }> {
     return [...this.adapters.values()]
-      .map((adapter) => ({
+      .map((adapter) => {
+        const project = adapter.discoverProject(rootPath);
+        const overlay = adapter.createOverlayPrecisionProvider?.(project);
+        return ({
         language: adapter.languageId,
         ecosystem: adapter.ecosystem,
         extensions: adapter.extensions,
-      }))
+        syntaxProvider: adapter.createSyntaxProvider(project).id,
+        precisionProvider: overlay?.id ?? adapter.createPrecisionProvider?.(project).id ?? null,
+      }); })
       .sort((a, b) => a.language.localeCompare(b.language));
   }
 }

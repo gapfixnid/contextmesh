@@ -17,6 +17,7 @@ import type {
   AssertionStatus,
   CodeEdgeKind,
   CodeEdgeRecord,
+  EdgeStatus,
   CodeNodeKind,
   CodeNodeRecord,
   ExtractedGraph,
@@ -24,6 +25,7 @@ import type {
   IndexMode,
   MemoryFragmentRecord,
   MemoryType,
+  PrecisionProviderState,
   RecallInput,
   ReflectInput,
   RememberInput,
@@ -102,7 +104,7 @@ export interface TraceEdgeResult {
   confidence: number;
   resolutionKind: string;
   depth: number;
-  status: "candidate" | "resolved";
+  status: EdgeStatus;
   evidence: CodeEdgeRecord["evidence"];
 }
 
@@ -161,6 +163,36 @@ export interface StoredGraphPartition {
   nodes: CodeNodeRecord[];
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
+}
+
+export interface PrecisionClaim {
+  provider: string;
+  providerVersion: string;
+  language: string;
+  capability: "resolved" | "typed";
+  baseGeneration: number;
+  token: string;
+  owner: string;
+}
+
+export interface PrecisionClaimResult {
+  claim: PrecisionClaim | null;
+  reason: "acquired" | "leased" | "not_indexed";
+}
+
+export interface PrecisionCommit {
+  edges: Array<{
+    sourceId: string;
+    targetId: string;
+    kind: CodeEdgeKind;
+    status: EdgeStatus;
+    confidence: number;
+    resolutionKind: CodeEdgeRecord["resolutionKind"];
+    evidence: NonNullable<CodeEdgeRecord["evidence"]>;
+  }>;
+  eligibleEdges: number;
+  diagnostics: string[];
+  partial?: boolean;
 }
 
 export interface OperationalStatusRecord {
@@ -457,6 +489,35 @@ function mapSemanticState(row: SqlRow): SemanticStateRecord {
   };
 }
 
+function mapPrecisionState(row: SqlRow): PrecisionProviderState {
+  const eligibleEdges = numberValue(row.eligible_edges);
+  const resolvedEdges = numberValue(row.resolved_edges);
+  return {
+    language: stringValue(row.language),
+    provider: stringValue(row.provider),
+    providerVersion: stringValue(row.provider_version),
+    capability: stringValue(row.capability) as PrecisionProviderState["capability"],
+    status: stringValue(row.status) as PrecisionProviderState["status"],
+    baseGeneration: numberValue(row.base_generation),
+    precisionRevision: numberValue(row.precision_revision),
+    eligibleEdges,
+    resolvedEdges,
+    rejectedEdges: numberValue(row.rejected_edges),
+    coverage: eligibleEdges === 0 ? 1 : resolvedEdges / eligibleEdges,
+    lastError: nullableString(row.last_error),
+    leaseExpiresAt: row.lease_expires_epoch === null ? null : new Date(numberValue(row.lease_expires_epoch)).toISOString(),
+    updatedAt: stringValue(row.updated_at),
+  };
+}
+
+function mergeCodeEvidence(groups: Array<CodeEdgeRecord["evidence"]>): NonNullable<CodeEdgeRecord["evidence"]> {
+  const key = (item: NonNullable<CodeEdgeRecord["evidence"]>[number]): string =>
+    `${item.provider}\0${item.providerVersion}\0${item.source}\0${item.confidence}\0${JSON.stringify(item.sourceSpan ?? null)}\0${JSON.stringify(item.details ?? null)}`;
+  const items = new Map<string, NonNullable<CodeEdgeRecord["evidence"]>[number]>();
+  for (const item of groups.flatMap((group) => group ?? [])) items.set(key(item), item);
+  return [...items.values()].sort((left, right) => key(left).localeCompare(key(right)));
+}
+
 function memoryHash(input: Pick<RememberInput, "type" | "topic" | "content">): string {
   return sha256(`${input.type}\0${input.topic.trim().toLocaleLowerCase()}\0${input.content.trim()}`);
 }
@@ -476,6 +537,13 @@ export interface ContextMeshStorage {
   getIndexedFileBaseline(): IndexedFileBaseline[];
   getIndexConfigHash(): string | null;
   getAdapterState(): AdapterStateMap;
+  getPrecisionRevision(): number;
+  getPrecisionProviderStates(): PrecisionProviderState[];
+  registerPrecisionProvider(input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null }): void;
+  claimPrecisionProvider(input: { provider: string; providerVersion: string; language: string; capability: "resolved" | "typed"; owner: string; leaseMs?: number }): PrecisionClaimResult;
+  heartbeatPrecisionProvider(claim: PrecisionClaim, leaseMs?: number): boolean;
+  commitPrecisionOverlay(claim: PrecisionClaim, commit: PrecisionCommit): boolean;
+  failPrecisionProvider(claim: PrecisionClaim, error: string): boolean;
   getFreshnessState(): FreshnessState;
   recordFreshnessStale(
     reason: string,
@@ -727,10 +795,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const version = Number.parseInt(name.split("_", 1)[0] ?? "", 10);
       const sql = readFileSync(path.join(MIGRATIONS_DIRECTORY, name), "utf8");
       this.transaction(() => {
-        const preserved = version === 7 ? this.multilanguageMigrationState() : null;
+        const preserved = version === 7 || version === 9 ? this.multilanguageMigrationState() : null;
         this.db.exec(sql);
         this.migrationValidationHook?.(version);
-        if (preserved) this.verifyMultilanguageMigration(preserved);
+        if (preserved) this.verifyMultilanguageMigration(preserved, version);
         this.db
           .prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
           .run(version, name, this.nowIso());
@@ -749,19 +817,19 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     };
   }
 
-  private verifyMultilanguageMigration(before: Record<string, number>): void {
+  private verifyMultilanguageMigration(before: Record<string, number>, version = 7): void {
     const after = this.multilanguageMigrationState();
     for (const [key, value] of Object.entries(before)) {
-      if (after[key] !== value) throw new Error(`Migration 007 preservation check failed for ${key}`);
+      if (after[key] !== value) throw new Error(`Migration ${String(version).padStart(3, "0")} preservation check failed for ${key}`);
     }
     if (this.db.prepare("PRAGMA foreign_key_check").all().length > 0) {
-      throw new Error("Migration 007 foreign-key validation failed");
+      throw new Error(`Migration ${String(version).padStart(3, "0")} foreign-key validation failed`);
     }
     const missingTargets = numberValue(this.db.prepare(
       `SELECT count(*) AS count FROM memory_code_links link
        WHERE link.code_node_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM code_nodes node WHERE node.id = link.code_node_id)`,
     ).get()?.count);
-    if (missingTargets > 0) throw new Error("Migration 007 memory link target validation failed");
+    if (missingTargets > 0) throw new Error(`Migration ${String(version).padStart(3, "0")} memory link target validation failed`);
   }
 
   private ensureWorkspace(): WorkspaceRecord {
@@ -1048,6 +1116,122 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     return parseJson<AdapterStateMap>(row?.adapter_state_json, {});
   }
 
+  getPrecisionRevision(): number {
+    const row = this.db.prepare("SELECT precision_revision FROM workspaces WHERE id = ?").get(this.workspace.id);
+    return numberValue(row?.precision_revision);
+  }
+
+  getPrecisionProviderStates(): PrecisionProviderState[] {
+    return this.db.prepare(
+      "SELECT * FROM precision_provider_state WHERE workspace_id = ? ORDER BY language, provider",
+    ).all(this.workspace.id).map(mapPrecisionState);
+  }
+
+  registerPrecisionProvider(
+    input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null },
+  ): void {
+    const timestamp = this.nowIso();
+    this.db.prepare(
+      `INSERT INTO precision_provider_state(
+         workspace_id, language, provider, provider_version, capability, status, base_generation, last_error, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(workspace_id, provider) DO UPDATE SET
+         language=excluded.language, provider_version=excluded.provider_version,
+         capability=excluded.capability,
+         status=CASE WHEN precision_provider_state.provider_version <> excluded.provider_version
+                     AND precision_provider_state.status IN ('ready','partial') THEN 'stale'
+                     ELSE excluded.status END,
+         base_generation=excluded.base_generation,last_error=excluded.last_error,updated_at=excluded.updated_at`,
+    ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability, input.status,
+      this.getWorkspace().currentGeneration, input.lastError ?? null, timestamp);
+  }
+
+  claimPrecisionProvider(input: {
+    provider: string; providerVersion: string; language: string; capability: "resolved" | "typed"; owner: string; leaseMs?: number;
+  }): PrecisionClaimResult {
+    const workspace = this.getWorkspace();
+    if (workspace.currentGeneration === 0) return { claim: null, reason: "not_indexed" };
+    const now = Date.parse(this.nowIso());
+    const leaseExpiry = now + (input.leaseMs ?? 30_000);
+    const token = `precision_${randomUUID()}`;
+    let acquired = false;
+    this.transaction(() => {
+      const existing = this.db.prepare(
+        "SELECT status, lease_expires_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+      ).get(this.workspace.id, input.provider);
+      if (existing && stringValue(existing.status) === "running" && numberValue(existing.lease_expires_epoch) > now) return;
+      this.db.prepare(
+        `INSERT INTO precision_provider_state(
+           workspace_id,language,provider,provider_version,capability,status,base_generation,
+           lease_owner,lease_token,lease_expires_epoch,updated_at
+         ) VALUES (?,?,?,?,?,'running',?,?,?,?,?)
+         ON CONFLICT(workspace_id,provider) DO UPDATE SET
+           language=excluded.language,provider_version=excluded.provider_version,capability=excluded.capability,
+           status='running',base_generation=excluded.base_generation,last_error=NULL,
+           lease_owner=excluded.lease_owner,lease_token=excluded.lease_token,
+           lease_expires_epoch=excluded.lease_expires_epoch,updated_at=excluded.updated_at`,
+      ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability,
+        workspace.currentGeneration, input.owner, token, leaseExpiry, this.nowIso());
+      acquired = true;
+    });
+    return acquired ? { claim: { provider: input.provider, providerVersion: input.providerVersion, language: input.language,
+      capability: input.capability, baseGeneration: workspace.currentGeneration, token, owner: input.owner }, reason: "acquired" }
+      : { claim: null, reason: "leased" };
+  }
+
+  heartbeatPrecisionProvider(claim: PrecisionClaim, leaseMs = 30_000): boolean {
+    const expiry = Date.parse(this.nowIso()) + leaseMs;
+    const result = this.db.prepare(
+      `UPDATE precision_provider_state SET lease_expires_epoch=?,updated_at=?
+       WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=? AND base_generation=?`,
+    ).run(expiry, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
+    return Number(result.changes) === 1;
+  }
+
+  commitPrecisionOverlay(claim: PrecisionClaim, commit: PrecisionCommit): boolean {
+    let committed = false;
+    this.transaction(() => {
+      const current = this.getWorkspace().currentGeneration;
+      const state = this.db.prepare(
+        "SELECT status,lease_token,lease_owner,base_generation FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+      ).get(this.workspace.id, claim.provider);
+      if (current !== claim.baseGeneration || !state || stringValue(state.status) !== "running" ||
+          stringValue(state.lease_token) !== claim.token || stringValue(state.lease_owner) !== claim.owner ||
+          numberValue(state.base_generation) !== claim.baseGeneration) return;
+      const revision = this.getPrecisionRevision() + 1;
+      this.db.prepare("DELETE FROM precision_edges WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
+      const insert = this.db.prepare(
+        `INSERT INTO precision_edges(workspace_id,provider,source_id,target_id,kind,status,confidence,resolution_kind,evidence_json,base_generation,precision_revision)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      );
+      const sorted = [...commit.edges].sort((left, right) =>
+        `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
+      for (const edge of sorted) insert.run(this.workspace.id, claim.provider, edge.sourceId, edge.targetId, edge.kind,
+        edge.status, edge.confidence, edge.resolutionKind, JSON.stringify(edge.evidence), claim.baseGeneration, revision);
+      const resolved = sorted.filter((edge) => edge.status === "resolved").length;
+      const rejected = sorted.filter((edge) => edge.status === "rejected").length;
+      this.db.prepare("UPDATE workspaces SET precision_revision=?,updated_at=? WHERE id=?")
+        .run(revision, this.nowIso(), this.workspace.id);
+      this.db.prepare(
+        `UPDATE precision_provider_state SET status=?,precision_revision=?,eligible_edges=?,resolved_edges=?,rejected_edges=?,
+         last_error=?,lease_owner=NULL,lease_token=NULL,lease_expires_epoch=NULL,updated_at=?
+         WHERE workspace_id=? AND provider=?`,
+      ).run(commit.partial ? "partial" : "ready", revision, commit.eligibleEdges, resolved, rejected,
+        commit.diagnostics.length > 0 ? commit.diagnostics.join("; ") : null, this.nowIso(), this.workspace.id, claim.provider);
+      committed = true;
+    });
+    return committed;
+  }
+
+  failPrecisionProvider(claim: PrecisionClaim, error: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
+       lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
+       AND lease_token=? AND lease_owner=? AND base_generation=?`,
+    ).run(error, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
+    return Number(result.changes) === 1;
+  }
+
   getStoredGraphPartition(language: "python" | "non-python"): StoredGraphPartition {
     const comparison = language === "python" ? "=" : "<>";
     const nodeRows = this.db.prepare(
@@ -1064,20 +1248,50 @@ export class ContextMeshDatabase implements ContextMeshStorage {
        WHERE edge.workspace_id=? AND source.language ${comparison} 'python' AND target.language ${comparison} 'python'
        ORDER BY edge.kind,edge.source_id,edge.target_id`,
     ).all(this.workspace.id);
+    const precisionRows = this.db.prepare(
+      `SELECT edge.* FROM precision_edges edge
+       JOIN precision_provider_state state ON state.workspace_id=edge.workspace_id AND state.provider=edge.provider
+       JOIN code_nodes source ON source.id=edge.source_id
+       JOIN code_nodes target ON target.id=edge.target_id
+       WHERE edge.workspace_id=? AND edge.base_generation=? AND state.status IN ('ready','partial')
+         AND source.language ${comparison} 'python' AND target.language ${comparison} 'python'
+       ORDER BY edge.kind,edge.source_id,edge.target_id,edge.provider`,
+    ).all(this.workspace.id, this.getWorkspace().currentGeneration);
     const unresolvedRows = this.db.prepare(
       `SELECT reference.* FROM unresolved_refs reference JOIN source_files file ON file.id=reference.file_id
        WHERE reference.workspace_id=? AND file.language ${comparison} 'python'
        ORDER BY reference.file_id,reference.line,reference.column`,
     ).all(this.workspace.id);
-    return {
-      nodes,
-      edges: edgeRows.filter((row) => ids.has(stringValue(row.source_id)) && ids.has(stringValue(row.target_id))).map((row) => ({
+    const baseEdges: CodeEdgeRecord[] = edgeRows.filter((row) => ids.has(stringValue(row.source_id)) && ids.has(stringValue(row.target_id))).map((row) => ({
         workspaceId: stringValue(row.workspace_id), sourceId: stringValue(row.source_id), targetId: stringValue(row.target_id),
         kind: stringValue(row.kind) as CodeEdgeKind, confidence: numberValue(row.confidence),
         resolutionKind: stringValue(row.resolution_kind) as CodeEdgeRecord["resolutionKind"], generation: numberValue(row.generation),
-        metadata: parseJson(row.metadata_json, {}), status: stringValue(row.status) as "candidate" | "resolved",
-        evidence: parseJson(row.evidence_json, []),
-      })),
+        metadata: parseJson<Record<string, unknown>>(row.metadata_json, {}), status: stringValue(row.status) as EdgeStatus,
+        evidence: parseJson<NonNullable<CodeEdgeRecord["evidence"]>>(row.evidence_json, []),
+      }));
+    const edgeKey = (edge: Pick<CodeEdgeRecord, "sourceId" | "targetId" | "kind">): string => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
+    const effective = new Map<string, CodeEdgeRecord>(baseEdges.map((edge) => [edgeKey(edge), edge]));
+    for (const row of precisionRows) {
+      const overlay: CodeEdgeRecord = {
+        workspaceId: stringValue(row.workspace_id), sourceId: stringValue(row.source_id), targetId: stringValue(row.target_id),
+        kind: stringValue(row.kind) as CodeEdgeKind, confidence: numberValue(row.confidence),
+        resolutionKind: stringValue(row.resolution_kind) as CodeEdgeRecord["resolutionKind"],
+        generation: numberValue(row.base_generation), metadata: { precisionProvider: stringValue(row.provider) },
+        status: stringValue(row.status) as EdgeStatus, evidence: parseJson(row.evidence_json, []),
+      };
+      const key = edgeKey(overlay);
+      const prior = effective.get(key);
+      if (!prior) { effective.set(key, overlay); continue; }
+      const rank = (status: EdgeStatus | undefined): number => status === "resolved" ? 3 : status === "rejected" ? 2 : 1;
+      effective.set(key, {
+        ...(rank(overlay.status) >= rank(prior.status) ? overlay : prior),
+        evidence: mergeCodeEvidence([prior.evidence, overlay.evidence]),
+        metadata: { ...prior.metadata, precisionProviders: [...new Set([...(Array.isArray(prior.metadata.precisionProviders) ? prior.metadata.precisionProviders.filter((item): item is string => typeof item === "string") : []), stringValue(row.provider)])].sort() },
+      });
+    }
+    return {
+      nodes,
+      edges: [...effective.values()].sort((left, right) => edgeKey(left).localeCompare(edgeKey(right))),
       unresolvedReferences: unresolvedRows.map((row) => ({
         workspaceId: stringValue(row.workspace_id), fileId: stringValue(row.file_id), sourceNodeId: nullableString(row.source_node_id),
         kind: stringValue(row.kind), rawName: stringValue(row.raw_name), qualifier: nullableString(row.qualifier),
@@ -1829,6 +2043,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const acceptedSemantic = claimValid ? semantic : undefined;
       this.supersedeSemanticClaim("code", claimValid ? semanticClaim?.attemptToken : undefined);
       this.db.prepare("DELETE FROM code_nodes_fts").run();
+      this.db.prepare(
+        `UPDATE precision_provider_state SET
+           status=CASE WHEN status='not_configured' THEN status ELSE 'stale' END,
+           lease_owner=NULL,lease_token=NULL,lease_expires_epoch=NULL,updated_at=?
+         WHERE workspace_id=?`,
+      ).run(timestamp, this.workspace.id);
       this.db.prepare("DELETE FROM unresolved_refs WHERE workspace_id = ?").run(this.workspace.id);
       this.db.prepare("DELETE FROM code_edges WHERE workspace_id = ?").run(this.workspace.id);
       this.db.prepare("DELETE FROM code_nodes WHERE workspace_id = ?").run(this.workspace.id);
@@ -3062,6 +3282,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           }
         : null,
       operational: this.getOperationalStatus(),
+      precision: {
+        revision: this.getPrecisionRevision(),
+        providers: this.getPrecisionProviderStates(),
+      },
     };
   }
 
@@ -3137,37 +3361,31 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const edges: TraceEdgeResult[] = [];
     const visited = new Set<string>([start.id]);
     const queue: Array<{ id: string; depth: number }> = [{ id: start.id, depth: 0 }];
-    const kindClause = edgeKinds?.length ? ` AND kind IN (${placeholders(edgeKinds.length)})` : "";
+    const allowedKinds = edgeKinds ? new Set(edgeKinds) : null;
+    const partitions = [this.getStoredGraphPartition("non-python"), this.getStoredGraphPartition("python")];
+    const effectiveEdges = partitions.flatMap((partition) => partition.edges);
 
     while (queue.length > 0 && edges.length < limit) {
       const current = queue.shift();
       if (!current || current.depth >= maxDepth) continue;
-      let relationClause: string;
-      if (direction === "out") relationClause = "source_id = ?";
-      else if (direction === "in") relationClause = "target_id = ?";
-      else relationClause = "(source_id = ? OR target_id = ?)";
-      const directionParams = direction === "both" ? [current.id, current.id] : [current.id];
-      const rows = this.db
-        .prepare(
-          `SELECT source_id, target_id, kind, confidence, resolution_kind, status, evidence_json
-           FROM code_edges WHERE workspace_id = ? AND ${relationClause}${kindClause}
-           ORDER BY kind, source_id, target_id`,
-        )
-        .all(this.workspace.id, ...directionParams, ...(edgeKinds ?? []));
+      const rows = effectiveEdges.filter((edge) => (direction === "out" ? edge.sourceId === current.id
+        : direction === "in" ? edge.targetId === current.id : edge.sourceId === current.id || edge.targetId === current.id) &&
+        (!allowedKinds || allowedKinds.has(edge.kind)))
+        .sort((left, right) => `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
       for (const row of rows) {
         if (edges.length >= limit) break;
-        const sourceId = stringValue(row.source_id);
-        const targetId = stringValue(row.target_id);
+        const sourceId = row.sourceId;
+        const targetId = row.targetId;
         const nextId = sourceId === current.id ? targetId : sourceId;
         edges.push({
           sourceId,
           targetId,
-          kind: stringValue(row.kind) as CodeEdgeKind,
-          confidence: numberValue(row.confidence),
-          resolutionKind: stringValue(row.resolution_kind),
+          kind: row.kind,
+          confidence: row.confidence,
+          resolutionKind: row.resolutionKind,
           depth: current.depth + 1,
-          status: stringValue(row.status) as "candidate" | "resolved",
-          evidence: parseJson(row.evidence_json, []),
+          status: row.status ?? "resolved",
+          evidence: row.evidence,
         });
         if (!visited.has(nextId)) {
           visited.add(nextId);
@@ -3178,28 +3396,21 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
     }
 
-    const visitedIds = [...visited];
-    const unresolvedRows = visitedIds.length
-      ? this.db
-          .prepare(
-            `SELECT source_node_id, kind, raw_name, line, column, confidence, evidence_json FROM unresolved_refs
-             WHERE workspace_id = ? AND source_node_id IN (${placeholders(visitedIds.length)})
-             ORDER BY line, column LIMIT 100`,
-          )
-          .all(this.workspace.id, ...visitedIds)
-      : [];
+    const unresolvedRows = partitions.flatMap((partition) => partition.unresolvedReferences)
+      .filter((item) => item.sourceNodeId !== null && visited.has(item.sourceNodeId))
+      .sort((left, right) => left.line - right.line || left.column - right.column).slice(0, 100);
     return {
       start,
       nodes: [...nodes.values()],
       edges,
       unresolved: unresolvedRows.map((row) => ({
-        sourceNodeId: nullableString(row.source_node_id),
-        kind: stringValue(row.kind),
-        rawName: stringValue(row.raw_name),
-        line: numberValue(row.line),
-        column: numberValue(row.column),
-        confidence: numberValue(row.confidence),
-        evidence: parseJson(row.evidence_json, []),
+        sourceNodeId: row.sourceNodeId,
+        kind: row.kind,
+        rawName: row.rawName,
+        line: row.line,
+        column: row.column,
+        confidence: row.confidence ?? 0.5,
+        evidence: row.evidence,
       })),
       truncated: edges.length >= limit,
     };

@@ -1,6 +1,6 @@
 import type { CodeNodeRecord } from "../../contracts.js";
 
-export type AdapterFamily = "typescript/javascript" | "python";
+export type AdapterFamily = "typescript/javascript" | "python" | "go" | "rust" | "java" | "csharp";
 
 const TYPESCRIPT_DIALECTS = new Set<CodeNodeRecord["language"]>([
   "typescript", "tsx", "javascript", "jsx", "mjs", "cjs",
@@ -9,6 +9,10 @@ const TYPESCRIPT_DIALECTS = new Set<CodeNodeRecord["language"]>([
 export function adapterFamily(node: Pick<CodeNodeRecord, "language" | "ecosystem">): AdapterFamily | null {
   if (node.ecosystem === "npm" || TYPESCRIPT_DIALECTS.has(node.language)) return "typescript/javascript";
   if (node.ecosystem === "pypi" || node.language === "python") return "python";
+  if (node.ecosystem === "go" || node.language === "go") return "go";
+  if (node.ecosystem === "cargo" || node.language === "rust") return "rust";
+  if (node.ecosystem === "maven" || node.language === "java") return "java";
+  if (node.ecosystem === "nuget" || node.language === "csharp") return "csharp";
   return null;
 }
 

@@ -6,7 +6,8 @@ ContextMesh is a single-workspace, local-first MCP process. The stdio transport 
 flowchart LR
   Client["MCP client / CLI"] --> App["ContextMesh application"]
   App --> Index["Graph index coordinator"]
-  Index --> Kernel["Rust graph-kernel sidecar<br/>Python Tree-sitter + native watcher"]
+  Index --> Kernel["Syntax providers<br/>TS/Python/Go/Rust/Java/C#"]
+  Index --> Precision["Precision overlays<br/>TypeChecker / resolver / go/types"]
   App --> Memory["Memory lifecycle"]
   App --> Context["Context assembler"]
   App -. "explicit local model only" .-> Semantic["Transformers.js + ONNX Runtime CPU"]
@@ -17,9 +18,11 @@ flowchart LR
   Context --> Source["Hash-validated source snippets"]
 ```
 
-## Code generations
+## Code generations and precision revisions
 
-v0.4 keeps TypeScript/JavaScript on the TypeScript Compiler AST plus the same-`Program` TypeChecker overlay. Python parsing and syntax-fact extraction run in the `contextmesh.graph-kernel/v1` Rust sidecar; Node applies the unchanged scanner scope, project layout, canonical IDs, confidence/evidence policy, and commit fence. The sidecar parses changed Python files in parallel and returns a deterministically ordered parser-neutral batch. The portable WASM provider is explicit (`CONTEXTMESH_KERNEL_POLICY=portable`) rather than an implicit partial fallback. Spawn/exit, timeout, malformed JSON/schema, request-ID, protocol, grammar, response-size, and exact-file-set validation all fail the run before commit with a stable `KERNEL_*` diagnostic.
+v0.5 separates the active base graph generation from precision overlays. Migration 009 adds a monotonic workspace `precision_revision`, provider state/lease rows, and generation-fenced precision edges. Base commits never wait on an unavailable external provider. Overlay commits verify provider lease ownership and the active base generation, increment only `precision_revision`, and leave `current_generation` unchanged. Effective traces merge evidence deterministically and expose candidate, rejected, and resolved states. Cache and request snapshots include both revisions.
+
+TypeScript/JavaScript remain on the Compiler AST and TypeChecker. Python syntax facts run in the `contextmesh.graph-kernel/v1` Rust sidecar and are refined by the local alias/package resolver. Go, Rust, Java, and C# use parser-neutral deterministic syntax adapters; Go optionally invokes the packaged standard-library `go/types` helper. Rust's `rust-analyzer` capability is explicitly optional, while Java/C# are reported as syntax prototypes. The portable Python WASM policy remains explicit (`CONTEXTMESH_KERNEL_POLICY=portable`).
 
 The optional native watcher feeds a bounded, sorted, debounced queue. Only supported source/config paths are admitted; ignored SQLite/build events do not schedule work, preventing self-generated feedback loops. The normal scanner still re-applies ignore, secret, symlink, and size policy. Events received during a build remain queued for the next batch. Startup performs durable-baseline reconciliation; source startup failure degrades and retries without preventing the MCP server from serving the last generation. Migration 008 persists component health in `operational_status`, while failed run fences retain graph freshness evidence. One application writer builds in RAM and commits one generation.
 
@@ -27,7 +30,7 @@ The generation cache hydrates forward/reverse edges and bounded search/trace ent
 
 Successful commits atomically replace generation-keyed in-memory forward/reverse maps and bounded search/trace caches. A failed or intermediate build never changes active cache state. SQLite graph replacement uses reused prepared statements inside the existing single transaction, including FTS, foreign keys, memory relinks, audit/semantic state, and generation transition.
 
-The scanner hashes supported TypeScript and JavaScript files after applying built-in secret/build exclusions, `.gitignore`, and `.contextmeshignore`. Symlinks and files larger than 2 MiB are skipped. When `tsconfig.json` or `jsconfig.json` exists, TypeScript's configured `fileNames` intersected with scanner policy is the project scope; a synthetic NodeNext project uses every scanner result otherwise. Sorted file names, effective compiler options, the resolved config/extends chain, and the root `package.json` are hashed so configuration-only changes cannot produce a false no-op.
+The scanner hashes supported TypeScript, JavaScript, Python, Go, Rust, Java, and C# files after applying built-in secret/build exclusions, `.gitignore`, and `.contextmeshignore`. Symlinks and files larger than 2 MiB are skipped. TypeScript configuration limits only the TypeScript family; other language files remain in scope. Language manifests participate in their adapter config hash.
 
 Parsing and TypeChecker analysis happen before the write transaction. On commit, files, nodes, edges, unresolved evidence, FTS rows, stale memory locators, the index run, and `current_generation` transition atomically. A failed run never changes the active generation, remains persisted across restarts, and retries use a new monotonically increasing run generation. Successful, partial, and verified no-op runs form a separate success fence; a no-op advances that fence without changing the active graph generation.
 

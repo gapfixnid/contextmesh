@@ -41,6 +41,17 @@ function legacyDatabase(): { root: string; databasePath: string } {
   return { root, databasePath };
 }
 
+function phase4Database(): { root: string; databasePath: string } {
+  const fixture = legacyDatabase();
+  const db = new DatabaseSync(fixture.databasePath);
+  for (const name of readdirSync(path.join(process.cwd(), "migrations")).filter((item) => /^00[78]_/.test(item)).sort()) {
+    db.exec(readFileSync(path.join(process.cwd(), "migrations", name), "utf8"));
+    db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(Number(name.slice(0, 3)), name, "2026-01-01T00:00:00.000Z");
+  }
+  db.close();
+  return fixture;
+}
+
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("migration 007", () => {
@@ -68,6 +79,35 @@ describe("migration 007", () => {
     const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
     expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=7").get()?.value).toBe(0);
     expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('source_files') WHERE name='ecosystem'").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+});
+
+describe("migration 009", () => {
+  it("preserves the Phase 4 graph and memory links while adding independent precision state", () => {
+    const fixture = phase4Database();
+    const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+    expect(database.getPrecisionRevision()).toBe(0);
+    database.close();
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
+    expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('workspaces') WHERE name='precision_revision'").get()?.value).toBe(1);
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=9").get()?.value).toBe(1);
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("rolls migration 009 back atomically when validation fails", () => {
+    const fixture = phase4Database();
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      migrationValidationHook: (version) => { if (version === 9) throw new Error("injected precision migration failure"); },
+    })).toThrow("injected precision migration failure");
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=9").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('workspaces') WHERE name='precision_revision'").get()?.value).toBe(0);
     expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     raw.close();

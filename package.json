@@ -1,6 +1,6 @@
 {
   "name": "contextmesh",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Local-first MCP code intelligence and long-term memory server",
   "type": "module",
   "bin": {
@@ -16,6 +16,7 @@
     "dist",
     "docs",
     "migrations",
+    "native/go-provider",
     "README.md",
     "LICENSE"
   ],
@@ -39,6 +40,7 @@
     "evaluate:quality": "tsx scripts/evaluate-quality.ts",
     "evaluate:multilang": "tsx scripts/evaluate-multilang.ts",
     "evaluate:v04": "tsx scripts/evaluate-v04.ts",
+    "evaluate:v05": "tsx scripts/evaluate-v05.ts",
     "verify:v04-artifact": "tsx scripts/verify-v04-artifact.ts",
     "verify:native-supply-chain": "tsx scripts/verify-native-supply-chain.ts",
     "compare:parity": "tsx scripts/compare-parity.ts",

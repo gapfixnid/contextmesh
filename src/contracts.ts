@@ -40,7 +40,11 @@ export type MemoryType = (typeof MEMORY_TYPES)[number];
 export type AssertionStatus = (typeof ASSERTION_STATUSES)[number];
 export type IndexMode = "full" | "incremental";
 export type AnalysisLevel = "syntax" | "resolved" | "typed";
-export type EvidenceSource = "syntax" | "type_checker" | "manifest" | "heuristic";
+export type EvidenceSource = "syntax" | "resolver" | "type_checker" | "language_server" | "manifest" | "heuristic";
+export type CodeLanguage = "typescript" | "tsx" | "javascript" | "jsx" | "mjs" | "cjs" | "python" | "go" | "rust" | "java" | "csharp";
+export type CodeEcosystem = "npm" | "pypi" | "go" | "cargo" | "maven" | "nuget";
+export type EdgeStatus = "candidate" | "rejected" | "resolved";
+export type PrecisionProviderStatus = "not_configured" | "running" | "ready" | "stale" | "failed" | "partial";
 
 export interface WorkspaceSnapshot {
   graphGeneration: number;
@@ -173,8 +177,8 @@ export interface IndexedSourceFile {
   relativePath: string;
   pathKey: string;
   absolutePath: string;
-  language: "typescript" | "tsx" | "javascript" | "jsx" | "mjs" | "cjs" | "python";
-  ecosystem?: "npm" | "pypi";
+  language: CodeLanguage;
+  ecosystem?: CodeEcosystem;
   sourceRoot?: string;
   adapterConfigHash?: string;
   content: string;
@@ -207,7 +211,7 @@ export interface CodeNodeRecord {
   generation: number;
   metadata: Record<string, unknown>;
   language?: IndexedSourceFile["language"];
-  ecosystem?: "npm" | "pypi";
+  ecosystem?: CodeEcosystem;
   nativeKind?: string;
   analysisLevel?: AnalysisLevel;
 }
@@ -221,7 +225,7 @@ export interface CodeEdgeRecord {
   resolutionKind: "exact" | "local" | "import" | "heuristic";
   generation: number;
   metadata: Record<string, unknown>;
-  status?: "candidate" | "resolved";
+  status?: EdgeStatus;
   evidence?: CodeEvidence[];
 }
 
@@ -262,7 +266,7 @@ export interface AdapterStats {
   precisionInvocations: number;
   configHash: string;
   providerVersions?: Record<string, string>;
-  status?: "ready" | "partial" | "unavailable";
+  status?: "ready" | "partial" | "unavailable" | "not_configured" | "failed" | "stale";
   coverage?: number;
   diagnostics?: AdapterDiagnostic[];
 }
@@ -282,6 +286,23 @@ export interface AdapterStateRecord {
 }
 
 export type AdapterStateMap = Record<string, AdapterStateRecord>;
+
+export interface PrecisionProviderState {
+  language: string;
+  provider: string;
+  providerVersion: string;
+  capability: AnalysisLevel;
+  status: PrecisionProviderStatus;
+  baseGeneration: number;
+  precisionRevision: number;
+  eligibleEdges: number;
+  resolvedEdges: number;
+  rejectedEdges: number;
+  coverage: number;
+  lastError: string | null;
+  leaseExpiresAt: string | null;
+  updatedAt: string;
+}
 
 export interface MemoryFragmentRecord {
   id: string;
