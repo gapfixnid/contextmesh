@@ -11,6 +11,7 @@ export interface TypeScriptCompilerConfiguration {
   diagnostics: string[];
   fatalDiagnostics: string[];
   configHash: string;
+  configurationFiles: string[];
   hasConfig: boolean;
   configuredFileNames: Set<string>;
 }
@@ -58,10 +59,16 @@ export function discoverTypeScriptProject(rootPath: string, input: ProjectDiscov
   };
   let configuredFileNames = (input.sourceFiles ?? []).map((file) => normalizePathKey(file.absolutePath, caseSensitivePaths));
   const configContents = new Map<string, string>();
+  const configurationFiles = new Map<string, string>();
   const trackedReadFile = (fileName: string): string | undefined => {
     const content = ts.sys.readFile(fileName);
     if (content !== undefined && fileName.toLocaleLowerCase("en-US").endsWith(".json")) {
-      configContents.set(normalizePathKey(fileName, caseSensitivePaths), content);
+      const key = normalizePathKey(fileName, caseSensitivePaths);
+      configContents.set(key, content);
+      configurationFiles.set(
+        key,
+        path.isAbsolute(fileName) ? path.resolve(fileName) : path.resolve(rootPath, fileName),
+      );
     }
     return content;
   };
@@ -97,7 +104,9 @@ export function discoverTypeScriptProject(rootPath: string, input: ProjectDiscov
     packageJsonHash: sha256(packageJson),
   }));
   const compiler: TypeScriptCompilerConfiguration = {
-    options, diagnostics, fatalDiagnostics, configHash, hasConfig: configPath !== undefined,
+    options, diagnostics, fatalDiagnostics, configHash,
+    configurationFiles: [...configurationFiles.values()].sort((left, right) => left.localeCompare(right)),
+    hasConfig: configPath !== undefined,
     configuredFileNames: new Set(configuredFileNames),
   };
   return {

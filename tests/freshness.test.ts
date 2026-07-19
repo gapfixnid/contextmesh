@@ -14,6 +14,28 @@ afterEach(() => {
 });
 
 describe("Phase 3 freshness coordination", () => {
+  it("reuses project discovery only while the complete source and configuration probes match", async () => {
+    const root = createFixtureWorkspace();
+    workspaces.push(root);
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const adapter = app.code.indexer.coordinator.adapter("typescript/javascript")!;
+      const discovery = vi.spyOn(adapter, "discoverProject");
+
+      await app.searchCode({ query: "double", kinds: ["function"] });
+      await app.searchCode({ query: "Calculator", kinds: ["class"] });
+      expect(discovery).not.toHaveBeenCalled();
+
+      writeWorkspaceFile(root, "src/newly-included.ts", "export const newlyIncluded = true;\n");
+      const changed = await app.searchCode({ query: "newlyIncluded" });
+      expect(discovery).toHaveBeenCalled();
+      expect(changed.warnings).toContainEqual(expect.stringContaining("INDEX_STALE"));
+    } finally {
+      await app.close();
+    }
+  });
+
   it("does not latch generation zero and strictly rebuilds a missing process baseline", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);

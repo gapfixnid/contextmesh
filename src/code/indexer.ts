@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -55,11 +56,23 @@ export interface RequestGenerationState {
   stale: boolean;
 }
 
+interface CachedProjectConfiguration {
+  compiler: TypeScriptCompilerConfiguration;
+  pythonProject: ProjectDescriptor;
+  typescriptProject: ProjectDescriptor;
+  coreProjects: Record<(typeof CORE_LANGUAGE_IDS)[number], ProjectDescriptor>;
+  configHash: string;
+  configurationFiles: string[];
+  configurationProbe: string;
+}
+
 interface ProcessBaseline {
   generation: number;
   successFence: number;
   configHash: string;
   files: ReadonlyMap<string, { sizeBytes: number; mtimeMs: number }>;
+  scannedPathKeys: ReadonlySet<string>;
+  project: CachedProjectConfiguration;
 }
 
 interface WorkspaceRuntime {
@@ -67,6 +80,20 @@ interface WorkspaceRuntime {
   readonly freshnessMutex: AsyncMutex;
   baseline: ProcessBaseline | null;
 }
+
+const ROOT_CONFIGURATION_FILES = new Set([
+  "tsconfig.json",
+  "jsconfig.json",
+  "package.json",
+  "pyproject.toml",
+  "go.mod",
+  "go.work",
+  "Cargo.toml",
+  "Cargo.lock",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+]);
 
 const WORKSPACE_RUNTIMES = new Map<string, WorkspaceRuntime>();
 
@@ -325,24 +352,16 @@ function diagnosticText(diagnostic: ts.Diagnostic): string {
 
 type CompilerConfiguration = TypeScriptCompilerConfiguration;
 
-interface ProjectScan {
+interface ProjectScan extends CachedProjectConfiguration {
   scan: { files: ScannedFile[]; diagnostics: string[] };
   files: ScannedFile[];
-  compiler: CompilerConfiguration;
-  pythonProject: ProjectDescriptor;
-  typescriptProject: ProjectDescriptor;
-  coreProjects: Record<(typeof CORE_LANGUAGE_IDS)[number], ProjectDescriptor>;
-  configHash: string;
+  scannedPathKeys: ReadonlySet<string>;
 }
 
-interface MetadataProjectScan {
+interface MetadataProjectScan extends CachedProjectConfiguration {
   scan: ReturnType<typeof scanWorkspaceMetadata>;
   files: ScannedFileMetadata[];
-  compiler: CompilerConfiguration;
-  pythonProject: ProjectDescriptor;
-  typescriptProject: ProjectDescriptor;
-  coreProjects: Record<(typeof CORE_LANGUAGE_IDS)[number], ProjectDescriptor>;
-  configHash: string;
+  scannedPathKeys: ReadonlySet<string>;
 }
 
 function scriptKindFor(fileName: string): ts.ScriptKind {
@@ -1040,7 +1059,7 @@ export class CodeIndexer {
     stateAtStart: FreshnessState,
     baseline: ProcessBaseline,
   ): Promise<RequestGenerationState> {
-    const project = await this.loadMetadataProjectAsync();
+    const project = await this.loadMetadataProjectAsync(baseline);
     if (project.compiler.fatalDiagnostics.length > 0) {
       const recorded = this.recordStaleUnlocked(
         `Project configuration is invalid: ${project.compiler.fatalDiagnostics.join("; ")}`,
@@ -1120,6 +1139,8 @@ export class CodeIndexer {
       successFence: stateBeforeInstall.successFenceGeneration,
       configHash: project.configHash,
       files: candidateFiles,
+      scannedPathKeys: project.scannedPathKeys,
+      project: this.cachedProjectConfiguration(project),
     };
     return this.requestState(stateBeforeInstall);
   }
@@ -1135,6 +1156,8 @@ export class CodeIndexer {
           { sizeBytes: file.sizeBytes, mtimeMs: file.mtimeMs },
         ]),
       ),
+      scannedPathKeys: project.scannedPathKeys,
+      project: this.cachedProjectConfiguration(project),
     };
   }
 
@@ -1143,12 +1166,21 @@ export class CodeIndexer {
     return this.buildMetadataProject(scan);
   }
 
-  private async loadMetadataProjectAsync(): Promise<MetadataProjectScan> {
+  private async loadMetadataProjectAsync(
+    baseline: ProcessBaseline,
+  ): Promise<MetadataProjectScan> {
     const scan = await scanWorkspaceMetadataFast(
       this.rootPath,
       this.caseSensitivePaths,
       this.metadataStats,
     );
+    const scannedPathKeys = new Set(scan.files.map((file) => file.pathKey));
+    const sourceSetUnchanged = scannedPathKeys.size === baseline.scannedPathKeys.size
+      && [...scannedPathKeys].every((key) => baseline.scannedPathKeys.has(key));
+    const configuration = this.configurationProbe(baseline.project.configurationFiles);
+    if (sourceSetUnchanged && configuration.hash === baseline.project.configurationProbe) {
+      return this.buildCachedMetadataProject(scan, scannedPathKeys, baseline.project);
+    }
     return this.buildMetadataProject(scan);
   }
 
@@ -1169,7 +1201,83 @@ export class CodeIndexer {
       ? scan.files.filter((file) => !isTypeScriptLanguage(file.language) ||
           compiler.configuredFileNames.has(normalizePathKey(file.absolutePath, this.caseSensitivePaths)))
       : scan.files;
-    return { scan, files, compiler, pythonProject, typescriptProject, coreProjects, configHash };
+    const configuration = this.configurationProbe(compiler.configurationFiles);
+    return {
+      scan,
+      files,
+      compiler,
+      pythonProject,
+      typescriptProject,
+      coreProjects,
+      configHash,
+      configurationFiles: configuration.files,
+      configurationProbe: configuration.hash,
+      scannedPathKeys: new Set(scan.files.map((file) => file.pathKey)),
+    };
+  }
+
+  private buildCachedMetadataProject(
+    scan: ReturnType<typeof scanWorkspaceMetadata>,
+    scannedPathKeys: ReadonlySet<string>,
+    project: CachedProjectConfiguration,
+  ): MetadataProjectScan {
+    const files = project.compiler.hasConfig
+      ? scan.files.filter((file) => !isTypeScriptLanguage(file.language) ||
+          project.compiler.configuredFileNames.has(
+            normalizePathKey(file.absolutePath, this.caseSensitivePaths),
+          ))
+      : scan.files;
+    return { scan, files, scannedPathKeys, ...project };
+  }
+
+  private cachedProjectConfiguration(
+    project: CachedProjectConfiguration,
+  ): CachedProjectConfiguration {
+    return {
+      compiler: project.compiler,
+      pythonProject: project.pythonProject,
+      typescriptProject: project.typescriptProject,
+      coreProjects: project.coreProjects,
+      configHash: project.configHash,
+      configurationFiles: project.configurationFiles,
+      configurationProbe: project.configurationProbe,
+    };
+  }
+
+  private configurationProbe(extraFiles: readonly string[]): {
+    hash: string;
+    files: string[];
+  } {
+    const filesByKey = new Map<string, string>();
+    for (const file of extraFiles) {
+      filesByKey.set(normalizePathKey(path.resolve(file), this.caseSensitivePaths), path.resolve(file));
+    }
+    let rootReadError: string | null = null;
+    let pythonSourceRoot: "directory" | "other" | "missing" = "missing";
+    try {
+      for (const entry of readdirSync(this.rootPath, { withFileTypes: true })) {
+        if (entry.name === "src") pythonSourceRoot = entry.isDirectory() ? "directory" : "other";
+        if (!ROOT_CONFIGURATION_FILES.has(entry.name)
+          && !entry.name.toLocaleLowerCase("en-US").endsWith(".csproj")) continue;
+        const absolutePath = path.join(this.rootPath, entry.name);
+        filesByKey.set(normalizePathKey(absolutePath, this.caseSensitivePaths), absolutePath);
+      }
+    } catch (error) {
+      rootReadError = error instanceof Error ? error.message : String(error);
+    }
+    const entries = [...filesByKey.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, file]) => {
+        try {
+          return [key, sha256(readFileSync(file))] as const;
+        } catch {
+          return [key, null] as const;
+        }
+      });
+    return {
+      hash: sha256(JSON.stringify({ entries, pythonSourceRoot, rootReadError })),
+      files: [...filesByKey.values()].sort((left, right) => left.localeCompare(right)),
+    };
   }
 
   private loadProject(): ProjectScan {
@@ -1193,6 +1301,9 @@ export class CodeIndexer {
       typescriptProject: metadata.typescriptProject,
       coreProjects: metadata.coreProjects,
       configHash: metadata.configHash,
+      configurationFiles: metadata.configurationFiles,
+      configurationProbe: metadata.configurationProbe,
+      scannedPathKeys: metadata.scannedPathKeys,
     };
   }
 
