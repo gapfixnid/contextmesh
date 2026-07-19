@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import type { Envelope, MemoryFragmentRecord } from "../src/contracts.js";
@@ -490,6 +490,20 @@ export interface NumericOperation {
     expect(remembered.data.fragment.state).toBe("active");
     expect(remembered.warnings).toContainEqual(expect.stringContaining("SEMANTIC_UNAVAILABLE"));
     expect(app.database.getSemanticState("memory")?.status).toBe("unavailable");
+    const codeState = app.database.getSemanticState("code")!;
+    const memoryState = app.database.getSemanticState("memory")!;
+    expect(codeState.eligibleEntityCount).toBeGreaterThan(0);
+    expect(memoryState.eligibleEntityCount).toBeGreaterThan(0);
+    const eligibleScan = vi.spyOn(app.database, "getEligibleSemanticEntityKeys");
+    const context = await app.getContext({
+      query: "durable write",
+      include: ["code", "memory"],
+      tokenBudget: 2_000,
+    });
+    expect(context.warnings).toContainEqual(expect.stringContaining("SEMANTIC_UNAVAILABLE"));
+    expect(eligibleScan).not.toHaveBeenCalled();
+    expect(app.database.getSemanticState("code")?.eligibleEntityCount).toBe(codeState.eligibleEntityCount);
+    expect(app.database.getSemanticState("memory")?.eligibleEntityCount).toBe(memoryState.eligibleEntityCount);
     await app.close();
   });
 

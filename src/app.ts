@@ -120,7 +120,7 @@ export class ContextMeshApp {
     this.semantic = options.semantic ? new SemanticService(this.database, options.semantic) : null;
     this.code = new CodeService(this.database, options.freshnessMode ?? "fast", this.semantic);
     this.memory = new MemoryService(this.database, this.semantic);
-    this.context = new ContextAssembler(this.database, this.code.indexer);
+    this.context = new ContextAssembler(this.database, this.code.indexer, (input) => this.code.trace(input));
     this.watcher = options.watcher ? new GraphWatchCoordinator(
       rootPath,
       async () => { await this.indexWorkspace({ mode: "incremental" }); },

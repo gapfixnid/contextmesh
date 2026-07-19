@@ -270,6 +270,10 @@ describe("Phase 3 freshness coordination", () => {
         include: ["code"],
         tokenBudget: 8_000,
       });
+      const traceCache = app.code.cacheStats();
+      expect(traceCache.traceEntries).toBe(1);
+      app.context.assembleDatabase({ query: "parallel", include: ["code"], tokenBudget: 8_000 });
+      expect(app.code.cacheStats().traceEntries).toBe(traceCache.traceEntries);
       const expectedPaths = assembled.candidates
         .filter((candidate) => candidate.kind === "code")
         .map((candidate) => (candidate.value as CodeSearchResult).relativePath);

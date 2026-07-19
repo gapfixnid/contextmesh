@@ -1,4 +1,4 @@
-import type { GetContextInput, MemoryFragmentRecord } from "../contracts.js";
+import type { GetContextInput, MemoryFragmentRecord, TraceCodeInput } from "../contracts.js";
 import { ContextMeshError } from "../errors.js";
 import type {
   CodeSearchResult,
@@ -85,10 +85,17 @@ function planeSources<T extends UnifiedContextValue>(
 export class ContextAssembler {
   private readonly database: ContextMeshStorage;
   private readonly indexer: CodeIndexer;
+  private readonly traceCode: (input: TraceCodeInput) => ReturnType<ContextMeshStorage["traceCode"]>;
 
-  constructor(database: ContextMeshStorage, indexer: CodeIndexer) {
+  constructor(
+    database: ContextMeshStorage,
+    indexer: CodeIndexer,
+    traceCode: (input: TraceCodeInput) => ReturnType<ContextMeshStorage["traceCode"]> = (input) =>
+      database.traceCode(input.symbolId, input.direction, input.edgeKinds, input.depth, input.limit),
+  ) {
     this.database = database;
     this.indexer = indexer;
+    this.traceCode = traceCode;
   }
 
   assembleDatabase(
@@ -173,7 +180,7 @@ export class ContextAssembler {
       );
       traceStartId ??= preliminary[0]?.value.kind === "code" ? preliminary[0].value.value.id : undefined;
       if (traceStartId) {
-        const trace = this.database.traceCode(traceStartId, "both", undefined, 1, 50);
+        const trace = this.traceCode({ symbolId: traceStartId, direction: "both", depth: 1, limit: 50 });
         relationships = trace.edges;
         const verificationEdges = trace.edges.filter((edge) => edge.status === "candidate" || edge.confidence < 0.9);
         if (verificationEdges.length > 0) {

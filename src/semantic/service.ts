@@ -400,8 +400,10 @@ export class SemanticService {
     };
   }
 
-  private durableUnavailableFailure(plane: SemanticPlane): SemanticFailureDiagnostic | null {
-    const state = this.database.getSemanticState(plane);
+  private durableUnavailableFailure(
+    plane: SemanticPlane,
+    state = this.database.getSemanticState(plane),
+  ): SemanticFailureDiagnostic | null {
     if (
       !state?.failureClass ||
       state.failureClass === "data_repairable" ||
@@ -1054,12 +1056,16 @@ export class SemanticService {
         ]),
       ],
     });
-    const codeEligible = includeCode ? this.database.getEligibleSemanticEntityKeys("code") : new Map<string, string>();
-    const memoryEligible = includeMemory
+    const codeState = includeCode ? this.database.getSemanticState("code") : null;
+    const memoryState = includeMemory ? this.database.getSemanticState("memory") : null;
+    const codeDurableFailure = includeCode ? this.durableUnavailableFailure("code", codeState) : null;
+    const memoryDurableFailure = includeMemory ? this.durableUnavailableFailure("memory", memoryState) : null;
+    const codeEligible = includeCode && !codeDurableFailure
+      ? this.database.getEligibleSemanticEntityKeys("code")
+      : new Map<string, string>();
+    const memoryEligible = includeMemory && !memoryDurableFailure
       ? this.database.getEligibleSemanticEntityKeys("memory")
       : new Map<string, string>();
-    const codeDurableFailure = includeCode ? this.durableUnavailableFailure("code") : null;
-    const memoryDurableFailure = includeMemory ? this.durableUnavailableFailure("memory") : null;
     const empty = (plane: SemanticPlane, count: number): SemanticSearchResult => ({
       candidates: [],
       warnings: [],
@@ -1067,7 +1073,7 @@ export class SemanticService {
       validEmbeddingCount: 0,
       snapshotKey: this.currentStateKey(plane),
     });
-    if (codeEligible.size === 0 && memoryEligible.size === 0) {
+    if (codeEligible.size === 0 && memoryEligible.size === 0 && !codeDurableFailure && !memoryDurableFailure) {
       return {
       code: includeCode ? withPlaneWarnings("code", empty("code", 0)) : null,
       memory: includeMemory ? withPlaneWarnings("memory", empty("memory", 0)) : null,
@@ -1082,21 +1088,21 @@ export class SemanticService {
         : new Float32Array(APPROVED_MODEL_MANIFEST.model.dimensions);
       const blocked = (
         plane: SemanticPlane,
-        count: number,
+        state: SemanticStateRecord | null,
         failure: SemanticFailureDiagnostic,
       ): SemanticSearchResult => ({
         candidates: [],
         warnings: [this.warningForFailure(plane, failure)],
-        eligibleEntityCount: count,
-        validEmbeddingCount: this.database.getSemanticState(plane)?.validEmbeddingCount ?? 0,
-        snapshotKey: this.currentStateKey(plane),
+        eligibleEntityCount: state?.eligibleEntityCount ?? 0,
+        validEmbeddingCount: state?.validEmbeddingCount ?? 0,
+        snapshotKey: state ? this.cacheKey(plane, state) : `${plane}:absent`,
       });
       return {
         code: includeCode
           ? withPlaneWarnings(
               "code",
               codeDurableFailure
-                ? blocked("code", codeEligible.size, codeDurableFailure)
+                ? blocked("code", codeState, codeDurableFailure)
                 : this.scanStable("code", queryVector, limit, {}, needsVector ? queryVector : null),
             )
           : null,
@@ -1104,7 +1110,7 @@ export class SemanticService {
           ? withPlaneWarnings(
               "memory",
               memoryDurableFailure
-                ? blocked("memory", memoryEligible.size, memoryDurableFailure)
+                ? blocked("memory", memoryState, memoryDurableFailure)
                 : this.scanStable("memory", queryVector, limit, {}, needsVector ? queryVector : null),
             )
           : null,
