@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   addBaselineDigest,
   canonicalControlJson,
+  meetsMinimumWithTolerance,
   metricsForGateGroup,
   normalizedFixtureDigest,
   requiredChallengeRecall,
@@ -40,6 +41,9 @@ describe("acceptance-v2 evaluation contract", () => {
     expect(requiredChallengeRecall(0.7)).toBeCloseTo(0.85);
     expect(requiredChallengeRecall(0.8)).toBe(0.9);
     expect(requiredNdcg(0.95)).toBe(1);
+    expect(meetsMinimumWithTolerance(0.8, 0.8, 0.025)).toBe(true);
+    expect(meetsMinimumWithTolerance(0.775, 0.8, 0.025)).toBe(true);
+    expect(meetsMinimumWithTolerance(0.774999, 0.8, 0.025)).toBe(false);
   });
 
   it("requires a fixed SOURCE_DATE_EPOCH", () => {

@@ -98,6 +98,7 @@ jobs:
           --semantic-model "${{ runner.temp }}/contextmesh-approved-model"
           --output "artifacts/acceptance-${{ runner.os }}.json"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: acceptance-${{ runner.os }}-${{ github.sha }}
           path: artifacts/acceptance-${{ runner.os }}.json

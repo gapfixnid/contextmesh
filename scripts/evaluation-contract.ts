@@ -91,6 +91,11 @@ export function requiredNdcg(baseline: number): number {
   return Math.min(1, baseline + 0.08);
 }
 
+export function meetsMinimumWithTolerance(actual: number, target: number, tolerance: number): boolean {
+  if (![actual, target, tolerance].every(Number.isFinite) || tolerance < 0) return false;
+  return actual + tolerance >= target;
+}
+
 export function metricsForGateGroup<T extends { gateGroup: string }>(
   metrics: readonly T[],
   gateGroup: string,
@@ -120,4 +125,7 @@ export function runEvaluationContractSelfTest(): void {
     throw new Error("Challenge recall contract failed");
   }
   if (requiredNdcg(0.95) !== 1) throw new Error("nDCG ceiling contract failed");
+  if (!meetsMinimumWithTolerance(0.775, 0.8, 0.025) || meetsMinimumWithTolerance(0.774999, 0.8, 0.025)) {
+    throw new Error("Minimum threshold tolerance contract failed");
+  }
 }
