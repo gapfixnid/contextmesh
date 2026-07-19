@@ -36,6 +36,7 @@ import {
 import {
   hydrateScannedFile,
   scanWorkspaceMetadata,
+  scanWorkspaceMetadataAsync,
   type ScannedFile,
   type ScannedFileMetadata,
 } from "./scanner.js";
@@ -1032,11 +1033,11 @@ export class CodeIndexer {
     return this.requestState(current, true);
   }
 
-  private runFastCheckUnlocked(
+  private async runFastCheckUnlocked(
     stateAtStart: FreshnessState,
     baseline: ProcessBaseline,
-  ): RequestGenerationState {
-    const project = this.loadMetadataProject();
+  ): Promise<RequestGenerationState> {
+    const project = await this.loadMetadataProjectAsync();
     if (project.compiler.fatalDiagnostics.length > 0) {
       const recorded = this.recordStaleUnlocked(
         `Project configuration is invalid: ${project.compiler.fatalDiagnostics.join("; ")}`,
@@ -1136,6 +1137,17 @@ export class CodeIndexer {
 
   private loadMetadataProject(): MetadataProjectScan {
     const scan = scanWorkspaceMetadata(this.rootPath, this.caseSensitivePaths);
+    return this.buildMetadataProject(scan);
+  }
+
+  private async loadMetadataProjectAsync(): Promise<MetadataProjectScan> {
+    const scan = await scanWorkspaceMetadataAsync(this.rootPath, this.caseSensitivePaths);
+    return this.buildMetadataProject(scan);
+  }
+
+  private buildMetadataProject(
+    scan: ReturnType<typeof scanWorkspaceMetadata>,
+  ): MetadataProjectScan {
     const typescriptFiles = scan.files.filter((file) => isTypeScriptLanguage(file.language));
     const typescriptProject = this.coordinator.discoverProject("typescript/javascript", this.rootPath, {
       sourceFiles: typescriptFiles,

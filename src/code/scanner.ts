@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
 } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import createIgnore, { type Ignore } from "ignore";
@@ -58,6 +59,26 @@ const SECRET_PATTERNS = [
   /\.(?:pem|key|p12|pfx|jks)$/i,
   /(^|\/)(?:credentials?|secrets?)(?:\.|\/|$)/i,
 ];
+
+const METADATA_STAT_CONCURRENCY = 16;
+
+async function mapConcurrent<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await operation(values[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
+  return results;
+}
 
 function languageForFile(fileName: string): ScannedFileMetadata["language"] | null {
   const lower = fileName.toLocaleLowerCase("en-US");
@@ -146,6 +167,89 @@ export function scanWorkspaceMetadata(
   };
 
   visitDirectory(rootPath);
+  files.sort((left, right) => left.pathKey.localeCompare(right.pathKey));
+  return { files, diagnostics };
+}
+
+export async function scanWorkspaceMetadataAsync(
+  rootPath: string,
+  caseSensitivePaths: boolean,
+  maximumFileBytes = 2 * 1024 * 1024,
+): Promise<MetadataScanResult> {
+  const rules = loadIgnoreRules(rootPath);
+  const candidates: Array<Omit<ScannedFileMetadata, "sizeBytes" | "mtimeMs">> = [];
+  const events: Array<{ diagnostic: string } | { candidateIndex: number }> = [];
+
+  const visitDirectory = async (directory: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      events.push({
+        diagnostic: `Cannot read directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const absolutePath = path.join(directory, entry.name);
+      const relativePath = path.relative(rootPath, absolutePath).replaceAll("\\", "/");
+      const rulePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
+      if (rules.ignores(rulePath)) continue;
+      if (entry.isSymbolicLink()) {
+        events.push({ diagnostic: `Skipped symbolic link: ${relativePath}` });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await visitDirectory(absolutePath);
+        continue;
+      }
+      if (!entry.isFile() || SECRET_PATTERNS.some((pattern) => pattern.test(relativePath))) continue;
+      const language = languageForFile(entry.name);
+      if (!language) continue;
+      events.push({ candidateIndex: candidates.length });
+      candidates.push({
+        absolutePath,
+        relativePath,
+        pathKey: normalizeRelativePath(relativePath, caseSensitivePaths),
+        language,
+      });
+    }
+  };
+
+  await visitDirectory(rootPath);
+  const inspected = await mapConcurrent(candidates, METADATA_STAT_CONCURRENCY, async (candidate) => {
+    try {
+      const linkStatus = await lstat(candidate.absolutePath);
+      if (!linkStatus.isFile()) return { file: null, diagnostic: null };
+      if (linkStatus.size > maximumFileBytes) {
+        return {
+          file: null,
+          diagnostic: `Skipped oversized file (${linkStatus.size} bytes): ${candidate.relativePath}`,
+        };
+      }
+      return {
+        file: { ...candidate, sizeBytes: linkStatus.size, mtimeMs: linkStatus.mtimeMs },
+        diagnostic: null,
+      };
+    } catch (error) {
+      return {
+        file: null,
+        diagnostic: `Cannot read file ${candidate.relativePath}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  });
+  const files: ScannedFileMetadata[] = [];
+  const diagnostics: string[] = [];
+  for (const event of events) {
+    if ("diagnostic" in event) {
+      diagnostics.push(event.diagnostic);
+      continue;
+    }
+    const result = inspected[event.candidateIndex]!;
+    if (result.file) files.push(result.file);
+    if (result.diagnostic) diagnostics.push(result.diagnostic);
+  }
   files.sort((left, right) => left.pathKey.localeCompare(right.pathKey));
   return { files, diagnostics };
 }
