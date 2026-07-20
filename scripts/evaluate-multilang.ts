@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +11,7 @@ import type { EvaluationScore, EvaluationStrategy, EvaluationTask, EvaluationTra
 import { PYTHON_PROVIDER_VERSIONS } from "../src/code/languages/python.js";
 import { crossesAdapterFamily } from "../src/code/languages/family.js";
 import { sha256 } from "../src/utils.js";
+import { v04SourceEvidence } from "./v04-artifact-contract.js";
 
 interface Fixture { id: string; k: number; tokenBudget: number; files: Record<string, string>; tasks: EvaluationTask[] }
 
@@ -241,11 +241,12 @@ try {
     staleEvidence: strategyScores.every((item) => item.score.staleEvidence === 0),
     tokenBudget: orderedTraces.every((trace) => trace.estimatedTokens <= fixture.tokenBudget),
   };
-  const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const source = v04SourceEvidence();
+  if (source.dirty) throw new Error("Multilanguage evaluation requires a clean non-artifact source tree");
   const deterministic = { fixture: fixture.id, k: fixture.k, tokenBudget: fixture.tokenBudget, strategies: strategyScores, traces: orderedTraces };
   const artifact = {
-    schemaVersion: 1, fixtureDigest: sha256(canonical(fixture)),
-    git: { commit: testedCommit, baseline: "90b2a49666344caa5258d9ba4fe767fae1902f4f" },
+    schemaVersion: 2, fixtureDigest: sha256(canonical(fixture)), source,
+    baseline: { toolCommit: "90b2a49666344caa5258d9ba4fe767fae1902f4f" },
     providers: { typescript: ts.version, ...PYTHON_PROVIDER_VERSIONS },
     runtime: { os: `${process.platform}-${process.arch}`, node: process.version },
     samples: { cold: cold.length, warm: warm.length, incremental: incremental.length },

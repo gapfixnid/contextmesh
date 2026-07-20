@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { V04_SOURCE_CONTRACT, v04CommitSourceEvidence, v04SourceEvidence } from "../scripts/v04-artifact-contract.js";
 import { sha256 } from "../src/utils.js";
 
 function canonical(value: unknown): string {
@@ -18,6 +19,7 @@ describe("mixed-language evaluation artifact", () => {
     const fixtureBytes = readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "mixed-language-v1.json"));
     const fixture = JSON.parse(fixtureBytes.toString("utf8")) as { tasks: Array<{ category: string }> };
     const artifact = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "artifacts", "mixed-language-v1.json"), "utf8")) as {
+      schemaVersion: number;
       fixtureDigest: string;
       tokenBudget: number;
       strategies: Array<{ id: string; score: { falseEdges: number; staleEvidence: number; edgeRecall: number; memoryRecall: number; memoryLeak: number } }>;
@@ -27,8 +29,19 @@ describe("mixed-language evaluation artifact", () => {
       samples: { cold: number; warm: number; incremental: number };
       providers: { typescript: string };
       thresholds: Record<string, boolean>;
-      git: { commit: string; baseline: string };
+      baseline: { toolCommit: string };
+      source: {
+        contract: string;
+        treeDigest: string;
+        files: number;
+        headCommit: string;
+        headTreeDigest: string;
+        dirty: boolean;
+      };
     };
+    expect(artifact.schemaVersion).toBe(2);
+    expect(artifact.source).toMatchObject({ contract: V04_SOURCE_CONTRACT, dirty: false });
+    expect(artifact.source.headTreeDigest).toBe(artifact.source.treeDigest);
     expect(artifact.fixtureDigest).toBe(sha256(canonical(fixture)));
     expect(new Set(fixture.tasks.map((task) => task.category))).toEqual(new Set(["ts-only", "python-only", "mixed", "memory-needed", "memory-not-needed"]));
     expect(artifact.strategies.map((strategy) => strategy.id)).toEqual(["A", "B", "C", "D"]);
@@ -57,9 +70,18 @@ describe("mixed-language evaluation artifact", () => {
       // Source ZIP verification intentionally runs without repository metadata.
     }
     if (gitWorktree) {
-      expect(() => execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], {
-        cwd: process.cwd(), stdio: "pipe",
-      })).not.toThrow();
+      expect({ treeDigest: artifact.source.treeDigest, files: artifact.source.files })
+        .toEqual(v04CommitSourceEvidence(artifact.source.headCommit));
+      const current = v04SourceEvidence();
+      expect(current.dirty).toBe(false);
+      expect({ treeDigest: artifact.source.treeDigest, files: artifact.source.files })
+        .toEqual({ treeDigest: current.treeDigest, files: current.files });
+    } else {
+      const evidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");
+      expect(existsSync(evidencePath)).toBe(true);
+      const current = JSON.parse(readFileSync(evidencePath, "utf8")) as typeof artifact.source;
+      expect({ treeDigest: artifact.source.treeDigest, files: artifact.source.files })
+        .toEqual({ treeDigest: current.treeDigest, files: current.files });
     }
     for (const timing of Object.values(artifact.performanceMs)) expect(timing.p95).toBeGreaterThanOrEqual(timing.p50);
   });
