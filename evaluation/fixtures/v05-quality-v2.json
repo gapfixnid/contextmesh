@@ -1,0 +1,285 @@
+{
+  "schemaVersion": 2,
+  "id": "contextmesh-v05-tier1-resolved-edge-v2",
+  "immutable": true,
+  "description": "Pinned Tier 1 resolved-edge gold with independent development and holdout splits for TypeScript, Python, and Go.",
+  "provenance": {
+    "origin": "ContextMesh v0.5 product-design acceptance criteria plus published TypeScript, Python, and Go name-resolution semantics",
+    "authoredAgainst": "language behavior and product contracts; no runtime output is embedded as gold",
+    "frozenAt": "2026-07-20",
+    "mutationPolicy": "Any case, source, split, or expected-path change requires a new fixture id, schema version, and pinned SHA-256"
+  },
+  "thresholds": {
+    "precision": 0.9,
+    "recall": 0.9
+  },
+  "files": [
+    {
+      "path": "tsconfig.json",
+      "content": "{\"compilerOptions\":{\"module\":\"NodeNext\",\"moduleResolution\":\"NodeNext\",\"target\":\"ES2022\"},\"include\":[\"src/**/*.ts\"]}\n"
+    },
+    {
+      "path": "src/ts/target.ts",
+      "content": "export function ts_target(): number { return 1; }\nexport function ts_holdout_target(): number { return 2; }\n"
+    },
+    {
+      "path": "src/ts/distractor.ts",
+      "content": "export function selected(): number { return -1; }\nexport function holdoutSelected(): number { return -2; }\n"
+    },
+    {
+      "path": "src/ts/ambiguous-a.ts",
+      "content": "export function ts_ambiguous(): number { return 1; }\nexport function ts_holdout_ambiguous(): number { return 3; }\n"
+    },
+    {
+      "path": "src/ts/ambiguous-b.ts",
+      "content": "export function ts_ambiguous(): number { return 2; }\nexport function ts_holdout_ambiguous(): number { return 4; }\n"
+    },
+    {
+      "path": "src/ts/caller.ts",
+      "content": "import { ts_target as selected, ts_holdout_target as holdoutSelected } from './target.js';\nexport function ts_positive(): number { return selected(); }\nexport function ts_negative(): number { return ts_missing(); }\nexport function ts_ambiguous_caller(): number { return ts_ambiguous(); }\nexport function ts_holdout_positive(): number { return holdoutSelected(); }\nexport function ts_holdout_negative(): number { return ts_holdout_missing(); }\nexport function ts_holdout_ambiguous_caller(): number { return ts_holdout_ambiguous(); }\n"
+    },
+    {
+      "path": "pyproject.toml",
+      "content": "[tool.setuptools.packages.find]\nwhere=['python']\n"
+    },
+    {
+      "path": "python/pkg/__init__.py",
+      "content": ""
+    },
+    {
+      "path": "python/pkg/target.py",
+      "content": "def py_target():\n    return 1\n\ndef py_holdout_target():\n    return 2\n"
+    },
+    {
+      "path": "python/pkg/distractor.py",
+      "content": "def selected():\n    return -1\n\ndef holdout_selected():\n    return -2\n"
+    },
+    {
+      "path": "python/pkg/ambiguous_a.py",
+      "content": "def py_ambiguous():\n    return 1\n\ndef py_holdout_ambiguous():\n    return 3\n"
+    },
+    {
+      "path": "python/pkg/ambiguous_b.py",
+      "content": "def py_ambiguous():\n    return 2\n\ndef py_holdout_ambiguous():\n    return 4\n"
+    },
+    {
+      "path": "python/pkg/caller.py",
+      "content": "from pkg.target import py_target as selected\nfrom pkg.target import py_holdout_target as holdout_selected\n\ndef py_positive():\n    return selected()\n\ndef py_negative():\n    return py_missing()\n\ndef py_ambiguous_caller():\n    return py_ambiguous()\n\ndef py_holdout_positive():\n    return holdout_selected()\n\ndef py_holdout_negative():\n    return py_holdout_missing()\n\ndef py_holdout_ambiguous_caller():\n    return py_holdout_ambiguous()\n"
+    },
+    {
+      "path": "python/pkg/scope.py",
+      "content": "def outer():\n    def hidden():\n        return 1\n    return hidden()\n\ndef py_scope_candidate():\n    return hidden()\n"
+    },
+    {
+      "path": "go.mod",
+      "content": "module example.local/v05quality\n\ngo 1.23\n"
+    },
+    {
+      "path": "go/target/target.go",
+      "content": "package target\nfunc GoTarget() int { return 1 }\nfunc GoHoldoutTarget() int { return 2 }\n"
+    },
+    {
+      "path": "go/ambiguousa/ambiguous.go",
+      "content": "package ambiguousa\nfunc GoAmbiguous() int { return 1 }\nfunc GoHoldoutAmbiguous() int { return 3 }\n"
+    },
+    {
+      "path": "go/ambiguousb/ambiguous.go",
+      "content": "package ambiguousb\nfunc GoAmbiguous() int { return 2 }\nfunc GoHoldoutAmbiguous() int { return 4 }\n"
+    },
+    {
+      "path": "go/caller/caller.go",
+      "content": "package caller\nimport target \"example.local/v05quality/go/target\"\nfunc GoPositive() int { return target.GoTarget() }\nfunc GoNegative() int { return GoMissing() }\nfunc GoAmbiguousCaller() int { return GoAmbiguous() }\nfunc GoHoldoutPositive() int { return target.GoHoldoutTarget() }\nfunc GoHoldoutNegative() int { return GoHoldoutMissing() }\nfunc GoHoldoutAmbiguousCaller() int { return GoHoldoutAmbiguous() }\n"
+    }
+  ],
+  "cases": [
+    {
+      "id": "typescript-positive-import-alias",
+      "language": "typescript",
+      "split": "development",
+      "category": "positive",
+      "sourceQualifiedName": "src/ts/caller.ts#ts_positive",
+      "expectedResolvedTargets": ["src/ts/target.ts#ts_target"],
+      "expectedCallEdges": [{ "target": "src/ts/target.ts#ts_target", "status": "resolved" }]
+    },
+    {
+      "id": "typescript-negative-missing",
+      "language": "typescript",
+      "split": "development",
+      "category": "negative",
+      "sourceQualifiedName": "src/ts/caller.ts#ts_negative",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "ts_missing", "minimumCandidates": 0 }
+    },
+    {
+      "id": "typescript-ambiguous-duplicate",
+      "language": "typescript",
+      "split": "development",
+      "category": "ambiguous",
+      "sourceQualifiedName": "src/ts/caller.ts#ts_ambiguous_caller",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "ts_ambiguous", "minimumCandidates": 2 }
+    },
+    {
+      "id": "typescript-holdout-positive-import-alias",
+      "language": "typescript",
+      "split": "holdout",
+      "category": "positive",
+      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_positive",
+      "expectedResolvedTargets": ["src/ts/target.ts#ts_holdout_target"],
+      "expectedCallEdges": [{ "target": "src/ts/target.ts#ts_holdout_target", "status": "resolved" }]
+    },
+    {
+      "id": "typescript-holdout-negative-missing",
+      "language": "typescript",
+      "split": "holdout",
+      "category": "negative",
+      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_negative",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "ts_holdout_missing", "minimumCandidates": 0 }
+    },
+    {
+      "id": "typescript-holdout-ambiguous-duplicate",
+      "language": "typescript",
+      "split": "holdout",
+      "category": "ambiguous",
+      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_ambiguous_caller",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "ts_holdout_ambiguous", "minimumCandidates": 2 }
+    },
+    {
+      "id": "python-positive-import-alias",
+      "language": "python",
+      "split": "development",
+      "category": "positive",
+      "sourceQualifiedName": "python/pkg/caller.py#py_positive",
+      "expectedResolvedTargets": ["python/pkg/target.py#py_target"],
+      "expectedCallEdges": [
+        { "target": "python/pkg/distractor.py#selected", "status": "rejected" },
+        { "target": "python/pkg/target.py#py_target", "status": "resolved" }
+      ]
+    },
+    {
+      "id": "python-negative-missing",
+      "language": "python",
+      "split": "development",
+      "category": "negative",
+      "sourceQualifiedName": "python/pkg/caller.py#py_negative",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "py_missing", "minimumCandidates": 0 }
+    },
+    {
+      "id": "python-ambiguous-duplicate",
+      "language": "python",
+      "split": "development",
+      "category": "ambiguous",
+      "sourceQualifiedName": "python/pkg/caller.py#py_ambiguous_caller",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "py_ambiguous", "minimumCandidates": 2 }
+    },
+    {
+      "id": "python-negative-out-of-scope-candidate",
+      "language": "python",
+      "split": "development",
+      "category": "negative",
+      "sourceQualifiedName": "python/pkg/scope.py#py_scope_candidate",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [{ "target": "python/pkg/scope.py#outer.hidden", "status": "candidate" }]
+    },
+    {
+      "id": "python-holdout-positive-import-alias",
+      "language": "python",
+      "split": "holdout",
+      "category": "positive",
+      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_positive",
+      "expectedResolvedTargets": ["python/pkg/target.py#py_holdout_target"],
+      "expectedCallEdges": [
+        { "target": "python/pkg/distractor.py#holdout_selected", "status": "rejected" },
+        { "target": "python/pkg/target.py#py_holdout_target", "status": "resolved" }
+      ]
+    },
+    {
+      "id": "python-holdout-negative-missing",
+      "language": "python",
+      "split": "holdout",
+      "category": "negative",
+      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_negative",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "py_holdout_missing", "minimumCandidates": 0 }
+    },
+    {
+      "id": "python-holdout-ambiguous-duplicate",
+      "language": "python",
+      "split": "holdout",
+      "category": "ambiguous",
+      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_ambiguous_caller",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "py_holdout_ambiguous", "minimumCandidates": 2 }
+    },
+    {
+      "id": "go-positive-local-module-import",
+      "language": "go",
+      "split": "development",
+      "category": "positive",
+      "sourceQualifiedName": "go/caller/caller.go#GoPositive",
+      "expectedResolvedTargets": ["go/target/target.go#GoTarget"],
+      "expectedCallEdges": [{ "target": "go/target/target.go#GoTarget", "status": "resolved" }]
+    },
+    {
+      "id": "go-negative-missing",
+      "language": "go",
+      "split": "development",
+      "category": "negative",
+      "sourceQualifiedName": "go/caller/caller.go#GoNegative",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "GoMissing", "minimumCandidates": 0 }
+    },
+    {
+      "id": "go-ambiguous-duplicate",
+      "language": "go",
+      "split": "development",
+      "category": "ambiguous",
+      "sourceQualifiedName": "go/caller/caller.go#GoAmbiguousCaller",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "GoAmbiguous", "minimumCandidates": 2 }
+    },
+    {
+      "id": "go-holdout-positive-local-module-import",
+      "language": "go",
+      "split": "holdout",
+      "category": "positive",
+      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutPositive",
+      "expectedResolvedTargets": ["go/target/target.go#GoHoldoutTarget"],
+      "expectedCallEdges": [{ "target": "go/target/target.go#GoHoldoutTarget", "status": "resolved" }]
+    },
+    {
+      "id": "go-holdout-negative-missing",
+      "language": "go",
+      "split": "holdout",
+      "category": "negative",
+      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutNegative",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "GoHoldoutMissing", "minimumCandidates": 0 }
+    },
+    {
+      "id": "go-holdout-ambiguous-duplicate",
+      "language": "go",
+      "split": "holdout",
+      "category": "ambiguous",
+      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutAmbiguousCaller",
+      "expectedResolvedTargets": [],
+      "expectedCallEdges": [],
+      "expectedUnresolved": { "rawName": "GoHoldoutAmbiguous", "minimumCandidates": 2 }
+    }
+  ]
+}

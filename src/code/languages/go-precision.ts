@@ -11,19 +11,25 @@ const outputSchema = z.object({
   diagnostics: z.array(z.string()).max(100_000),
 });
 
-function runGo(args: string[], cwd: string, timeoutMs: number): Promise<{ stdout: string; stderr: string; code: number }> {
+function runGo(args: string[], cwd: string, timeoutMs: number, stdin?: string): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
+    if (stdin !== undefined && Buffer.byteLength(stdin, "utf8") > 16 * 1024 * 1024) {
+      reject(new Error("GO_TYPES_INPUT_TOO_LARGE"));
+      return;
+    }
     let child;
-    try { child = spawn("go", args, { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); }
+    try { child = spawn("go", args, { cwd, windowsHide: true, stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"] }); }
     catch (error) { reject(error); return; }
     let stdout = ""; let stderr = ""; let settled = false;
     const finish = (value: { stdout: string; stderr: string; code: number }): void => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
     const fail = (error: Error): void => { if (settled) return; settled = true; clearTimeout(timer); reject(error); };
     const timer = setTimeout(() => { child.kill(); finish({ stdout, stderr: `${stderr}\nGO_TYPES_TIMEOUT`, code: -1 }); }, timeoutMs);
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 64 * 1024 * 1024) child.kill(); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); if (stderr.length > 4 * 1024 * 1024) child.kill(); });
+    child.stdout!.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 64 * 1024 * 1024) child.kill(); });
+    child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); if (stderr.length > 4 * 1024 * 1024) child.kill(); });
+    child.stdin?.on("error", () => { /* The process exit result is authoritative. */ });
     child.once("error", fail);
     child.once("exit", (code) => finish({ stdout, stderr, code: code ?? -1 }));
+    if (stdin !== undefined) child.stdin?.end(stdin);
   });
 }
 
@@ -44,7 +50,16 @@ export class GoTypesProvider implements OverlayPrecisionProvider {
 
   async analyze(batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch> {
     const helper = fileURLToPath(new URL("../../../native/go-provider/main.go", import.meta.url));
-    const result = await runGo(["run", helper, "--root", this.rootPath], this.rootPath, 60_000);
+    const approvedFiles = batch.files
+      .filter((file) => file.language === "go")
+      .map((file) => ({ path: file.relativePath, sizeBytes: file.sizeBytes, contentHash: file.contentHash }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const result = await runGo(
+      ["run", helper, "--root", this.rootPath, "--files-stdin"],
+      this.rootPath,
+      60_000,
+      JSON.stringify({ files: approvedFiles }),
+    );
     if (result.code !== 0) throw new Error(`GO_TYPES_FAILED: ${result.stderr.trim() || `exit ${result.code}`}`);
     const parsed = outputSchema.parse(JSON.parse(result.stdout) as unknown);
     const nodes = batch.nodes.filter((node) => node.language === "go");

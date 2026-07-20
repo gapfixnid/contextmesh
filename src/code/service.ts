@@ -42,8 +42,7 @@ export class CodeService {
 
   recordOperationalFailure(diagnostic: string): void {
     this.database.setOperationalStatus(diagnostic.startsWith("WATCH_") ? "watcher" : "graph_kernel", "failed", diagnostic);
-    const handle = this.database.startIndexRun("incremental");
-    this.database.failIndexRun(handle, [diagnostic]);
+    this.database.recordFreshnessStale(diagnostic);
   }
 
   recordOperationalRecovery(component: "graph_kernel" | "watcher"): void {

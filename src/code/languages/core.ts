@@ -1,5 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+
+import { Language, Parser, type Node as SyntaxNode, type Tree } from "web-tree-sitter";
 
 import type {
   CodeEdgeKind,
@@ -12,10 +15,173 @@ import type {
   UnresolvedReferenceRecord,
 } from "../../contracts.js";
 import { clampText, sha256 } from "../../utils.js";
-import type { LanguageAdapter, OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
+import type { LanguageAdapter, LanguageInvalidationInput, LanguageInvalidationPlan, OverlayPrecisionProvider, ProjectDescriptor, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
 import { GoTypesProvider } from "./go-precision.js";
+import { RustAnalyzerProvider } from "./rust-precision.js";
 
 type CoreLanguage = Extract<CodeLanguage, "go" | "rust" | "java" | "csharp">;
+type TreeSitterCoreLanguage = Extract<CoreLanguage, "go" | "rust">;
+
+const require = createRequire(import.meta.url);
+const TREE_SITTER_GRAMMARS = {
+  go: { packageName: "tree-sitter-go", wasm: "tree-sitter-go.wasm", version: "0.25.0" },
+  rust: { packageName: "tree-sitter-rust", wasm: "tree-sitter-rust.wasm", version: "0.24.0" },
+} as const;
+let treeSitterRuntimePromise: Promise<void> | null = null;
+const treeSitterLanguagePromises = new Map<TreeSitterCoreLanguage, Promise<Language>>();
+
+async function treeSitterLanguage(language: TreeSitterCoreLanguage): Promise<Language> {
+  if (!treeSitterRuntimePromise) {
+    treeSitterRuntimePromise = (async () => {
+      const runtimeDirectory = path.dirname(require.resolve("web-tree-sitter"));
+      await Parser.init({ locateFile: (file: string) => path.join(runtimeDirectory, file) });
+    })();
+  }
+  await treeSitterRuntimePromise;
+  let loaded = treeSitterLanguagePromises.get(language);
+  if (!loaded) {
+    const grammar = TREE_SITTER_GRAMMARS[language];
+    loaded = Language.load(path.join(path.dirname(require.resolve(`${grammar.packageName}/package.json`)), grammar.wasm));
+    treeSitterLanguagePromises.set(language, loaded);
+  }
+  return loaded;
+}
+
+function declarationSyntaxNode(
+  tree: Tree,
+  language: TreeSitterCoreLanguage,
+  nameByte: number,
+): SyntaxNode | null {
+  const accepted = language === "go"
+    ? new Set(["function_declaration", "method_declaration", "type_spec", "var_spec", "const_spec"])
+    : new Set(["function_item", "struct_item", "trait_item", "enum_item", "type_item"]);
+  let node = tree.rootNode.namedDescendantForIndex(nameByte);
+  while (node && !accepted.has(node.type)) node = node.parent;
+  if (!node || node.isError || node.isMissing) return null;
+  if (language === "go" && node.hasError) return null;
+  return node;
+}
+
+function syntaxNodes(root: SyntaxNode, type: string): SyntaxNode[] {
+  const result: SyntaxNode[] = [];
+  const visit = (node: SyntaxNode): void => {
+    if (node.type === type) result.push(node);
+    for (const child of node.namedChildren) visit(child);
+  };
+  visit(root);
+  return result;
+}
+
+function characterOffsetAtByte(source: string, offset: number): number {
+  return Buffer.from(source, "utf8").subarray(0, offset).toString("utf8").length;
+}
+
+interface TreeSitterDeclaration {
+  name: string;
+  kind: CodeNodeKind;
+  nativeKind: string;
+  isExported: boolean;
+  startIndex: number;
+  endIndex: number;
+  nameStartIndex: number;
+  nameEndIndex: number;
+  startByte: number;
+  endByte: number;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  text: string;
+}
+
+function treeSitterDeclarations(
+  source: string,
+  tree: Tree,
+  language: TreeSitterCoreLanguage,
+): TreeSitterDeclaration[] {
+  const nodeTypes = language === "go"
+    ? ["function_declaration", "method_declaration", "type_spec", "var_spec", "const_spec"]
+    : ["function_item", "struct_item", "trait_item", "enum_item", "type_item"];
+  const declarations: TreeSitterDeclaration[] = [];
+  for (const node of tree.rootNode.descendantsOfType(nodeTypes)) {
+    if (node.isError || node.isMissing || language === "go" && node.hasError) continue;
+    const nameNode = node.childForFieldName("name");
+    if (!nameNode || nameNode.isError || nameNode.isMissing) continue;
+    let kind: CodeNodeKind;
+    if (language === "go") {
+      if (node.type === "function_declaration") kind = "function";
+      else if (node.type === "method_declaration") kind = "method";
+      else if (node.type === "type_spec") {
+        const declaredType = node.childForFieldName("type")?.type;
+        kind = declaredType === "struct_type" ? "class" : declaredType === "interface_type" ? "interface" : "type_alias";
+      } else kind = "variable";
+    } else {
+      kind = node.type === "function_item" ? "function"
+        : node.type === "struct_item" ? "class"
+          : node.type === "trait_item" ? "interface"
+            : node.type === "enum_item" ? "enum" : "type_alias";
+    }
+    declarations.push({
+      name: nameNode.text,
+      kind,
+      nativeKind: node.type,
+      isExported: language === "go" ? /^[A-Z]/.test(nameNode.text) : node.namedChildren.some((child) => child.type === "visibility_modifier"),
+      startIndex: characterOffsetAtByte(source, node.startIndex),
+      endIndex: characterOffsetAtByte(source, node.endIndex),
+      nameStartIndex: characterOffsetAtByte(source, nameNode.startIndex),
+      nameEndIndex: characterOffsetAtByte(source, nameNode.endIndex),
+      startByte: node.startIndex,
+      endByte: node.endIndex,
+      startLine: node.startPosition.row + 1,
+      startColumn: node.startPosition.column + 1,
+      endLine: node.endPosition.row + 1,
+      endColumn: node.endPosition.column + 1,
+      text: node.text,
+    });
+  }
+  return declarations.sort((left, right) => left.startByte - right.startByte || left.name.localeCompare(right.name));
+}
+
+interface TreeSitterReference {
+  name: string;
+  index: number;
+  startByte: number;
+  endByte: number;
+  line: number;
+  column: number;
+}
+
+function treeSitterCalls(source: string, tree: Tree): TreeSitterReference[] {
+  const references: TreeSitterReference[] = [];
+  for (const call of syntaxNodes(tree.rootNode, "call_expression")) {
+    const callable = call.childForFieldName("function");
+    if (!callable) continue;
+    const direct = callable.childForFieldName("field") ?? callable.childForFieldName("name");
+    const identifiers = callable.descendantsOfType(["identifier", "field_identifier", "type_identifier"]);
+    const nameNode = direct ?? (identifiers.at(-1) ?? (["identifier", "field_identifier", "type_identifier"].includes(callable.type) ? callable : null));
+    if (!nameNode) continue;
+    references.push({
+      name: nameNode.text,
+      index: characterOffsetAtByte(source, nameNode.startIndex),
+      startByte: nameNode.startIndex,
+      endByte: nameNode.endIndex,
+      line: nameNode.startPosition.row + 1,
+      column: nameNode.startPosition.column + 1,
+    });
+  }
+  return references;
+}
+
+function treeSitterImports(tree: Tree, language: TreeSitterCoreLanguage): string[] {
+  if (language === "go") {
+    return tree.rootNode.descendantsOfType("import_spec")
+      .map((node) => node.childForFieldName("path")?.text.replace(/^['"`]|['"`]$/g, "") ?? "")
+      .filter(Boolean);
+  }
+  return tree.rootNode.descendantsOfType("use_declaration")
+    .map((node) => node.text.replace(/^\s*(?:pub\s+)?use\s+/, "").replace(/;\s*$/, "").trim())
+    .filter(Boolean);
+}
 
 interface LanguageSpec {
   language: CoreLanguage;
@@ -122,6 +288,14 @@ function hasDelimiterError(source: string): boolean {
   return stack.length > 0;
 }
 
+function hasLanguageSyntaxError(spec: LanguageSpec, source: string): boolean {
+  if (hasDelimiterError(source)) return true;
+  if (spec.language !== "rust") return false;
+  const masked = maskTrivia(source);
+  return /\blet\s+(?:mut\s+)?(?:[:=;]|$)/m.test(masked)
+    || /\b(?:fn|struct|enum|trait|type)\s*(?:[({=;]|$)/m.test(masked);
+}
+
 function manifestDigest(rootPath: string, spec: LanguageSpec): string {
   const names = [...spec.manifests];
   if (spec.language === "csharp") {
@@ -142,11 +316,33 @@ function moduleName(spec: LanguageSpec, relativePath: string, source: string): s
 
 class CoreSyntaxProvider implements SyntaxProvider {
   readonly id: string;
-  readonly version = "0.5.0";
-  constructor(private readonly spec: LanguageSpec) { this.id = spec.provider; }
+  readonly version: string;
+  constructor(private readonly spec: LanguageSpec) {
+    this.id = spec.provider;
+    this.version = spec.language === "go" || spec.language === "rust"
+      ? `${TREE_SITTER_GRAMMARS[spec.language].packageName}@${TREE_SITTER_GRAMMARS[spec.language].version}`
+      : "0.5.0";
+  }
 
   async extract(input: Parameters<SyntaxProvider["extract"]>[0]): Promise<SyntaxGraphBatch> {
     const selected = input.files.filter((file) => file.language === this.spec.language);
+    const parserLanguage = this.spec.language === "go" || this.spec.language === "rust" ? this.spec.language : null;
+    const syntaxTrees = new Map<string, Tree>();
+    if (parserLanguage) {
+      const language = await treeSitterLanguage(parserLanguage);
+      const parser = new Parser();
+      try {
+        parser.setLanguage(language);
+        for (const scanned of selected) {
+          const tree = parser.parse(scanned.content);
+          if (!tree) throw new Error(`TREE_SITTER_PARSE_FAILED: ${scanned.relativePath}`);
+          syntaxTrees.set(scanned.pathKey, tree);
+        }
+      } finally {
+        parser.delete();
+      }
+    }
+    try {
     const files: IndexedSourceFile[] = [];
     const nodes = new Map<string, CodeNodeRecord>();
     const edges = new Map<string, CodeEdgeRecord>();
@@ -155,12 +351,15 @@ class CoreSyntaxProvider implements SyntaxProvider {
     const modulesByPath = new Map<string, string>();
     const modulesByName = new Map<string, string[]>();
     const declarationRanges = new Map<string, Array<{ start: number; end: number; id: string }>>();
-    const evidence = (confidence: number) => [{ provider: this.id, providerVersion: this.version, source: "syntax" as const, confidence }];
+    const evidence = (confidence: number, sourceSpan?: { startByte: number; endByte: number; line: number; column: number }) => [{
+      provider: this.id, providerVersion: this.version, source: "syntax" as const, confidence,
+      ...(sourceSpan ? { sourceSpan } : {}),
+    }];
     const edgeKey = (sourceId: string, targetId: string, kind: CodeEdgeKind) => `${sourceId}\0${targetId}\0${kind}`;
 
     for (const scanned of selected) {
       const fileId = sha256(`${input.workspace.id}\0${scanned.pathKey}`);
-      const partial = hasDelimiterError(scanned.content);
+      const partial = syntaxTrees.get(scanned.pathKey)?.rootNode.hasError ?? hasLanguageSyntaxError(this.spec, scanned.content);
       const file: IndexedSourceFile = { ...scanned, id: fileId, workspaceId: input.workspace.id, ecosystem: this.spec.ecosystem, sourceRoot: "", adapterConfigHash: input.project.configHash, parseStatus: partial ? "partial" : "ok", diagnosticCount: partial ? 1 : 0, generation: input.generation };
       files.push(file);
       const moduleKey = `${scanned.pathKey}:module`;
@@ -176,23 +375,75 @@ class CoreSyntaxProvider implements SyntaxProvider {
       const file = files.find((item) => item.pathKey === scanned.pathKey)!;
       const masked = maskTrivia(scanned.content);
       const ranges: Array<{ start: number; end: number; id: string }> = [];
-      for (const declaration of this.spec.declarations) {
-        declaration.pattern.lastIndex = 0;
-        for (const match of masked.matchAll(declaration.pattern)) {
-          const name = match[declaration.nameGroup];
-          if (!name || match.index === undefined) continue;
-          const nameOffset = match.index + match[0].indexOf(name);
-          const end = match.index + match[0].length;
-          const startLocation = location(scanned.content, match.index);
-          const endLocation = location(scanned.content, end);
-          const localKey = `${scanned.pathKey}:${declaration.kind}:${name}:${byteOffset(scanned.content, nameOffset)}`;
-          const id = sha256(`${input.workspace.id}\0${this.spec.language}\0${localKey}\0${sha256(match[0])}`);
-          nodes.set(id, { id, workspaceId: input.workspace.id, fileId: file.id, kind: declaration.kind, name, qualifiedName: `${scanned.relativePath}#${name}`, localKey, signature: clampText(scanned.content.slice(match.index, end).replace(/\s+/g, " ").trim(), 1000), doc: "", isExported: this.spec.language === "go" ? /^[A-Z]/.test(name) : /\bpublic\b/.test(match[0]) || this.spec.language === "rust" && /\bpub\b/.test(match[0]), startByte: byteOffset(scanned.content, match.index), endByte: byteOffset(scanned.content, end), startLine: startLocation.line, startColumn: startLocation.column, endLine: endLocation.line, endColumn: endLocation.column, contentHash: sha256(match[0]), generation: input.generation, metadata: { stableLocator: localKey }, language: this.spec.language, ecosystem: this.spec.ecosystem, nativeKind: declaration.nativeKind, analysisLevel: "syntax" });
-          const sameName = declarations.get(name) ?? []; sameName.push(id); sameName.sort(); declarations.set(name, sameName);
-          ranges.push({ start: match.index, end, id });
-          const key = edgeKey(moduleId, id, "CONTAINS");
-          edges.set(key, { workspaceId: input.workspace.id, sourceId: moduleId, targetId: id, kind: "CONTAINS", confidence: 1, resolutionKind: "exact", generation: input.generation, metadata: {}, status: "resolved", evidence: evidence(1) });
+      const parsedDeclarations: TreeSitterDeclaration[] = [];
+      const syntaxTree = syntaxTrees.get(scanned.pathKey);
+      if (syntaxTree && parserLanguage) {
+        parsedDeclarations.push(...treeSitterDeclarations(scanned.content, syntaxTree, parserLanguage));
+        // Tree-sitter can reduce a damaged Rust item to ERROR. Keep a bounded
+        // declaration-only recovery path while the parser remains authoritative
+        // for file status and all structurally recognized items.
+        if (parserLanguage === "rust" && syntaxTree.rootNode.hasError) {
+          const recognized = new Set(parsedDeclarations.map((item) => `${item.kind}\0${item.name}\0${item.nameStartIndex}`));
+          for (const declaration of this.spec.declarations) {
+            declaration.pattern.lastIndex = 0;
+            for (const match of masked.matchAll(declaration.pattern)) {
+              const name = match[declaration.nameGroup];
+              if (!name || match.index === undefined) continue;
+              const nameStartIndex = match.index + match[0].indexOf(name);
+              const nameByte = byteOffset(scanned.content, nameStartIndex);
+              if (declarationSyntaxNode(syntaxTree, parserLanguage, nameByte)) continue;
+              let damaged = syntaxTree.rootNode.namedDescendantForIndex(nameByte);
+              while (damaged && !damaged.isError) damaged = damaged.parent;
+              if (!damaged) continue;
+              const key = `${declaration.kind}\0${name}\0${nameStartIndex}`;
+              if (recognized.has(key)) continue;
+              const endIndex = match.index + match[0].length;
+              const start = location(scanned.content, match.index);
+              const end = location(scanned.content, endIndex);
+              parsedDeclarations.push({
+                name, kind: declaration.kind, nativeKind: "ERROR_recovered_declaration", isExported: /\bpub\b/.test(match[0]),
+                startIndex: match.index, endIndex, nameStartIndex, nameEndIndex: nameStartIndex + name.length,
+                startByte: byteOffset(scanned.content, match.index), endByte: byteOffset(scanned.content, endIndex),
+                startLine: start.line, startColumn: start.column, endLine: end.line, endColumn: end.column, text: match[0],
+              });
+            }
+          }
         }
+      } else {
+        for (const declaration of this.spec.declarations) {
+          declaration.pattern.lastIndex = 0;
+          for (const match of masked.matchAll(declaration.pattern)) {
+            const name = match[declaration.nameGroup];
+            if (!name || match.index === undefined) continue;
+            const nameStartIndex = match.index + match[0].indexOf(name);
+            const endIndex = match.index + match[0].length;
+            const start = location(scanned.content, match.index);
+            const end = location(scanned.content, endIndex);
+            parsedDeclarations.push({
+              name, kind: declaration.kind, nativeKind: declaration.nativeKind,
+              isExported: /\bpublic\b/.test(match[0]), startIndex: match.index, endIndex,
+              nameStartIndex, nameEndIndex: nameStartIndex + name.length,
+              startByte: byteOffset(scanned.content, match.index), endByte: byteOffset(scanned.content, endIndex),
+              startLine: start.line, startColumn: start.column, endLine: end.line, endColumn: end.column, text: match[0],
+            });
+          }
+        }
+      }
+      for (const declaration of parsedDeclarations.sort((a, b) => a.startByte - b.startByte || a.name.localeCompare(b.name))) {
+        const localKey = `${scanned.pathKey}:${declaration.kind}:${declaration.name}:${byteOffset(scanned.content, declaration.nameStartIndex)}`;
+        const signature = clampText(declaration.text.split("{", 1)[0]!.replace(/\s+/g, " ").trim(), 1000);
+        const id = sha256(`${input.workspace.id}\0${this.spec.language}\0${localKey}\0${sha256(signature)}`);
+        nodes.set(id, { id, workspaceId: input.workspace.id, fileId: file.id, kind: declaration.kind, name: declaration.name,
+          qualifiedName: `${scanned.relativePath}#${declaration.name}`, localKey, signature, doc: "", isExported: declaration.isExported,
+          startByte: declaration.startByte, endByte: declaration.endByte, startLine: declaration.startLine,
+          startColumn: declaration.startColumn, endLine: declaration.endLine, endColumn: declaration.endColumn,
+          contentHash: sha256(declaration.text), generation: input.generation, metadata: { stableLocator: localKey },
+          language: this.spec.language, ecosystem: this.spec.ecosystem, nativeKind: declaration.nativeKind, analysisLevel: "syntax" });
+        const sameName = declarations.get(declaration.name) ?? []; sameName.push(id); sameName.sort(); declarations.set(declaration.name, sameName);
+        ranges.push({ start: declaration.startIndex, end: declaration.nameEndIndex, id });
+        const key = edgeKey(moduleId, id, "CONTAINS");
+        edges.set(key, { workspaceId: input.workspace.id, sourceId: moduleId, targetId: id, kind: "CONTAINS", confidence: 1,
+          resolutionKind: "exact", generation: input.generation, metadata: {}, status: "resolved", evidence: evidence(1) });
       }
       declarationRanges.set(scanned.pathKey, ranges.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id)));
     }
@@ -201,9 +452,17 @@ class CoreSyntaxProvider implements SyntaxProvider {
       const moduleId = modulesByPath.get(scanned.pathKey)!;
       const file = files.find((item) => item.pathKey === scanned.pathKey)!;
       const masked = maskTrivia(scanned.content);
-      this.spec.importPattern.lastIndex = 0;
-      for (const match of scanned.content.matchAll(this.spec.importPattern)) {
-        const specifier = [...match].slice(1).find((item) => typeof item === "string" && item.trim().length > 0)?.trim().replace(/^['"]|['"]$/g, "");
+      const syntaxTree = syntaxTrees.get(scanned.pathKey);
+      const specifiers: string[] = [];
+      if (syntaxTree && parserLanguage) specifiers.push(...treeSitterImports(syntaxTree, parserLanguage));
+      else {
+        this.spec.importPattern.lastIndex = 0;
+        for (const match of scanned.content.matchAll(this.spec.importPattern)) {
+          const value = [...match].slice(1).find((item) => typeof item === "string" && item.trim().length > 0)?.trim().replace(/^['"]|['"]$/g, "");
+          if (value) specifiers.push(value);
+        }
+      }
+      for (const specifier of specifiers) {
         if (!specifier || /^\s*(?:package|namespace)\b/.test(specifier)) continue;
         const localName = specifier.replace(/::\{.*$/, "").split(/[./:]/).filter(Boolean).at(-1) ?? specifier;
         const localTargets = modulesByName.get(localName) ?? [];
@@ -229,24 +488,44 @@ class CoreSyntaxProvider implements SyntaxProvider {
           edges.set(edgeKey(moduleId, targetId, "IMPORTS"), edge);
         }
       }
-      this.spec.callPattern.lastIndex = 0;
-      for (const match of masked.matchAll(this.spec.callPattern)) {
-        const name = match[this.spec.callNameGroup];
-        if (!name || match.index === undefined || this.spec.callExcludes.has(name)) continue;
-        if ((declarationRanges.get(scanned.pathKey) ?? []).some((item) => match.index! >= item.start && match.index! < item.end)) continue;
+      const callReferences: TreeSitterReference[] = [];
+      if (syntaxTree && parserLanguage) callReferences.push(...treeSitterCalls(scanned.content, syntaxTree));
+      else {
+        this.spec.callPattern.lastIndex = 0;
+        for (const match of masked.matchAll(this.spec.callPattern)) {
+          const name = match[this.spec.callNameGroup];
+          if (!name || match.index === undefined) continue;
+          const position = location(scanned.content, match.index);
+          callReferences.push({
+            name, index: match.index, startByte: byteOffset(scanned.content, match.index),
+            endByte: byteOffset(scanned.content, match.index + name.length), line: position.line, column: position.column,
+          });
+        }
+      }
+      for (const reference of callReferences) {
+        const { name } = reference;
+        if (this.spec.callExcludes.has(name)) continue;
+        if ((declarationRanges.get(scanned.pathKey) ?? []).some((item) => reference.index >= item.start && reference.index < item.end)) continue;
         const targets = declarations.get(name) ?? [];
-        const owner = [...(declarationRanges.get(scanned.pathKey) ?? [])].reverse().find((item) => item.start < match.index!)?.id ?? moduleId;
-        const position = location(scanned.content, match.index);
+        const owner = [...(declarationRanges.get(scanned.pathKey) ?? [])].reverse().find((item) => item.start < reference.index)?.id ?? moduleId;
+        const referenceEvidence = evidence(0.65, {
+          startByte: reference.startByte, endByte: reference.endByte, line: reference.line, column: reference.column,
+        });
         if (targets.length === 1 && targets[0]) {
           const target = targets[0];
           const key = edgeKey(owner, target, "CALLS");
-          edges.set(key, { workspaceId: input.workspace.id, sourceId: owner, targetId: target, kind: "CALLS", confidence: 0.65, resolutionKind: "heuristic", generation: input.generation, metadata: { rawName: name }, status: "candidate", evidence: evidence(0.65) });
+          edges.set(key, { workspaceId: input.workspace.id, sourceId: owner, targetId: target, kind: "CALLS", confidence: 0.65, resolutionKind: "heuristic", generation: input.generation, metadata: { rawName: name }, status: "candidate", evidence: referenceEvidence });
         } else {
-          unresolved.push({ workspaceId: input.workspace.id, fileId: file.id, sourceNodeId: owner, kind: "CALLS", rawName: name, qualifier: null, line: position.line, column: position.column, candidates: targets, generation: input.generation, confidence: 0.4, evidence: evidence(0.4) });
+          unresolved.push({ workspaceId: input.workspace.id, fileId: file.id, sourceNodeId: owner, kind: "CALLS", rawName: name, qualifier: null,
+            line: reference.line, column: reference.column, candidates: targets, generation: input.generation, confidence: 0.4,
+            evidence: evidence(0.4, { startByte: reference.startByte, endByte: reference.endByte, line: reference.line, column: reference.column }) });
         }
       }
     }
-    return { files, nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)), edges: [...edges.values()].sort((a, b) => edgeKey(a.sourceId, a.targetId, a.kind).localeCompare(edgeKey(b.sourceId, b.targetId, b.kind))), unresolvedReferences: unresolved.sort((a, b) => a.fileId.localeCompare(b.fileId) || a.line - b.line || a.column - b.column), diagnostics: files.filter((file) => file.parseStatus === "partial").map((file) => `PROVIDER_PARSE_PARTIAL: ${file.relativePath}`), providerMetrics: { filesParsed: selected.length, mode: input.mode ?? "incremental" } };
+    return { files, nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)), edges: [...edges.values()].sort((a, b) => edgeKey(a.sourceId, a.targetId, a.kind).localeCompare(edgeKey(b.sourceId, b.targetId, b.kind))), unresolvedReferences: unresolved.sort((a, b) => a.fileId.localeCompare(b.fileId) || a.line - b.line || a.column - b.column), diagnostics: files.filter((file) => file.parseStatus === "partial").map((file) => `PROVIDER_PARSE_PARTIAL: ${file.relativePath}`), providerMetrics: { filesParsed: selected.length, mode: input.mode ?? "incremental", providerVersion: this.version } };
+    } finally {
+      for (const tree of syntaxTrees.values()) tree.delete();
+    }
   }
 }
 
@@ -255,17 +534,22 @@ export class CoreLanguageAdapter implements LanguageAdapter {
   readonly extensions: readonly string[];
   constructor(readonly languageId: CoreLanguage) { this.ecosystem = SPECS[languageId].ecosystem; this.extensions = [SPECS[languageId].extension]; }
   discoverProject(rootPath: string): ProjectDescriptor { const spec = SPECS[this.languageId]; return { language: spec.language, ecosystem: spec.ecosystem, sourceRoots: [""], configHash: sha256(`${spec.provider}\0${this.languageId}\0${manifestDigest(rootPath, spec)}`), diagnostics: [], runtime: { rootPath } }; }
+  planInvalidation(input: LanguageInvalidationInput): LanguageInvalidationPlan {
+    const extension = SPECS[this.languageId].extension;
+    const languageFiles = input.currentFiles.filter((file) => file.language === this.languageId);
+    if (input.previousConfigHash !== input.currentConfigHash) {
+      return { reparseAll: true, invalidatedPathKeys: languageFiles.map((file) => file.pathKey), reason: "configuration" };
+    }
+    const sourceChanged = [...input.changedPathKeys, ...input.deletedPathKeys]
+      .some((pathKey) => pathKey.toLocaleLowerCase("en-US").endsWith(extension));
+    return sourceChanged
+      ? { reparseAll: true, invalidatedPathKeys: languageFiles.map((file) => file.pathKey), reason: "source" }
+      : { reparseAll: false, invalidatedPathKeys: [], reason: "unchanged" };
+  }
   createSyntaxProvider(): SyntaxProvider { return new CoreSyntaxProvider(SPECS[this.languageId]); }
   createOverlayPrecisionProvider(project: ProjectDescriptor): OverlayPrecisionProvider | undefined {
     if (this.languageId === "go") return new GoTypesProvider(project);
-    if (this.languageId === "rust") return {
-      id: "rust_analyzer", version: "optional", capability: "typed",
-      available: async () => ({ available: false, diagnostic: "rust-analyzer overlay is optional and not configured" }),
-      analyze: async (_batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch> => ({
-        language: "rust", provider: "rust_analyzer", providerVersion: "optional", capability: "typed",
-        baseGeneration, edges: [], eligibleEdges: 0, diagnostics: ["rust-analyzer overlay is not configured"], partial: true,
-      }),
-    };
+    if (this.languageId === "rust") return new RustAnalyzerProvider(project);
     return undefined;
   }
 }

@@ -71,10 +71,12 @@ export class GenerationGraphCache {
         edges.push({ sourceId: edge.sourceId, targetId: edge.targetId, kind: edge.kind, confidence: edge.confidence, resolutionKind: edge.resolutionKind,
           depth: current.depth + 1, status: edge.status ?? "resolved", evidence: edge.evidence });
         if (!visited.has(nextId)) {
-          visited.add(nextId);
           const next = this.nodes.get(nextId);
           if (next) nodes.set(nextId, { ...next, score: 1 });
-          queue.push({ id: nextId, depth: current.depth + 1 });
+          if (edge.status !== "rejected") {
+            visited.add(nextId);
+            queue.push({ id: nextId, depth: current.depth + 1 });
+          }
         }
       }
     }

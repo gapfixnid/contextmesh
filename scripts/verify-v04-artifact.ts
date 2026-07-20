@@ -2,18 +2,15 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-function stableStringify(value: unknown): string {
-  const normalize = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(normalize);
-    if (item && typeof item === "object") {
-      return Object.fromEntries(Object.entries(item)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, normalize(nested)]));
-    }
-    return item;
-  };
-  return JSON.stringify(normalize(value));
-}
+import {
+  expectedNativeRuntime,
+  stableStringify,
+  V04_ARTIFACT_CONTRACT,
+  V04_SOURCE_CONTRACT,
+  validateFixedHardwareIdentity,
+  v04CommitSourceEvidence,
+  v04SourceEvidence,
+} from "./v04-artifact-contract.js";
 
 function requireCondition(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Invalid v0.4 artifact: ${message}`);
@@ -44,9 +41,10 @@ interface TimingSummary {
 interface Artifact {
   schemaVersion: number;
   git: { commit: string; baseline: string };
+  source: { contract: string; treeDigest: string; files: number; headCommit: string; headTreeDigest: string; dirty: boolean };
   fixtureDigest: string;
   fixtures: Record<string, string>;
-  runner: { contract: string; os: string; cpu: string; logicalCpus: number; ramBytes: number; node: string; rust: string; native: string; mode: string; runtimeNetwork: number };
+  runner: { contract: string; hardwareProfile: string; powerSchemeGuid: string; os: string; cpu: string; logicalCpus: number; ramBytes: number; node: string; rust: string; native: string; mode: string; runtimeNetwork: number };
   measurements: {
     coldFull: Record<string, { timing: TimingSummary }>;
     workloads: Record<string, {
@@ -84,14 +82,37 @@ requireCondition(
   source === `${canonicalSource}\n` || source === `${canonicalSource}\r\n`,
   "file is not canonical stable JSON",
 );
-requireCondition(artifact.schemaVersion === 2, "schemaVersion must be 2");
+requireCondition(artifact.schemaVersion === 4, "schemaVersion must be 4");
 requireCondition(artifact.git.baseline === "e37977199e231fc95b581e6254003941b8f447b2", "baseline mismatch");
 requireCondition(/^[0-9a-f]{40}$/.test(artifact.git.commit), "source commit must be a full SHA");
 execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], { stdio: "inherit" });
+requireCondition(artifact.source.headCommit === artifact.git.commit, "measured source HEAD does not match git.commit");
+requireCondition(artifact.source.dirty === false, "canonical measurement source was dirty");
+requireCondition(artifact.source.treeDigest === artifact.source.headTreeDigest, "measured working source did not equal its HEAD tree");
+const committedSource = v04CommitSourceEvidence(artifact.git.commit);
+requireCondition(
+  artifact.source.treeDigest === committedSource.treeDigest && artifact.source.files === committedSource.files,
+  "artifact source digest does not match its exact source commit",
+);
+try {
+  execFileSync("git", ["diff", "--quiet", artifact.git.commit, "HEAD", "--", ".", ":(exclude)artifacts/**"]);
+} catch {
+  throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
+}
+const currentSource = v04SourceEvidence();
+requireCondition(artifact.source.contract === V04_SOURCE_CONTRACT, "source contract mismatch");
+requireCondition(/^[0-9a-f]{64}$/.test(artifact.source.treeDigest), "source tree digest missing");
+requireCondition(
+  artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
+  "artifact was measured from a different source tree",
+);
+requireCondition(currentSource.dirty === false, "current non-artifact source working tree is dirty");
 requireCondition(/^[0-9a-f]{64}$/.test(artifact.fixtureDigest), "fixture digest missing");
-requireCondition(artifact.runner.contract === "contextmesh-v04-fixed-fixtures-v2", "runner contract mismatch");
+requireCondition(artifact.runner.contract === V04_ARTIFACT_CONTRACT, "runner contract mismatch");
 requireCondition(Boolean(artifact.runner.os && artifact.runner.cpu && artifact.runner.node && artifact.runner.rust), "runner identity incomplete");
 requireCondition(artifact.runner.runtimeNetwork === 0 && artifact.runner.mode === "sidecar", "runtime mode/network policy mismatch");
+validateFixedHardwareIdentity(artifact.runner);
+requireCondition(artifact.runner.native === expectedNativeRuntime(), "native runtime does not match the graph-kernel handshake version");
 
 for (const label of ["small", "medium", "large"]) {
   requireCondition(artifact.measurements.coldFull[label]?.timing.samples === 5, `${label} cold samples must equal 5`);
@@ -126,4 +147,4 @@ requireCondition(decision.treeSitterBenchmarkOnly.timing.samples === 20
 requireCondition(decision.decision.includes("retain TypeScript Compiler AST"), "provider decision missing");
 requireCondition(Object.entries(artifact.thresholds).every(([key, value]) => !key.endsWith("Passed") || value === true), "one or more recorded thresholds failed");
 requireFiniteNumbers(artifact);
-process.stdout.write(`${JSON.stringify({ artifact: artifactPath, sourceCommit: artifact.git.commit, reachableFromHead: true, schemaVersion: 2, crossProcessRuns: 20 })}\n`);
+process.stdout.write(`${JSON.stringify({ artifact: artifactPath, repositoryBase: artifact.git.commit, sourceTreeDigest: artifact.source.treeDigest, sourceTreeCurrent: true, schemaVersion: 4, crossProcessRuns: 20 })}\n`);

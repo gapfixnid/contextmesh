@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
 } from "node:fs";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import path from "node:path";
@@ -63,7 +64,11 @@ export interface IndexRunHandle {
   id: string;
   generation: number;
   mode: IndexMode;
+  leaseOwner: string;
+  leaseToken: string;
 }
+
+const INDEX_WRITER_LEASE_SECONDS = 30;
 
 export interface IndexCommitStats {
   scannedFiles: number;
@@ -78,6 +83,12 @@ export interface IndexedFileBaseline {
   contentHash: string;
   sizeBytes: number;
   mtimeMs: number;
+  language: string | null;
+  ecosystem: string | null;
+  sourceRoot: string;
+  adapterConfigHash: string;
+  parseStatus: "ok" | "partial" | "error";
+  diagnosticCount: number;
 }
 
 export interface FreshnessState {
@@ -182,6 +193,14 @@ export interface PrecisionClaimResult {
 }
 
 export interface PrecisionCommit {
+  nodes?: Array<{
+    nodeId: string;
+    analysisLevel: "resolved" | "typed";
+    signature: string;
+    doc: string;
+    contentHash: string;
+    metadata: Record<string, unknown>;
+  }>;
   edges: Array<{
     sourceId: string;
     targetId: string;
@@ -361,6 +380,8 @@ export interface ContextMeshDatabaseOptions {
   clock?: () => Date;
   /** Test-only fault injection after migration SQL and before commit. */
   migrationValidationHook?: (version: number) => void;
+  /** Test-only fault injection after the pre-migration backup copy and before validation. */
+  migrationBackupValidationHook?: (backupPath: string) => void;
 }
 
 const MIGRATIONS_DIRECTORY = fileURLToPath(new URL("../../migrations", import.meta.url));
@@ -545,6 +566,7 @@ export interface ContextMeshStorage {
   heartbeatPrecisionProvider(claim: PrecisionClaim, leaseMs?: number): boolean;
   commitPrecisionOverlay(claim: PrecisionClaim, commit: PrecisionCommit): boolean;
   failPrecisionProvider(claim: PrecisionClaim, error: string): boolean;
+  abandonPrecisionProvider(claim: PrecisionClaim, error: string): boolean;
   getFreshnessState(): FreshnessState;
   recordFreshnessStale(
     reason: string,
@@ -556,8 +578,9 @@ export interface ContextMeshStorage {
   hasUnresolvedIndexFailure(): boolean;
   getReverseDependencyClosure(seedPathKeys: Iterable<string>): Set<string>;
   getExistingRelations(): ExistingRelations;
-  getStoredGraphPartition(language: "python" | "non-python"): StoredGraphPartition;
+  getStoredGraphPartition(language: "python" | "non-python", includePrecision?: boolean): StoredGraphPartition;
   startIndexRun(mode: IndexMode): IndexRunHandle;
+  heartbeatIndexRun(handle: IndexRunHandle): boolean;
   failIndexRun(handle: IndexRunHandle, diagnostics: string[]): void;
   completeNoOpRun(
     handle: IndexRunHandle,
@@ -575,6 +598,7 @@ export interface ContextMeshStorage {
     adapterState: AdapterStateMap,
     semantic?: SemanticPlaneCommit,
     semanticClaim?: CodeIndexSemanticClaim,
+    semanticGraph?: ExtractedGraph,
   ): void;
   getStatus(): Record<string, unknown>;
   searchCode(query: string, kinds: CodeNodeKind[] | undefined, limit: number, offset?: number): CodeSearchResult[];
@@ -680,11 +704,14 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   private readonly snapshotMutex = new AsyncMutex();
   private readonly clock: () => Date;
   private readonly migrationValidationHook: ((version: number) => void) | undefined;
+  private readonly migrationBackupValidationHook: ((backupPath: string) => void) | undefined;
+  private readonly indexWriterOwner = `writer_${process.pid}_${randomUUID()}`;
   private lastBulkCommitMs = 0;
 
   constructor(rootPath: string, databasePath?: string, options: ContextMeshDatabaseOptions = {}) {
     this.clock = options.clock ?? (() => new Date());
     this.migrationValidationHook = options.migrationValidationHook;
+    this.migrationBackupValidationHook = options.migrationBackupValidationHook;
     const resolvedRoot = path.resolve(rootPath);
     if (!existsSync(resolvedRoot)) {
       throw new ContextMeshError("INVALID_ARGUMENT", `Workspace does not exist: ${resolvedRoot}`);
@@ -776,9 +803,20 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       return Number.isSafeInteger(version) && !applied.has(version);
     });
     if (pendingMigrations.length > 0 && applied.size > 0 && this.dbPath !== ":memory:") {
-      this.db.exec("PRAGMA wal_checkpoint(FULL)");
+      const checkpoint = this.db.prepare("PRAGMA wal_checkpoint(FULL)").get();
+      const busy = numberValue(checkpoint?.busy);
+      const logFrames = numberValue(checkpoint?.log);
+      const checkpointedFrames = numberValue(checkpoint?.checkpointed);
+      if (busy !== 0 || checkpointedFrames !== logFrames) {
+        throw new Error(
+          `Migration backup checkpoint incomplete (busy=${busy}, log=${logFrames}, checkpointed=${checkpointedFrames})`,
+        );
+      }
       const timestamp = this.nowIso().replace(/[:.]/g, "-");
-      copyFileSync(this.dbPath, `${this.dbPath}.backup-${timestamp}`);
+      const backupPath = `${this.dbPath}.backup-${timestamp}`;
+      copyFileSync(this.dbPath, backupPath);
+      this.migrationBackupValidationHook?.(backupPath);
+      this.validateMigrationBackup(backupPath, [...applied].sort((left, right) => left - right));
     }
     const semanticMigrationPending = pendingMigrations.some(
       (name) => Number.parseInt(name.split("_", 1)[0] ?? "", 10) === 4,
@@ -861,14 +899,71 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   recoverInterruptedRuns(): number {
-    const result = this.db
-      .prepare(
-        `UPDATE index_runs
-         SET status = 'failed', completed_at = ?, diagnostics_json = ?
-         WHERE status = 'running'`,
-      )
-      .run(this.nowIso(), JSON.stringify(["Indexing process exited before the run completed"]));
-    return Number(result.changes);
+    return this.transaction(() => {
+      const nowEpoch = this.databaseEpoch();
+      const result = this.db
+        .prepare(
+          `UPDATE index_runs
+           SET status = 'failed', completed_at = ?, diagnostics_json = ?
+           WHERE status = 'running'
+             AND NOT EXISTS (
+               SELECT 1 FROM index_writer_leases lease
+               WHERE lease.run_id = index_runs.id
+                 AND lease.workspace_id = index_runs.workspace_id
+                 AND lease.lease_expiry_epoch > ?
+             )`,
+        )
+        .run(
+          this.nowIso(),
+          JSON.stringify(["Indexing writer lease expired or the process exited before the run completed"]),
+          nowEpoch,
+        );
+      this.db
+        .prepare(
+          `DELETE FROM index_writer_leases
+           WHERE lease_expiry_epoch <= ?
+              OR NOT EXISTS (
+                SELECT 1 FROM index_runs run
+                WHERE run.id = index_writer_leases.run_id AND run.status = 'running'
+              )`,
+        )
+        .run(nowEpoch);
+      return Number(result.changes);
+    });
+  }
+
+  private validateMigrationBackup(backupPath: string, expectedVersions: number[]): void {
+    let backup: DatabaseSync | null = null;
+    try {
+      backup = new DatabaseSync(backupPath, { readOnly: true, timeout: 5_000, defensive: true });
+      const integrity = backup.prepare("PRAGMA integrity_check").all();
+      if (
+        integrity.length !== 1 ||
+        stringValue(integrity[0]?.integrity_check).toLocaleLowerCase("en-US") !== "ok"
+      ) {
+        throw new Error(`integrity_check returned ${JSON.stringify(integrity)}`);
+      }
+      const versions = backup
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all()
+        .map((row) => numberValue(row.version));
+      if (JSON.stringify(versions) !== JSON.stringify(expectedVersions)) {
+        throw new Error(`schema versions changed in backup (${versions.join(",")})`);
+      }
+      const foreignKeyErrors = backup.prepare("PRAGMA foreign_key_check").all();
+      if (foreignKeyErrors.length > 0) {
+        throw new Error(`foreign_key_check returned ${foreignKeyErrors.length} row(s)`);
+      }
+    } catch (error) {
+      throw new Error(
+        `Migration backup validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      if (backup?.isOpen) backup.close();
+      for (const suffix of ["-wal", "-shm"]) {
+        rmSync(`${backupPath}${suffix}`, { force: true });
+      }
+    }
   }
 
   getWorkspace(): WorkspaceRecord {
@@ -920,7 +1015,8 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   getIndexedFileBaseline(): IndexedFileBaseline[] {
     return this.db
       .prepare(
-        `SELECT path_key, relative_path, content_hash, size_bytes, mtime_ms
+        `SELECT path_key, relative_path, content_hash, size_bytes, mtime_ms, language, ecosystem,
+                source_root, adapter_config_hash, parse_status, diagnostic_count
          FROM source_files WHERE workspace_id = ? ORDER BY path_key`,
       )
       .all(this.workspace.id)
@@ -930,6 +1026,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         contentHash: stringValue(row.content_hash),
         sizeBytes: numberValue(row.size_bytes),
         mtimeMs: numberValue(row.mtime_ms),
+        language: nullableString(row.language),
+        ecosystem: nullableString(row.ecosystem),
+        sourceRoot: stringValue(row.source_root),
+        adapterConfigHash: stringValue(row.adapter_config_hash),
+        parseStatus: stringValue(row.parse_status) as IndexedFileBaseline["parseStatus"],
+        diagnosticCount: numberValue(row.diagnostic_count),
       }));
   }
 
@@ -1116,6 +1218,113 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     return parseJson<AdapterStateMap>(row?.adapter_state_json, {});
   }
 
+  private precisionNodeIds(provider: string): string[] {
+    return this.db.prepare(
+      "SELECT node_id FROM precision_nodes WHERE workspace_id=? AND provider=? ORDER BY node_id",
+    ).all(this.workspace.id, provider).map((row) => stringValue(row.node_id));
+  }
+
+  private applyPrecisionNodeOverlays<T extends CodeSearchResult>(nodes: T[]): T[] {
+    if (nodes.length === 0) return nodes;
+    const currentGeneration = this.getWorkspace().currentGeneration;
+    if (currentGeneration === 0) return nodes;
+    const selectedIds = new Set(nodes.map((node) => node.id));
+    const selected = new Map<string, SqlRow>();
+    const ids = [...selectedIds].sort();
+    for (let offset = 0; offset < ids.length; offset += 400) {
+      const chunk = ids.slice(offset, offset + 400);
+      const rows = this.db.prepare(
+        `SELECT overlay.*
+         FROM precision_nodes overlay
+         JOIN precision_provider_state state
+           ON state.workspace_id=overlay.workspace_id AND state.provider=overlay.provider
+         WHERE overlay.workspace_id=? AND overlay.base_generation=?
+           AND state.base_generation=overlay.base_generation
+           AND state.precision_revision=overlay.precision_revision
+           AND state.status IN ('ready','partial')
+           AND overlay.node_id IN (${placeholders(chunk.length)})
+         ORDER BY overlay.node_id,
+           CASE overlay.analysis_level WHEN 'typed' THEN 2 ELSE 1 END DESC,
+           overlay.precision_revision DESC, overlay.provider ASC`,
+      ).all(this.workspace.id, currentGeneration, ...chunk);
+      for (const row of rows) {
+        const nodeId = stringValue(row.node_id);
+        if (!selected.has(nodeId)) selected.set(nodeId, row);
+      }
+    }
+    return nodes.map((node) => {
+      const overlay = selected.get(node.id);
+      if (!overlay) return node;
+      return {
+        ...node,
+        signature: stringValue(overlay.signature),
+        doc: stringValue(overlay.doc),
+        contentHash: stringValue(overlay.content_hash),
+        metadata: {
+          ...node.metadata,
+          ...parseJson<Record<string, unknown>>(overlay.metadata_json, {}),
+          precisionProvider: stringValue(overlay.provider),
+        },
+        analysisLevel: stringValue(overlay.analysis_level) as "resolved" | "typed",
+      };
+    });
+  }
+
+  private markCodeSemanticMaterializationChanged(changes: number): void {
+    if (changes === 0) return;
+    this.supersedeSemanticClaim("code");
+    this.db.prepare(
+      `UPDATE workspace_semantic_state SET
+         semantic_revision=semantic_revision+1,
+         status=CASE WHEN failure_class IN ('material_sticky','runtime_retryable','scale_limit')
+                     THEN status ELSE 'needs_backfill' END,
+         valid_embedding_count=0,last_error=NULL,updated_at=?
+       WHERE workspace_id=? AND plane='code'`,
+    ).run(this.nowIso(), this.workspace.id);
+  }
+
+  private refreshEffectiveNodeMaterializations(nodeIds: Iterable<string>): void {
+    const ids = unique([...nodeIds]).sort();
+    if (ids.length === 0) return;
+    const rows: SqlRow[] = [];
+    for (let offset = 0; offset < ids.length; offset += 400) {
+      const chunk = ids.slice(offset, offset + 400);
+      rows.push(...this.db.prepare(
+        `SELECT node.*, file.relative_path, file.content_hash AS file_content_hash, 0.0 AS score
+         FROM code_nodes node LEFT JOIN source_files file ON file.id=node.file_id
+         WHERE node.workspace_id=? AND node.id IN (${placeholders(chunk.length)})
+         ORDER BY node.id`,
+      ).all(this.workspace.id, ...chunk));
+    }
+    const priorHash = new Map(rows.map((row) => [stringValue(row.id), nullableString(row.semantic_source_hash)]));
+    const nodes = this.applyPrecisionNodeOverlays(rows.map(mapCodeNode));
+    const deleteFts = this.db.prepare("DELETE FROM code_nodes_fts WHERE node_id=?");
+    const insertFts = this.db.prepare(
+      `INSERT INTO code_nodes_fts(node_id,name,qualified_name,signature,doc,search_tokens)
+       VALUES (?,?,?,?,?,?)`,
+    );
+    const updateHash = this.db.prepare(
+      "UPDATE code_nodes SET semantic_source_hash=? WHERE workspace_id=? AND id=? AND semantic_source_hash IS NOT ?",
+    );
+    let semanticChanges = 0;
+    for (const node of nodes) {
+      deleteFts.run(node.id);
+      insertFts.run(
+        node.id,
+        node.name,
+        node.qualifiedName,
+        node.signature,
+        node.doc,
+        tokenizeIdentifier(`${node.name} ${node.qualifiedName}`),
+      );
+      const semantic = buildCodeSemanticDocument(node, node.relativePath);
+      if (priorHash.get(node.id) !== semantic.sourceHash) {
+        semanticChanges += Number(updateHash.run(semantic.sourceHash, this.workspace.id, node.id, semantic.sourceHash).changes);
+      }
+    }
+    this.markCodeSemanticMaterializationChanged(semanticChanges);
+  }
+
   getPrecisionRevision(): number {
     const row = this.db.prepare("SELECT precision_revision FROM workspaces WHERE id = ?").get(this.workspace.id);
     return numberValue(row?.precision_revision);
@@ -1130,20 +1339,24 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   registerPrecisionProvider(
     input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null },
   ): void {
-    const timestamp = this.nowIso();
-    this.db.prepare(
-      `INSERT INTO precision_provider_state(
-         workspace_id, language, provider, provider_version, capability, status, base_generation, last_error, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(workspace_id, provider) DO UPDATE SET
-         language=excluded.language, provider_version=excluded.provider_version,
-         capability=excluded.capability,
-         status=CASE WHEN precision_provider_state.provider_version <> excluded.provider_version
-                     AND precision_provider_state.status IN ('ready','partial') THEN 'stale'
-                     ELSE excluded.status END,
-         base_generation=excluded.base_generation,last_error=excluded.last_error,updated_at=excluded.updated_at`,
-    ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability, input.status,
-      this.getWorkspace().currentGeneration, input.lastError ?? null, timestamp);
+    this.transaction(() => {
+      const affectedNodes = this.precisionNodeIds(input.provider);
+      const timestamp = this.nowIso();
+      this.db.prepare(
+        `INSERT INTO precision_provider_state(
+           workspace_id, language, provider, provider_version, capability, status, base_generation, last_error, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_id, provider) DO UPDATE SET
+           language=excluded.language, provider_version=excluded.provider_version,
+           capability=excluded.capability,
+           status=CASE WHEN precision_provider_state.provider_version <> excluded.provider_version
+                       AND precision_provider_state.status IN ('ready','partial') THEN 'stale'
+                       ELSE excluded.status END,
+           base_generation=excluded.base_generation,last_error=excluded.last_error,updated_at=excluded.updated_at`,
+      ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability, input.status,
+        this.getWorkspace().currentGeneration, input.lastError ?? null, timestamp);
+      this.refreshEffectiveNodeMaterializations(affectedNodes);
+    });
   }
 
   claimPrecisionProvider(input: {
@@ -1156,6 +1369,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const token = `precision_${randomUUID()}`;
     let acquired = false;
     this.transaction(() => {
+      const affectedNodes = this.precisionNodeIds(input.provider);
       const existing = this.db.prepare(
         "SELECT status, lease_expires_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
       ).get(this.workspace.id, input.provider);
@@ -1172,6 +1386,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            lease_expires_epoch=excluded.lease_expires_epoch,updated_at=excluded.updated_at`,
       ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability,
         workspace.currentGeneration, input.owner, token, leaseExpiry, this.nowIso());
+      this.refreshEffectiveNodeMaterializations(affectedNodes);
       acquired = true;
     });
     return acquired ? { claim: { provider: input.provider, providerVersion: input.providerVersion, language: input.language,
@@ -1180,11 +1395,14 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   heartbeatPrecisionProvider(claim: PrecisionClaim, leaseMs = 30_000): boolean {
-    const expiry = Date.parse(this.nowIso()) + leaseMs;
+    const nowIso = this.nowIso();
+    const now = Date.parse(nowIso);
+    const expiry = now + leaseMs;
     const result = this.db.prepare(
       `UPDATE precision_provider_state SET lease_expires_epoch=?,updated_at=?
-       WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=? AND base_generation=?`,
-    ).run(expiry, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
+       WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=? AND base_generation=?
+         AND lease_expires_epoch>?`,
+    ).run(expiry, nowIso, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration, now);
     return Number(result.changes) === 1;
   }
 
@@ -1193,21 +1411,69 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     this.transaction(() => {
       const current = this.getWorkspace().currentGeneration;
       const state = this.db.prepare(
-        "SELECT status,lease_token,lease_owner,base_generation FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+        "SELECT status,lease_token,lease_owner,base_generation,lease_expires_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
       ).get(this.workspace.id, claim.provider);
       if (current !== claim.baseGeneration || !state || stringValue(state.status) !== "running" ||
           stringValue(state.lease_token) !== claim.token || stringValue(state.lease_owner) !== claim.owner ||
-          numberValue(state.base_generation) !== claim.baseGeneration) return;
+          numberValue(state.base_generation) !== claim.baseGeneration ||
+          numberValue(state.lease_expires_epoch) <= Date.parse(this.nowIso())) return;
+      const sorted = [...commit.edges].sort((left, right) =>
+        `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
+      const sortedNodes = [...(commit.nodes ?? [])].sort((left, right) => left.nodeId.localeCompare(right.nodeId));
+      if (new Set(sortedNodes.map((node) => node.nodeId)).size !== sortedNodes.length) return;
+      if (claim.capability === "resolved" && sortedNodes.some((node) => node.analysisLevel === "typed")) return;
+      const baseNode = this.db.prepare(
+        "SELECT content_hash,generation,language FROM code_nodes WHERE workspace_id=? AND id=?",
+      );
+      if (sortedNodes.some((node) => {
+        const row = baseNode.get(this.workspace.id, node.nodeId);
+        const nodeLanguage = stringValue(row?.language);
+        const languageMatches = claim.language === "typescript/javascript"
+          ? ["typescript", "tsx", "javascript", "jsx", "mjs", "cjs"].includes(nodeLanguage)
+          : nodeLanguage === claim.language;
+        return !row || numberValue(row.generation) !== claim.baseGeneration ||
+          !languageMatches || stringValue(row.content_hash) !== node.contentHash ||
+          !node.metadata || Array.isArray(node.metadata);
+      })) return;
+      const baseCandidate = this.db.prepare(
+        `SELECT 1 FROM code_edges
+         WHERE workspace_id=? AND source_id=? AND target_id=? AND kind=?
+           AND status='candidate' AND generation=? LIMIT 1`,
+      );
+      if (sorted.some((edge) => edge.status === "rejected" && !baseCandidate.get(
+        this.workspace.id, edge.sourceId, edge.targetId, edge.kind, claim.baseGeneration,
+      ))) return;
       const revision = this.getPrecisionRevision() + 1;
+      const affectedNodes = new Set(this.precisionNodeIds(claim.provider));
       this.db.prepare("DELETE FROM precision_edges WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
+      this.db.prepare("DELETE FROM precision_nodes WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
       const insert = this.db.prepare(
         `INSERT INTO precision_edges(workspace_id,provider,source_id,target_id,kind,status,confidence,resolution_kind,evidence_json,base_generation,precision_revision)
          VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       );
-      const sorted = [...commit.edges].sort((left, right) =>
-        `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
       for (const edge of sorted) insert.run(this.workspace.id, claim.provider, edge.sourceId, edge.targetId, edge.kind,
         edge.status, edge.confidence, edge.resolutionKind, JSON.stringify(edge.evidence), claim.baseGeneration, revision);
+      const insertNode = this.db.prepare(
+        `INSERT INTO precision_nodes(
+           workspace_id,provider,node_id,analysis_level,signature,doc,content_hash,metadata_json,
+           base_generation,precision_revision
+         ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      );
+      for (const node of sortedNodes) {
+        insertNode.run(
+          this.workspace.id,
+          claim.provider,
+          node.nodeId,
+          node.analysisLevel,
+          node.signature,
+          node.doc,
+          node.contentHash,
+          JSON.stringify(node.metadata),
+          claim.baseGeneration,
+          revision,
+        );
+        affectedNodes.add(node.nodeId);
+      }
       const resolved = sorted.filter((edge) => edge.status === "resolved").length;
       const rejected = sorted.filter((edge) => edge.status === "rejected").length;
       this.db.prepare("UPDATE workspaces SET precision_revision=?,updated_at=? WHERE id=?")
@@ -1218,28 +1484,50 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          WHERE workspace_id=? AND provider=?`,
       ).run(commit.partial ? "partial" : "ready", revision, commit.eligibleEdges, resolved, rejected,
         commit.diagnostics.length > 0 ? commit.diagnostics.join("; ") : null, this.nowIso(), this.workspace.id, claim.provider);
+      this.refreshEffectiveNodeMaterializations(affectedNodes);
       committed = true;
     });
     return committed;
   }
 
   failPrecisionProvider(claim: PrecisionClaim, error: string): boolean {
-    const result = this.db.prepare(
-      `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
-       lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
-       AND lease_token=? AND lease_owner=? AND base_generation=?`,
-    ).run(error, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
-    return Number(result.changes) === 1;
+    return this.transaction(() => {
+      const affectedNodes = this.precisionNodeIds(claim.provider);
+      const nowIso = this.nowIso();
+      const now = Date.parse(nowIso);
+      const result = this.db.prepare(
+        `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
+         lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
+         AND lease_token=? AND lease_owner=? AND base_generation=? AND lease_expires_epoch>?`,
+      ).run(error, nowIso, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration, now);
+      if (Number(result.changes) === 1) this.refreshEffectiveNodeMaterializations(affectedNodes);
+      return Number(result.changes) === 1;
+    });
   }
 
-  getStoredGraphPartition(language: "python" | "non-python"): StoredGraphPartition {
+  abandonPrecisionProvider(claim: PrecisionClaim, error: string): boolean {
+    return this.transaction(() => {
+      const affectedNodes = this.precisionNodeIds(claim.provider);
+      const timestamp = this.nowIso();
+      const result = this.db.prepare(
+        `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
+         lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
+         AND lease_token=? AND lease_owner=? AND base_generation=?`,
+      ).run(error, timestamp, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
+      if (Number(result.changes) === 1) this.refreshEffectiveNodeMaterializations(affectedNodes);
+      return Number(result.changes) === 1;
+    });
+  }
+
+  getStoredGraphPartition(language: "python" | "non-python", includePrecision = true): StoredGraphPartition {
     const comparison = language === "python" ? "=" : "<>";
     const nodeRows = this.db.prepare(
       `SELECT n.*, f.relative_path, f.content_hash AS file_content_hash, 0 AS score
        FROM code_nodes n LEFT JOIN source_files f ON f.id=n.file_id
        WHERE n.workspace_id=? AND n.language ${comparison} 'python' ORDER BY n.id`,
     ).all(this.workspace.id);
-    const nodes = nodeRows.map(mapCodeNode);
+    const baseNodes = nodeRows.map(mapCodeNode);
+    const nodes = includePrecision ? this.applyPrecisionNodeOverlays(baseNodes) : baseNodes;
     const ids = new Set(nodes.map((node) => node.id));
     const edgeRows = this.db.prepare(
       `SELECT edge.* FROM code_edges edge
@@ -1271,7 +1559,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }));
     const edgeKey = (edge: Pick<CodeEdgeRecord, "sourceId" | "targetId" | "kind">): string => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
     const effective = new Map<string, CodeEdgeRecord>(baseEdges.map((edge) => [edgeKey(edge), edge]));
-    for (const row of precisionRows) {
+    for (const row of includePrecision ? precisionRows : []) {
       const overlay: CodeEdgeRecord = {
         workspaceId: stringValue(row.workspace_id), sourceId: stringValue(row.source_id), targetId: stringValue(row.target_id),
         kind: stringValue(row.kind) as CodeEdgeKind, confidence: numberValue(row.confidence),
@@ -1302,31 +1590,146 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   startIndexRun(mode: IndexMode): IndexRunHandle {
-    const latestRun = this.db
-      .prepare("SELECT max(generation) AS generation FROM index_runs WHERE workspace_id = ?")
-      .get(this.workspace.id);
-    const nextGeneration = numberValue(latestRun?.generation) + 1;
-    const handle: IndexRunHandle = {
-      id: `idx_${randomUUID()}`,
-      generation: nextGeneration,
-      mode,
-    };
-    this.db
+    return this.transaction(() => {
+      const nowEpoch = this.databaseEpoch();
+      const activeLease = this.db
+        .prepare(
+          `SELECT run_id, lease_expiry_epoch FROM index_writer_leases
+           WHERE workspace_id = ?`,
+        )
+        .get(this.workspace.id);
+      if (activeLease && numberValue(activeLease.lease_expiry_epoch) > nowEpoch) {
+        throw new ContextMeshError("DB_BUSY", "Another index writer holds the workspace lease");
+      }
+      if (activeLease) {
+        this.db
+          .prepare(
+            `UPDATE index_runs SET status = 'failed', failed_files = 1,
+               diagnostics_json = ?, completed_at = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'running'`,
+          )
+          .run(
+            JSON.stringify(["Indexing writer lease expired before the run completed"]),
+            this.nowIso(),
+            stringValue(activeLease.run_id),
+            this.workspace.id,
+          );
+        this.db.prepare("DELETE FROM index_writer_leases WHERE workspace_id = ?").run(this.workspace.id);
+      }
+
+      const latestRun = this.db
+        .prepare("SELECT max(generation) AS generation FROM index_runs WHERE workspace_id = ?")
+        .get(this.workspace.id);
+      const handle: IndexRunHandle = {
+        id: `idx_${randomUUID()}`,
+        generation: numberValue(latestRun?.generation) + 1,
+        mode,
+        leaseOwner: this.indexWriterOwner,
+        leaseToken: `iwl_${randomUUID()}`,
+      };
+      const timestamp = this.nowIso();
+      this.db
+        .prepare(
+          `INSERT INTO index_runs(id, workspace_id, generation, mode, status, started_at)
+           VALUES (?, ?, ?, ?, 'running', ?)`,
+        )
+        .run(handle.id, this.workspace.id, handle.generation, handle.mode, timestamp);
+      this.db
+        .prepare(
+          `INSERT INTO index_writer_leases(
+             workspace_id, run_id, owner_id, lease_token, heartbeat_epoch,
+             lease_expiry_epoch, acquired_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          this.workspace.id,
+          handle.id,
+          handle.leaseOwner,
+          handle.leaseToken,
+          nowEpoch,
+          nowEpoch + INDEX_WRITER_LEASE_SECONDS,
+          timestamp,
+          timestamp,
+        );
+      return handle;
+    });
+  }
+
+  heartbeatIndexRun(handle: IndexRunHandle): boolean {
+    return this.transaction(() => {
+      const nowEpoch = this.databaseEpoch();
+      const result = this.db
+        .prepare(
+          `UPDATE index_writer_leases SET
+             heartbeat_epoch = ?, lease_expiry_epoch = ?, updated_at = ?
+           WHERE workspace_id = ? AND run_id = ? AND owner_id = ? AND lease_token = ?
+             AND lease_expiry_epoch > ?
+             AND EXISTS (
+               SELECT 1 FROM index_runs run
+               WHERE run.id = index_writer_leases.run_id AND run.status = 'running'
+             )`,
+        )
+        .run(
+          nowEpoch,
+          nowEpoch + INDEX_WRITER_LEASE_SECONDS,
+          this.nowIso(),
+          this.workspace.id,
+          handle.id,
+          handle.leaseOwner,
+          handle.leaseToken,
+          nowEpoch,
+        );
+      return Number(result.changes) === 1;
+    });
+  }
+
+  private assertIndexWriterLease(handle: IndexRunHandle): void {
+    const nowEpoch = this.databaseEpoch();
+    const row = this.db
       .prepare(
-        `INSERT INTO index_runs(id, workspace_id, generation, mode, status, started_at)
-         VALUES (?, ?, ?, ?, 'running', ?)`,
+        `SELECT lease.lease_expiry_epoch, run.status
+         FROM index_writer_leases lease
+         JOIN index_runs run ON run.id = lease.run_id
+         WHERE lease.workspace_id = ? AND lease.run_id = ?
+           AND lease.owner_id = ? AND lease.lease_token = ?`,
       )
-      .run(handle.id, this.workspace.id, handle.generation, handle.mode, this.nowIso());
-    return handle;
+      .get(this.workspace.id, handle.id, handle.leaseOwner, handle.leaseToken);
+    if (
+      !row ||
+      stringValue(row.status) !== "running" ||
+      numberValue(row.lease_expiry_epoch) <= nowEpoch
+    ) {
+      throw new ContextMeshError("DB_BUSY", "Index writer lease was lost or expired");
+    }
+  }
+
+  private releaseIndexWriterLease(handle: IndexRunHandle): void {
+    const result = this.db
+      .prepare(
+        `DELETE FROM index_writer_leases
+         WHERE workspace_id = ? AND run_id = ? AND owner_id = ? AND lease_token = ?`,
+      )
+      .run(this.workspace.id, handle.id, handle.leaseOwner, handle.leaseToken);
+    if (Number(result.changes) !== 1) {
+      throw new ContextMeshError("DB_BUSY", "Index writer lease could not be released");
+    }
   }
 
   failIndexRun(handle: IndexRunHandle, diagnostics: string[]): void {
-    this.db
-      .prepare(
-        `UPDATE index_runs SET status = 'failed', failed_files = 1,
-         diagnostics_json = ?, completed_at = ? WHERE id = ?`,
-      )
-      .run(JSON.stringify(diagnostics), this.nowIso(), handle.id);
+    this.transaction(() => {
+      this.assertIndexWriterLease(handle);
+      const result = this.db
+        .prepare(
+          `UPDATE index_runs SET status = 'failed', failed_files = 1,
+           diagnostics_json = ?, completed_at = ?
+           WHERE id = ? AND workspace_id = ? AND status = 'running'`,
+        )
+        .run(JSON.stringify(diagnostics), this.nowIso(), handle.id, this.workspace.id);
+      if (Number(result.changes) !== 1) {
+        throw new ContextMeshError("DB_BUSY", "Index run is no longer owned by this writer");
+      }
+      this.releaseIndexWriterLease(handle);
+    });
   }
 
   completeNoOpRun(
@@ -1339,6 +1742,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   ): void {
     const timestamp = this.nowIso();
     this.transaction(() => {
+      this.assertIndexWriterLease(handle);
       this.db
         .prepare(
           `UPDATE index_runs SET status = 'succeeded', scanned_files = ?, changed_files = ?,
@@ -1360,6 +1764,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            freshness_stale_at = NULL, freshness_reasons_json = '[]', updated_at = ? WHERE id = ?`,
         )
         .run(indexConfigHash, JSON.stringify(adapterState), timestamp, this.workspace.id);
+      this.releaseIndexWriterLease(handle);
     });
   }
 
@@ -2032,13 +2437,15 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     adapterState: AdapterStateMap,
     semantic?: SemanticPlaneCommit,
     semanticClaim?: CodeIndexSemanticClaim,
+    semanticGraph?: ExtractedGraph,
   ): void {
     const timestamp = this.nowIso();
     const startedAt = performance.now();
     this.transaction(() => {
+      this.assertIndexWriterLease(handle);
       this.db.exec("PRAGMA defer_foreign_keys = ON");
       const claimValid = semanticClaim
-        ? this.verifyCodeIndexClaim(semanticClaim, handle, graph)
+        ? this.verifyCodeIndexClaim(semanticClaim, handle, semanticGraph ?? graph)
         : false;
       const acceptedSemantic = claimValid ? semantic : undefined;
       this.supersedeSemanticClaim("code", claimValid ? semanticClaim?.attemptToken : undefined);
@@ -2081,6 +2488,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
 
       const relativePathByFileId = new Map(graph.files.map((file) => [file.id, file.relativePath]));
+      const semanticSourceHashByNodeId = acceptedSemantic
+        ? new Map(acceptedSemantic.entries.map((entry) => [entry.entityId, entry.sourceHash]))
+        : null;
       const insertNode = this.db.prepare(
         `INSERT INTO code_nodes(
           id, workspace_id, file_id, kind, name, qualified_name, local_key, signature, doc,
@@ -2118,7 +2528,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           node.contentHash,
           handle.generation,
           JSON.stringify(node.metadata),
-          semanticDocument.sourceHash,
+          semanticSourceHashByNodeId?.get(node.id) ?? semanticDocument.sourceHash,
           node.language ?? (node.metadata.language as string | undefined) ?? "typescript",
           node.ecosystem ?? "npm",
           node.nativeKind ?? (node.metadata.syntaxKind as string | undefined) ?? node.kind,
@@ -2261,6 +2671,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           timestamp,
           handle.id,
       );
+      this.releaseIndexWriterLease(handle);
     });
     this.lastBulkCommitMs = performance.now() - startedAt;
   }
@@ -2353,8 +2764,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const updateCode = this.db.prepare(
         "UPDATE code_nodes SET semantic_source_hash = ? WHERE workspace_id = ? AND id = ? AND semantic_source_hash IS NOT ?",
       );
-      for (const row of codeRows) {
-        const node = mapCodeNode(row);
+      for (const node of this.applyPrecisionNodeOverlays(codeRows.map(mapCodeNode))) {
         const semantic = buildCodeSemanticDocument(node, node.relativePath);
         codeChanges += Number(updateCode.run(semantic.sourceHash, this.workspace.id, node.id, semantic.sourceHash).changes);
       }
@@ -2402,17 +2812,15 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   getCurrentCodeSemanticDocuments(): SemanticDocument[] {
-    return this.db
+    const rows = this.db
       .prepare(
         `SELECT node.*, file.relative_path, file.content_hash AS file_content_hash, 0.0 AS score
          FROM code_nodes node LEFT JOIN source_files file ON file.id = node.file_id
          WHERE node.workspace_id = ? AND node.generation = ? ORDER BY node.id`,
       )
-      .all(this.workspace.id, this.getWorkspace().currentGeneration)
-      .map((row) => {
-        const node = mapCodeNode(row);
-        return buildCodeSemanticDocument(node, node.relativePath);
-      });
+      .all(this.workspace.id, this.getWorkspace().currentGeneration);
+    return this.applyPrecisionNodeOverlays(rows.map(mapCodeNode))
+      .map((node) => buildCodeSemanticDocument(node, node.relativePath));
   }
 
   getCurrentMemorySemanticDocuments(timestamp = this.nowIso()): SemanticDocument[] {
@@ -3024,8 +3432,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          WHERE node.workspace_id = ? AND node.id IN (${placeholders(uniqueIds.length)})`,
       )
       .all(this.workspace.id, ...uniqueIds);
-    const byId = new Map(rows.map((row) => {
-      const node = mapCodeNode(row);
+    const byId = new Map(this.applyPrecisionNodeOverlays(rows.map(mapCodeNode)).map((node) => {
       return [node.id, node] as const;
     }));
     return uniqueIds.flatMap((id) => {
@@ -3312,7 +3719,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            LIMIT ? OFFSET ?`,
         )
         .all(query, query, ftsQuery, this.workspace.id, ...kindParams, query, limit, offset);
-      return rows.map(mapCodeNode);
+      return this.applyPrecisionNodeOverlays(rows.map(mapCodeNode));
     }
     const rows = this.db
       .prepare(
@@ -3322,7 +3729,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          ORDER BY n.qualified_name, n.id LIMIT ? OFFSET ?`,
       )
       .all(this.workspace.id, `%${query}%`, `%${query}%`, ...kindParams, limit, offset);
-    return rows.map(mapCodeNode);
+    return this.applyPrecisionNodeOverlays(rows.map(mapCodeNode));
   }
 
   getCodeNode(id: string): CodeSearchResult | null {
@@ -3344,7 +3751,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         return typeof metadata.legacyAlias === "string" && sha256(`${this.workspace.id}\0${metadata.legacyAlias}`) === id;
       });
     }
-    return row ? mapCodeNode(row) : null;
+    return row ? (this.applyPrecisionNodeOverlays([mapCodeNode(row)])[0] ?? null) : null;
   }
 
   traceCode(
@@ -3388,10 +3795,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           evidence: row.evidence,
         });
         if (!visited.has(nextId)) {
-          visited.add(nextId);
           const node = this.getCodeNode(nextId);
           if (node) nodes.set(nextId, node);
-          queue.push({ id: nextId, depth: current.depth + 1 });
+          if (row.status !== "rejected") {
+            visited.add(nextId);
+            queue.push({ id: nextId, depth: current.depth + 1 });
+          }
         }
       }
     }

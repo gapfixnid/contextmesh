@@ -11,6 +11,7 @@ import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 import type { ScannedFile } from "./scanner.js";
 
 export const GRAPH_KERNEL_PROTOCOL = "contextmesh.graph-kernel/v1";
+export const GRAPH_KERNEL_VERSION = "0.5.0";
 export type GraphKernelPolicy = "native-required" | "portable";
 
 const DEFAULT_KERNEL_TIMEOUT_MS = 30_000;
@@ -153,6 +154,24 @@ const helloSchema = z.object({
     version: z.string().min(1).max(100),
   })).max(100),
 });
+export type GraphKernelHello = z.infer<typeof helloSchema>;
+let lastObservedKernelVersion: string | null = null;
+
+export function validateGraphKernelHello(data: unknown, prefix = "KERNEL"): GraphKernelHello {
+  const parsed = helloSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`${prefix}_PROTOCOL_INVALID: hello data schema mismatch (${parsed.error.message.slice(0, 1_000)})`);
+  }
+  if (parsed.data.kernelVersion !== GRAPH_KERNEL_VERSION) {
+    throw new Error(`${prefix}_VERSION_MISMATCH: expected ${GRAPH_KERNEL_VERSION}, received ${parsed.data.kernelVersion}`);
+  }
+  lastObservedKernelVersion = parsed.data.kernelVersion;
+  return parsed.data;
+}
+
+export function observedGraphKernelVersion(): string | null {
+  return lastObservedKernelVersion;
+}
 
 const pythonBatchSchema = z.object({
   files: z.array(pythonFactsSchema).max(100_000),
@@ -490,7 +509,8 @@ async function nativeFacts(files: ScannedFile[], launchOverride?: GraphKernelLau
   const session = new KernelSession(resolveLaunch(launchOverride));
   try {
     const hello = await session.request({ operation: "hello", requestId: "hello" }, helloSchema);
-    const pythonGrammar = hello.data.grammarRegistry.find((grammar) => grammar.language === "python");
+    const helloData = validateGraphKernelHello(hello.data);
+    const pythonGrammar = helloData.grammarRegistry.find((grammar) => grammar.language === "python");
     if (pythonGrammar?.provider !== "tree-sitter-python" || pythonGrammar.version !== "0.25.0") {
       throw new Error("KERNEL_GRAMMAR_MISMATCH: expected tree-sitter-python@0.25.0");
     }
@@ -507,7 +527,7 @@ async function nativeFacts(files: ScannedFile[], launchOverride?: GraphKernelLau
     return {
       files: extracted.data.files,
       mode: "sidecar",
-      providerVersion: `contextmesh-graph-kernel@${hello.data.kernelVersion}/tree-sitter-python@0.25.0`,
+      providerVersion: `contextmesh-graph-kernel@${helloData.kernelVersion}/tree-sitter-python@0.25.0`,
       diagnostics: extracted.diagnostics.map((item) => `${item.code}: ${item.message}`),
       filesParsed: extracted.data.files.length,
       kernelRssBytes: extracted.data.rssBytes,
@@ -558,7 +578,7 @@ export async function extractPythonKernelFacts(
         mode: policy === "portable" ? "portable" as const : "sidecar" as const,
         providerVersion: policy === "portable"
           ? "web-tree-sitter@0.26.11/tree-sitter-python@0.25.0"
-          : "contextmesh-graph-kernel@0.5.0/tree-sitter-python@0.25.0",
+          : `contextmesh-graph-kernel@${observedGraphKernelVersion() ?? GRAPH_KERNEL_VERSION}/tree-sitter-python@0.25.0`,
         diagnostics: [],
         filesParsed: 0,
         kernelRssBytes: 0,
@@ -592,7 +612,8 @@ export async function probeTypeScriptTreeSitter(
   const session = new KernelSession(resolveLaunch(launchOverride));
   try {
     const hello = await session.request({ operation: "hello", requestId: "hello" }, helloSchema);
-    const grammar = hello.data.grammarRegistry.find((item) => item.language === "typescript-benchmark-only");
+    const helloData = validateGraphKernelHello(hello.data);
+    const grammar = helloData.grammarRegistry.find((item) => item.language === "typescript-benchmark-only");
     if (grammar?.provider !== "tree-sitter-typescript" || grammar.version !== "0.23.2") {
       throw new Error("KERNEL_GRAMMAR_MISMATCH: expected tree-sitter-typescript@0.23.2");
     }

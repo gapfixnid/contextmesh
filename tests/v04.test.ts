@@ -1,10 +1,12 @@
 import { renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import { extractPythonKernelFacts, type GraphKernelLaunch } from "../src/code/native-kernel.js";
 import { GraphWatchCoordinator, NativeWatchEventSource, type WatchClock, type WatchEvent, type WatchEventSource } from "../src/code/watcher.js";
+import { ContextMeshDatabase } from "../src/storage/database.js";
 import { createFixtureWorkspace, removeFixtureWorkspace, writeWorkspaceFile } from "./helpers.js";
 
 const roots: string[] = [];
@@ -45,6 +47,17 @@ class FailingSource implements WatchEventSource {
   starts = 0;
   async start(): Promise<void> { this.starts += 1; throw new Error("synthetic-source-failure"); }
   async close(): Promise<void> {}
+}
+
+class RecoverableSource implements WatchEventSource {
+  starts = 0;
+  private onError: ((error: Error) => void) | null = null;
+  async start(_root: string, _onEvent: (event: WatchEvent) => void, onError: (error: Error) => void): Promise<void> {
+    this.starts += 1;
+    this.onError = onError;
+  }
+  async close(): Promise<void> { this.onError = null; }
+  fail(): void { this.onError?.(new Error("recoverable-source-failure")); }
 }
 
 async function generationAfter(app: ContextMeshApp, generation: number): Promise<void> {
@@ -99,9 +112,50 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
         ? "process.stdin.resume(); setInterval(() => {}, 1000);\n"
         : "process.stdin.once('data', () => process.stdout.write('not-json\\n'));\n";
       writeWorkspaceFile(root, "fake-kernel.mjs", script);
-      launch = { executable: process.execPath, args: [path.join(root, "fake-kernel.mjs")], timeoutMs: 100 };
+      // Leave enough headroom for child-process startup while the full suite runs in parallel.
+      // The hung-response case remains strictly bounded by this one-second deadline.
+      launch = { executable: process.execPath, args: [path.join(root, "fake-kernel.mjs")], timeoutMs: 1_000 };
     }
     await expect(extractPythonKernelFacts([pythonScan(root)], "native-required", true, launch)).rejects.toThrow(code);
+  });
+
+  it("rejects a graph-kernel hello with an incompatible executable version", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const script = [
+      "import readline from 'node:readline';",
+      "const lines = readline.createInterface({ input: process.stdin });",
+      "lines.on('line', (line) => { const request = JSON.parse(line);",
+      "process.stdout.write(JSON.stringify({ protocol: 'contextmesh.graph-kernel/v1', requestId: request.requestId, status: 'ok',",
+      "data: { kernelVersion: '9.9.9', grammarRegistry: [{ language: 'python', provider: 'tree-sitter-python', version: '0.25.0' }] }, diagnostics: [] }) + '\\n'); });",
+      "",
+    ].join("\n");
+    writeWorkspaceFile(root, "wrong-version-kernel.mjs", script);
+    const launch = { executable: process.execPath, args: [path.join(root, "wrong-version-kernel.mjs")], timeoutMs: 1_000 };
+    await expect(extractPythonKernelFacts([pythonScan(root)], "native-required", true, launch))
+      .rejects.toThrow("KERNEL_VERSION_MISMATCH");
+  });
+
+  it("performs and validates hello before starting the native watcher", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const script = [
+      "import readline from 'node:readline';",
+      "const lines = readline.createInterface({ input: process.stdin });",
+      "lines.on('line', (line) => { const request = JSON.parse(line);",
+      "const data = request.operation === 'hello' ? { kernelVersion: '9.9.9', grammarRegistry: [] } : { rootPath: request.rootPath };",
+      "process.stdout.write(JSON.stringify({ protocol: 'contextmesh.graph-kernel/v1', requestId: request.requestId, status: request.operation === 'watch' ? 'ready' : 'ok', data, diagnostics: [] }) + '\\n'); });",
+      "",
+    ].join("\n");
+    writeWorkspaceFile(root, "wrong-version-watcher.mjs", script);
+    const source = new NativeWatchEventSource({
+      executable: process.execPath,
+      args: [path.join(root, "wrong-version-watcher.mjs")],
+      timeoutMs: 1_000,
+    });
+    try {
+      await expect(source.start(root, () => {}, () => {})).rejects.toThrow("WATCH_KERNEL_VERSION_MISMATCH");
+    } finally {
+      await source.close();
+    }
   });
 
   it("preserves the committed generation and cache after a kernel failure", async () => {
@@ -137,6 +191,54 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
     clock.flush(); await Promise.resolve();
     expect(calls).toBe(3);
     await coordinator.close();
+  });
+
+  it("fences concurrent workspace writers across independent database connections", () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const first = new ContextMeshDatabase(root);
+    const firstRun = first.startIndexRun("full");
+    const second = new ContextMeshDatabase(root, first.dbPath);
+    try {
+      expect((first.getStatus().lastRun as { status: string }).status).toBe("running");
+      expect(() => second.startIndexRun("full")).toThrowError(expect.objectContaining({
+        code: "DB_BUSY",
+      }));
+      first.failIndexRun(firstRun, ["test release"]);
+      const secondRun = second.startIndexRun("full");
+      expect(secondRun.generation).toBe(firstRun.generation + 1);
+      second.failIndexRun(secondRun, ["test cleanup"]);
+    } finally {
+      second.close();
+      first.close();
+    }
+  });
+
+  it("allows an expired writer lease takeover and fences the stale owner", () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const first = new ContextMeshDatabase(root);
+    const staleRun = first.startIndexRun("full");
+    const raw = new DatabaseSync(first.dbPath);
+    raw.prepare(
+      "UPDATE index_writer_leases SET heartbeat_epoch = 1, lease_expiry_epoch = 2 WHERE run_id = ?",
+    ).run(staleRun.id);
+    raw.close();
+
+    const second = new ContextMeshDatabase(root, first.dbPath);
+    try {
+      const takeoverRun = second.startIndexRun("full");
+      expect(takeoverRun.generation).toBe(staleRun.generation + 1);
+      expect(() => first.failIndexRun(staleRun, ["stale writer mutation"])).toThrowError(
+        expect.objectContaining({ code: "DB_BUSY" }),
+      );
+      expect((second.getStatus().lastRun as { id: string; status: string })).toMatchObject({
+        id: takeoverRun.id,
+        status: "running",
+      });
+      second.failIndexRun(takeoverRun, ["test cleanup"]);
+    } finally {
+      second.close();
+      first.close();
+    }
   });
 
   it("persists and clears graph-kernel health across process restarts", async () => {
@@ -205,6 +307,40 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
     await app.close();
   });
 
+  it("records a watcher source failure during an active writer lease and clears it after restart", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const app = new ContextMeshApp(root);
+    const source = new RecoverableSource();
+    const clock = new FakeClock();
+    const coordinator = new GraphWatchCoordinator(
+      root,
+      async () => {},
+      (diagnostic) => app.code.recordOperationalFailure(diagnostic),
+      { eventSource: source, clock, maxRetries: 2 },
+      () => app.code.recordOperationalRecovery("watcher"),
+    );
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      await coordinator.start();
+      const generation = app.database.getWorkspace().currentGeneration;
+      const active = app.database.startIndexRun("incremental");
+      expect(() => source.fail()).not.toThrow();
+      expect(app.database.getWorkspace().currentGeneration).toBe(generation);
+      expect(app.database.getOperationalStatus().watcher?.status).toBe("failed");
+      app.database.failIndexRun(active, ["fixture cleanup"]);
+
+      clock.flush();
+      for (let attempt = 0; attempt < 20 && source.starts < 2; attempt += 1) await Promise.resolve();
+      for (let attempt = 0; attempt < 20 && app.database.getOperationalStatus().watcher?.status !== "ready"; attempt += 1) await Promise.resolve();
+      expect(source.starts).toBe(2);
+      expect(coordinator.status()).toMatchObject({ state: "watching", sourceRetries: 0, lastDiagnostic: null });
+      expect(app.database.getOperationalStatus().watcher?.status).toBe("ready");
+    } finally {
+      await coordinator.close();
+      await app.close();
+    }
+  });
+
   it("observes an actual native OS watcher event in a separate smoke", async () => {
     const root = createFixtureWorkspace(); roots.push(root);
     const source = new NativeWatchEventSource();
@@ -235,6 +371,52 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
       expect(app.database.getWorkspace().currentGeneration).toBe(generation);
       expect((await app.searchCode({ query: "watched" })).data).toEqual({ results: [], nextOffset: null });
     } finally { await app.close(); }
+  });
+
+  it.each([
+    ["Go", "src/watch.go", "package watched\nfunc GoWatched() int { return 1 }\n", "GoWatched", "go"],
+    ["Rust", "src/watch.rs", "pub fn RustWatched() -> i32 { 1 }\n", "RustWatched", "rust"],
+    ["Java", "src/JavaWatched.java", "public class JavaWatched {}\n", "JavaWatched", "java"],
+    ["C#", "src/CsharpWatched.cs", "public class CsharpWatched {}\n", "CsharpWatched", "csharp"],
+  ] as const)("reconciles watcher events for %s source files", async (_label, relativePath, content, query, language) => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const source = new FakeSource(); const clock = new FakeClock();
+    const app = new ContextMeshApp(root, undefined, { watcher: { eventSource: source, clock, debounceMs: 10 } });
+    try {
+      await app.initialize(false);
+      const generation = app.database.getWorkspace().currentGeneration;
+      writeWorkspaceFile(root, relativePath, content);
+      source.emit(path.join(root, relativePath));
+      clock.flush();
+      await generationAfter(app, generation);
+      const result = (await app.searchCode({ query })).data as { results: Array<{ language: string }> };
+      expect(result.results).toContainEqual(expect.objectContaining({ language }));
+    } finally { await app.close(); }
+  });
+
+  it("schedules reconciliation for v0.5 language project manifests", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const source = new FakeSource(); const clock = new FakeClock(); let calls = 0;
+    const coordinator = new GraphWatchCoordinator(
+      root,
+      async () => { calls += 1; },
+      () => {},
+      { eventSource: source, clock, debounceMs: 10 },
+    );
+    await coordinator.start();
+    expect(calls).toBe(1);
+    source.emit(
+      path.join(root, "go.mod"),
+      path.join(root, "Cargo.toml"),
+      path.join(root, "pom.xml"),
+      path.join(root, "build.gradle.kts"),
+      path.join(root, "fixture.csproj"),
+    );
+    clock.flush();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    await coordinator.close();
   });
 
   it("repairs event loss by reconciling the durable baseline on watcher restart", async () => {

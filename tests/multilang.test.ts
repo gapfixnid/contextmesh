@@ -98,7 +98,7 @@ describe("v0.3 multilingual graph", () => {
         edges: Array<{ confidence: number; status: string; evidence: unknown[] }>;
         unresolved: Array<{ rawName: string; confidence: number; evidence: unknown[] }>;
       }>;
-      expect(trace.data.edges.some((edge) => edge.confidence === 0.9 && edge.evidence.length > 0)).toBe(true);
+      expect(trace.data.edges.some((edge) => edge.confidence >= 0.9 && edge.evidence.length > 0)).toBe(true);
       expect(trace.data.unresolved.some((item) => item.rawName.includes("self.dynamic") && item.confidence < 0.6)).toBe(true);
       expect(trace.data.edges.filter((edge) => edge.status === "resolved").every((edge) => edge.confidence >= 0.9)).toBe(true);
       expect(trace.data.edges.some((edge) => {

@@ -5,6 +5,7 @@ import { createInterface, type Interface } from "node:readline";
 import {
   graphKernelLaunchSpec,
   GRAPH_KERNEL_PROTOCOL,
+  validateGraphKernelHello,
   type GraphKernelLaunch,
 } from "./native-kernel.js";
 
@@ -88,6 +89,12 @@ export class NativeWatchEventSource implements WatchEventSource {
           onError(error);
         }
       };
+      const writeRequest = (payload: Record<string, unknown>): void => {
+        child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+          if (error) fail(new Error(`WATCH_KERNEL_WRITE_FAILED: ${error.message}`));
+        });
+      };
+      let helloComplete = false;
       child.once("error", (error) => fail(new Error(`WATCH_KERNEL_SPAWN_FAILED: ${error.message}`)));
       child.once("exit", (code, signal) => fail(new Error(`WATCH_KERNEL_EXITED: exit=${code ?? "null"} signal=${signal ?? "none"}`)));
       child.stderr.on("data", (chunk: Buffer) => fail(new Error(`WATCH_KERNEL_STDERR: ${chunk.toString("utf8").slice(0, 500)}`)));
@@ -99,11 +106,31 @@ export class NativeWatchEventSource implements WatchEventSource {
             protocol?: unknown;
             requestId?: unknown;
             status?: unknown;
-            data?: { paths?: unknown; kind?: unknown };
+            data?: unknown;
             diagnostics?: Array<{ code?: unknown; message?: unknown }>;
           };
           if (response.protocol !== GRAPH_KERNEL_PROTOCOL) {
             return fail(new Error(`WATCH_PROTOCOL_MISMATCH: ${String(response.protocol)}`));
+          }
+          if (!helloComplete) {
+            if (response.requestId !== "hello") {
+              return fail(new Error(`WATCH_REQUEST_ID_MISMATCH: expected hello, received ${String(response.requestId)}`));
+            }
+            if (response.status === "error") {
+              const details = response.diagnostics?.map((item) => `${String(item.code)}: ${String(item.message)}`).join("; ");
+              return fail(new Error(details || "WATCH_HELLO_FAILED"));
+            }
+            if (response.status !== "ok") {
+              return fail(new Error(`WATCH_PROTOCOL_INVALID: unexpected hello status ${String(response.status)}`));
+            }
+            try {
+              validateGraphKernelHello(response.data, "WATCH_KERNEL");
+            } catch (error) {
+              return fail(error instanceof Error ? error : new Error(message(error)));
+            }
+            helloComplete = true;
+            writeRequest({ operation: "watch", requestId: "watch", rootPath });
+            return;
           }
           if (response.requestId !== "watch") {
             return fail(new Error(`WATCH_REQUEST_ID_MISMATCH: ${String(response.requestId)}`));
@@ -117,13 +144,14 @@ export class NativeWatchEventSource implements WatchEventSource {
             return;
           }
           if (response.status === "event") {
-            if (!Array.isArray(response.data?.paths)
-              || response.data.paths.length > 100_000
-              || response.data.paths.some((item) => typeof item !== "string" || item.length > 4_000)
-              || typeof response.data.kind !== "string") {
+            const data = response.data as { paths?: unknown; kind?: unknown } | undefined;
+            if (!Array.isArray(data?.paths)
+              || data.paths.length > 100_000
+              || data.paths.some((item) => typeof item !== "string" || item.length > 4_000)
+              || typeof data.kind !== "string") {
               return fail(new Error("WATCH_PROTOCOL_INVALID: malformed event payload"));
             }
-            onEvent({ paths: [...response.data.paths].sort(), kind: response.data.kind });
+            onEvent({ paths: [...data.paths].sort(), kind: data.kind });
             return;
           }
           if (response.status === "error") {
@@ -137,9 +165,7 @@ export class NativeWatchEventSource implements WatchEventSource {
             : new Error(`WATCH_PROTOCOL_INVALID: ${message(error)}`));
         }
       });
-      child.stdin.write(`${JSON.stringify({ operation: "watch", requestId: "watch", rootPath })}\n`, (error) => {
-        if (error) fail(new Error(`WATCH_KERNEL_WRITE_FAILED: ${error.message}`));
-      });
+      writeRequest({ operation: "hello", requestId: "hello" });
     });
   }
 
@@ -226,6 +252,7 @@ export class GraphWatchCoordinator {
       (error) => this.handleSourceError(error),
     );
     this.sourceActive = true;
+    this.sourceRetries = 0;
     this.state = "watching";
   }
 
@@ -258,8 +285,12 @@ export class GraphWatchCoordinator {
     if (lower.split("/").some((part) => [".contextmesh", ".git", "node_modules", "dist", "target"].includes(part))) return false;
     if (/(^|\/)\.env(?:\.|$)/i.test(lower) || /(?:secret|credential|private[-_.]?key)/i.test(lower)) return false;
     const basename = path.posix.basename(lower);
-    return ["tsconfig.json", "jsconfig.json", "pyproject.toml"].includes(basename)
-      || /\.(?:ts|tsx|js|jsx|mjs|cjs|py)$/.test(lower);
+    return [
+      "tsconfig.json", "jsconfig.json", "pyproject.toml",
+      "go.mod", "go.sum", "cargo.toml", "cargo.lock",
+      "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+    ].includes(basename)
+      || /\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|cs|csproj|sln)$/.test(lower);
   }
 
   private schedule(delay = this.options.debounceMs ?? 75): void {

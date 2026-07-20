@@ -25,13 +25,27 @@ export interface ProjectDiscoveryInput {
   caseSensitivePaths?: boolean;
 }
 
+export interface LanguageInvalidationInput {
+  currentFiles: ScannedFile[];
+  changedPathKeys: readonly string[];
+  deletedPathKeys: readonly string[];
+  previousConfigHash: string | null;
+  currentConfigHash: string;
+}
+
+export interface LanguageInvalidationPlan {
+  reparseAll: boolean;
+  invalidatedPathKeys: string[];
+  reason: "configuration" | "source" | "unchanged";
+}
+
 export interface SyntaxGraphBatch {
   files: IndexedSourceFile[];
   nodes: CodeNodeRecord[];
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
   diagnostics: string[];
-  providerMetrics?: { filesParsed: number; mode: string; kernelRssBytes?: number };
+  providerMetrics?: { filesParsed: number; mode: string; kernelRssBytes?: number; providerVersion?: string };
 }
 
 export interface SyntaxProvider {
@@ -87,8 +101,9 @@ export interface LanguageAdapter {
   readonly ecosystem: string;
   readonly extensions: readonly string[];
   discoverProject(rootPath: string, input?: ProjectDiscoveryInput): ProjectDescriptor;
+  planInvalidation?(input: LanguageInvalidationInput): LanguageInvalidationPlan;
   createSyntaxProvider(project: ProjectDescriptor): SyntaxProvider;
-  createPrecisionProvider?(project: ProjectDescriptor): PrecisionProvider;
+  createPrecisionProvider?(project: ProjectDescriptor): PrecisionProvider | undefined;
   createOverlayPrecisionProvider?(project: ProjectDescriptor): OverlayPrecisionProvider | undefined;
 }
 
@@ -153,7 +168,7 @@ export class GraphIndexCoordinator {
         ecosystem: adapter.ecosystem,
         extensions: adapter.extensions,
         syntaxProvider: adapter.createSyntaxProvider(project).id,
-        precisionProvider: overlay?.id ?? adapter.createPrecisionProvider?.(project).id ?? null,
+        precisionProvider: overlay?.id ?? adapter.createPrecisionProvider?.(project)?.id ?? null,
       }); })
       .sort((a, b) => a.language.localeCompare(b.language));
   }

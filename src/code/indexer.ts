@@ -9,6 +9,7 @@ import ts from "typescript";
 import type {
   CodeEdgeKind,
   CodeEdgeRecord,
+  CodeEcosystem,
   CodeNodeKind,
   CodeNodeRecord,
   ExtractedGraph,
@@ -45,7 +46,13 @@ import { MetadataStatPool } from "./metadata-stat-pool.js";
 import { PythonLanguageAdapter, PYTHON_PROVIDER_VERSIONS } from "./languages/python.js";
 import { CoreLanguageAdapter, CORE_LANGUAGE_IDS } from "./languages/core.js";
 import { TypeScriptLanguageAdapter, type TypeScriptCompilerConfiguration, type TypeScriptProjectRuntime } from "./languages/typescript.js";
-import { GraphIndexCoordinator, mergeGraphBatches, type ProjectDescriptor, type SyntaxGraphBatch } from "./providers.js";
+import {
+  GraphIndexCoordinator,
+  mergeGraphBatches,
+  type PrecisionProvider,
+  type ProjectDescriptor,
+  type SyntaxGraphBatch,
+} from "./providers.js";
 
 export type FreshnessMode = "fast" | "strict";
 
@@ -94,6 +101,8 @@ const ROOT_CONFIGURATION_FILES = new Set([
   "build.gradle",
   "build.gradle.kts",
 ]);
+const PRECISION_PROVIDER_LEASE_MS = 30_000;
+const PRECISION_PROVIDER_HEARTBEAT_MS = 10_000;
 
 const WORKSPACE_RUNTIMES = new Map<string, WorkspaceRuntime>();
 
@@ -515,10 +524,30 @@ export class CodeIndexer {
       // Let already queued graph requests observe the running fence and use the last committed graph.
       await yieldToEventLoop();
 
-      let project: ProjectScan;
-      let result: IndexResult;
+      let heartbeatFailure: unknown = null;
+      const heartbeatTimer = setInterval(() => {
+        try {
+          if (!this.database.heartbeatIndexRun(handle)) {
+            heartbeatFailure = new ContextMeshError("DB_BUSY", "Index writer lease was lost or expired");
+          }
+        } catch (error) {
+          heartbeatFailure = error;
+        }
+      }, 10_000);
+      heartbeatTimer.unref();
+      const renewWriterLease = (): void => {
+        if (heartbeatFailure) throw heartbeatFailure;
+        if (!this.database.heartbeatIndexRun(handle)) {
+          throw new ContextMeshError("DB_BUSY", "Index writer lease was lost or expired");
+        }
+      };
+
       try {
-        project = this.loadProject();
+        let project: ProjectScan;
+        let result: IndexResult;
+        try {
+          project = this.loadProject();
+          renewWriterLease();
         if (project.compiler.fatalDiagnostics.length > 0) {
           this.database.failIndexRun(handle, project.compiler.fatalDiagnostics);
           throw new ContextMeshError(
@@ -557,6 +586,7 @@ export class CodeIndexer {
             deletedFiles: 0,
             failedFiles: 0,
           };
+          renewWriterLease();
           this.database.completeNoOpRun(
             handle, stats, scan.diagnostics, project.configHash, this.lastAdapterStats, priorAdapterState,
           );
@@ -593,6 +623,7 @@ export class CodeIndexer {
             ? undefined
             : this.database.getReverseDependencyClosure([...changedPathKeys, ...deletedPathKeys]);
           const typescriptFiles = projectFiles.filter((file) => isTypeScriptLanguage(file.language));
+          const typescriptPrecisionDisabled = process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE === "1";
           const pythonFiles = projectFiles.filter((file) => file.language === "python");
           const nonTypeScriptOnlyIncremental = mode === "incremental" && workspace.currentGeneration > 0 &&
             !typescriptConfigChanged && (pythonConfigChanged || changedPathKeys.length + deletedPathKeys.length > 0) &&
@@ -610,35 +641,29 @@ export class CodeIndexer {
           let tsGraph: ExtractedGraph = {
             files: [], nodes: [], edges: [], unresolvedReferences: [], diagnostics: [...compiler.diagnostics],
           };
-          let tsSyntaxGraph: ExtractedGraph | null = null;
-          let tsPrecisionGraph: ExtractedGraph | null = null;
+           let tsSyntaxGraph: ExtractedGraph | null = null;
+           let tsPrecisionGraph: ExtractedGraph | null = null;
+           let tsPrecisionProvider: PrecisionProvider | null = null;
+           let tsPrecisionError: unknown = null;
           if (typescriptFiles.length > 0) {
             if (nonTypeScriptOnlyIncremental) {
-              const stored = this.database.getStoredGraphPartition("non-python");
+              const stored = this.database.getStoredGraphPartition("non-python", !typescriptPrecisionDisabled);
               const tsNodeIds = new Set(stored.nodes.filter((node) => node.language && isTypeScriptLanguage(node.language)).map((node) => node.id));
-              tsPrecisionGraph = {
-                files: [], nodes: stored.nodes.filter((node) => tsNodeIds.has(node.id)),
-                edges: stored.edges.filter((edge) => tsNodeIds.has(edge.sourceId) && tsNodeIds.has(edge.targetId) &&
-                  (edge.evidence ?? []).some((item) => item.source === "type_checker")),
-                unresolvedReferences: [], diagnostics: [],
-              };
+              if (!typescriptPrecisionDisabled) {
+                tsPrecisionGraph = {
+                  files: [], nodes: stored.nodes.filter((node) => tsNodeIds.has(node.id)),
+                  edges: stored.edges.filter((edge) => tsNodeIds.has(edge.sourceId) && tsNodeIds.has(edge.targetId) &&
+                    (edge.evidence ?? []).some((item) => item.source === "type_checker")),
+                  unresolvedReferences: [], diagnostics: [],
+                };
+              }
               tsGraph = this.reuseStoredTypescriptGraph(workspace, typescriptFiles, handle.generation);
-            } else {
-              tsGraph = await tsAdapter.createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: handle.generation });
-            }
-            tsSyntaxGraph = nonTypeScriptOnlyIncremental ? null : asTypeScriptSyntaxView(tsGraph);
-          }
-          if (typescriptFiles.length > 0 && !nonTypeScriptOnlyIncremental) {
-            const precision = tsAdapter.createPrecisionProvider?.(tsProject);
-            if (precision) {
-              tsPrecisionGraph = await precision.refine(tsGraph);
-              tsGraph = {
-                ...tsPrecisionGraph,
-                edges: tsSyntaxGraph?.edges ?? [],
-                unresolvedReferences: tsPrecisionGraph.unresolvedReferences,
-              };
-            }
-          }
+             } else {
+               tsGraph = await tsAdapter.createSyntaxProvider(tsProject).extract({ workspace, project: tsProject, files: typescriptFiles, generation: handle.generation });
+               tsPrecisionProvider = tsAdapter.createPrecisionProvider?.(tsProject) ?? null;
+             }
+             tsSyntaxGraph = nonTypeScriptOnlyIncremental ? null : asTypeScriptSyntaxView(tsGraph);
+           }
           for (const file of tsGraph.files) {
             file.ecosystem = "npm";
             file.adapterConfigHash = compiler.configHash;
@@ -648,31 +673,58 @@ export class CodeIndexer {
             node.language = node.fileId ? (languageByFileId.get(node.fileId) ?? "typescript") : "typescript";
             node.ecosystem = "npm";
             node.nativeKind = (node.metadata.syntaxKind as string | undefined) ?? node.kind;
-            node.analysisLevel = "typed";
+            node.analysisLevel = "syntax";
           }
           const pythonAdapter = this.coordinator.adapter("python");
           const pythonProvider = pythonAdapter?.createSyntaxProvider(project.pythonProject);
           const pythonGraph = pythonProvider
             ? await pythonProvider.extract({ workspace, project: project.pythonProject, files: pythonFiles, generation: handle.generation, mode })
             : { files: [], nodes: [], edges: [], unresolvedReferences: [], diagnostics: [] };
-          const coreGraphs = await Promise.all(CORE_LANGUAGE_IDS.map(async (language) => {
+          const coreExtractions = await Promise.all(CORE_LANGUAGE_IDS.map(async (language) => {
             const adapter = this.coordinator.adapter(language)!;
             const languageProject = project.coreProjects[language];
-            return adapter.createSyntaxProvider(languageProject).extract({
-              workspace, project: languageProject,
-              files: projectFiles.filter((file) => file.language === language),
-              generation: handle.generation, mode,
+            const languageFiles = projectFiles.filter((file) => file.language === language);
+            const invalidation = adapter.planInvalidation?.({
+              currentFiles: languageFiles,
+              changedPathKeys,
+              deletedPathKeys,
+              previousConfigHash: priorAdapterState[language]?.configHash ?? null,
+              currentConfigHash: languageProject.configHash,
             });
+            const shouldParse = mode === "full" || workspace.currentGeneration === 0 || invalidation?.reparseAll !== false;
+            if (!shouldParse) {
+              return {
+                graph: this.reuseStoredCoreLanguageGraph(workspace, languageFiles, language, handle.generation, languageProject.configHash),
+                syntaxInvocations: 0,
+              };
+            }
+            return { graph: await adapter.createSyntaxProvider(languageProject).extract({
+              workspace, project: languageProject,
+              files: languageFiles,
+              generation: handle.generation, mode,
+            }), syntaxInvocations: 1 };
           }));
+          const coreGraphs = coreExtractions.map((item) => item.graph);
           const adapterStats: AdapterStats[] = [
             ...(typescriptFiles.length > 0 ? [{
               language: "typescript/javascript", ecosystem: "npm", syntaxProvider: "typescript_compiler_ast",
-              precisionProvider: "typescript_type_checker", analysisLevel: "typed" as const, files: typescriptFiles.length,
+              precisionProvider: tsPrecisionProvider || tsPrecisionGraph ? "typescript_type_checker" : null,
+              analysisLevel: (tsPrecisionProvider || tsPrecisionGraph ? "typed" : "syntax") as "typed" | "syntax",
+              files: typescriptFiles.length,
               syntaxInvocations: this.lastTypeScriptInstrumentation.programCreations,
-              precisionInvocations: this.lastTypeScriptInstrumentation.precisionWorkItems > 0 ? 1 : 0,
+              precisionInvocations: tsPrecisionProvider ? 1 : 0,
               configHash: compiler.configHash,
-              providerVersions: { syntax: ts.version, precision: ts.version }, status: "ready" as const,
-              coverage: 1, diagnostics: [],
+              providerVersions: {
+                syntax: ts.version,
+                ...((tsPrecisionProvider || tsPrecisionGraph) ? { precision: ts.version } : {}),
+              },
+              status: (tsPrecisionProvider || tsPrecisionGraph ? "ready" : "not_configured") as "ready" | "not_configured",
+              coverage: 1,
+              diagnostics: typescriptPrecisionDisabled ? [{
+                code: "TYPESCRIPT_PRECISION_DISABLED",
+                severity: "info" as const,
+                message: "TypeScript TypeChecker precision disabled by policy",
+              }] : [],
             }] : []),
             ...(pythonFiles.length > 0 ? [{
               language: "python", ecosystem: "pypi", syntaxProvider: "contextmesh_graph_kernel", precisionProvider: "contextmesh_python_resolver",
@@ -680,7 +732,10 @@ export class CodeIndexer {
               filesReparsed: pythonGraph.providerMetrics?.filesParsed ?? pythonFiles.length,
               kernelRssBytes: pythonGraph.providerMetrics?.kernelRssBytes ?? 0,
               configHash: project.pythonProject.configHash,
-              providerVersions: { ...PYTHON_PROVIDER_VERSIONS }, status: "ready" as const,
+              providerVersions: {
+                ...PYTHON_PROVIDER_VERSIONS,
+                runtime: pythonGraph.providerMetrics?.providerVersion?.split("/")[0] ?? PYTHON_PROVIDER_VERSIONS.runtime,
+              }, status: "ready" as const,
               coverage: 1, diagnostics: [
                 { code: "GRAPH_KERNEL_MODE", severity: "info" as const, message: pythonGraph.providerMetrics?.mode ?? "unknown" },
                 ...project.pythonProject.diagnostics.map((message) => ({
@@ -697,7 +752,7 @@ export class CodeIndexer {
               const precision = adapter.createOverlayPrecisionProvider?.(languageProject);
               return [{
                 language, ecosystem: adapter.ecosystem, syntaxProvider: syntax.id, precisionProvider: precision?.id ?? null,
-                analysisLevel: "syntax" as const, files: languageFiles.length, syntaxInvocations: 1, precisionInvocations: 0,
+                analysisLevel: "syntax" as const, files: languageFiles.length, syntaxInvocations: coreExtractions[index]?.syntaxInvocations ?? 0, precisionInvocations: 0,
                 filesReparsed: coreGraphs[index]?.providerMetrics?.filesParsed ?? languageFiles.length,
                 configHash: languageProject.configHash, providerVersions: { syntax: syntax.version },
                 status: (language === "java" || language === "csharp" ? "partial" : "ready") as "ready" | "partial",
@@ -709,6 +764,13 @@ export class CodeIndexer {
           this.lastSyntaxEvaluationGraph = tsSyntaxGraph
             ? mergeGraphBatches([tsSyntaxGraph, cloneGraph(pythonGraph), ...coreGraphs.map(cloneGraph)], adapterStats)
             : null;
+          if (tsPrecisionProvider && tsSyntaxGraph) {
+            try {
+              tsPrecisionGraph = await tsPrecisionProvider.refine(tsSyntaxGraph);
+            } catch (error) {
+              tsPrecisionError = error;
+            }
+          }
           const adapterState: AdapterStateMap = Object.fromEntries(adapterStats.map((item) => [item.language, {
             configHash: item.configHash,
             lastGeneration: handle.generation,
@@ -717,7 +779,11 @@ export class CodeIndexer {
               : 0,
             stats: item,
           }]));
-          const graph = mergeGraphBatches([tsGraph, pythonGraph, ...coreGraphs], adapterStats);
+          const graph = mergeGraphBatches([tsSyntaxGraph ?? tsGraph, pythonGraph, ...coreGraphs], adapterStats);
+          const precisionNodes = new Map((tsPrecisionGraph?.nodes ?? []).map((node) => [node.id, node]));
+          const semanticGraph = precisionNodes.size > 0
+            ? { ...graph, nodes: graph.nodes.map((node) => precisionNodes.get(node.id) ?? node) }
+            : graph;
           const reinterpretedFiles = relationshipScope
             ? projectFiles.filter((file) => relationshipScope.has(file.pathKey)).length
             : projectFiles.length;
@@ -728,7 +794,7 @@ export class CodeIndexer {
             failedFiles: graph.files.filter((file) => file.parseStatus !== "ok").length,
           };
           const preparedSemantic = this.semantic
-            ? await this.semantic.prepareCodeCommit(graph, handle.generation)
+            ? await this.semantic.prepareCodeCommit(semanticGraph, handle.generation)
             : undefined;
           const semanticCommit = preparedSemantic?.commit;
           if (semanticCommit?.lastError) {
@@ -737,6 +803,7 @@ export class CodeIndexer {
             );
           }
           try {
+            renewWriterLease();
             this.database.commitGraph(
               handle,
               graph,
@@ -745,6 +812,7 @@ export class CodeIndexer {
               adapterState,
               semanticCommit,
               preparedSemantic?.claim,
+              semanticGraph,
             );
           } catch (error) {
             if (preparedSemantic?.claim) {
@@ -755,7 +823,36 @@ export class CodeIndexer {
             preparedSemantic?.stopHeartbeat();
           }
           if (pythonFiles.length > 0) await this.runPrecisionOverlay("python", project.pythonProject, pythonGraph, handle.generation);
-          if (tsPrecisionGraph) await this.runTypeScriptPrecisionOverlay(tsPrecisionGraph, handle.generation);
+          if (tsPrecisionError && tsPrecisionProvider) {
+            this.database.registerPrecisionProvider({
+              language: "typescript/javascript",
+              provider: tsPrecisionProvider.id,
+              providerVersion: tsPrecisionProvider.version,
+              capability: "typed",
+              status: "failed",
+              lastError: tsPrecisionError instanceof Error ? tsPrecisionError.message : String(tsPrecisionError),
+            });
+          } else if (tsPrecisionGraph) {
+            const committed = await this.runTypeScriptPrecisionOverlay(
+              tsPrecisionGraph,
+              handle.generation,
+              tsPrecisionProvider?.id,
+              tsPrecisionProvider?.version,
+            );
+            if (!committed) {
+              this.database.backfillSemanticSourceHashes(true);
+              await this.semantic?.reconcileCodeIfNeeded();
+            }
+          } else if (typescriptFiles.length > 0 && typescriptPrecisionDisabled) {
+            this.database.registerPrecisionProvider({
+              language: "typescript/javascript",
+              provider: "typescript_type_checker",
+              providerVersion: ts.version,
+              capability: "typed",
+              status: "not_configured",
+              lastError: "TypeScript TypeChecker precision disabled by policy",
+            });
+          }
           const goGraph = coreGraphs[CORE_LANGUAGE_IDS.indexOf("go")];
           if (goGraph && goGraph.files.length > 0) await this.runPrecisionOverlay("go", project.coreProjects.go, goGraph, handle.generation);
           const rustGraph = coreGraphs[CORE_LANGUAGE_IDS.indexOf("rust")];
@@ -775,38 +872,65 @@ export class CodeIndexer {
             adapterStats,
           };
         }
-      } catch (error) {
-        if (!(error instanceof ContextMeshError && error.code === "PARSE_PARTIAL")) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.database.failIndexRun(handle, [message]);
+        } catch (error) {
+          if (!(error instanceof ContextMeshError && error.code === "PARSE_PARTIAL")) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.database.failIndexRun(handle, [message]);
+          }
+          throw error;
         }
-        throw error;
-      }
 
-      await this.runtime.freshnessMutex.runExclusive(() => {
-        const state = this.database.getFreshnessState();
-        if (state.successFenceGeneration !== handle.generation) {
-          this.runtime.baseline = null;
-          return;
-        }
-        this.installBaselineFromProjectUnlocked(project, state);
-      });
-      return result;
+        await this.runtime.freshnessMutex.runExclusive(() => {
+          const state = this.database.getFreshnessState();
+          if (state.successFenceGeneration !== handle.generation) {
+            this.runtime.baseline = null;
+            return;
+          }
+          this.installBaselineFromProjectUnlocked(project, state);
+        });
+        return result;
+      } finally {
+        clearInterval(heartbeatTimer);
+      }
     });
   }
 
   private async reconcilePrecisionForProject(project: ProjectScan, generation: number): Promise<void> {
     const workspace = this.database.getWorkspace();
+    const files = project.files.filter((file) => isTypeScriptLanguage(file.language));
     const tsState = this.database.getPrecisionProviderStates().find((item) => item.provider === "typescript_type_checker");
-    if (!(tsState?.providerVersion === ts.version && tsState.baseGeneration === generation && (tsState.status === "ready" || tsState.status === "partial"))) {
-      const files = project.files.filter((file) => isTypeScriptLanguage(file.language));
+    if (files.length > 0 && process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE === "1") {
+      this.database.registerPrecisionProvider({
+        language: "typescript/javascript",
+        provider: "typescript_type_checker",
+        providerVersion: ts.version,
+        capability: "typed",
+        status: "not_configured",
+        lastError: "TypeScript TypeChecker precision disabled by policy",
+      });
+    } else if (!(tsState?.providerVersion === ts.version && tsState.baseGeneration === generation &&
+      (tsState.status === "ready" || tsState.status === "partial"))) {
       if (files.length > 0) {
         const runtime: TypeScriptProviderRuntime = { diagnostics: project.scan.diagnostics, compiler: project.compiler };
         const descriptor: ProjectDescriptor = { ...project.typescriptProject, runtime };
         const adapter = this.coordinator.adapter("typescript/javascript")!;
         const syntax = await adapter.createSyntaxProvider(descriptor).extract({ workspace, project: descriptor, files, generation, mode: "incremental" });
-        const typed = await adapter.createPrecisionProvider!(descriptor).refine(syntax);
-        await this.runTypeScriptPrecisionOverlay(typed, generation);
+        const precision = adapter.createPrecisionProvider?.(descriptor);
+        if (precision) {
+          try {
+            const typed = await precision.refine(syntax);
+            await this.runTypeScriptPrecisionOverlay(typed, generation, precision.id, precision.version);
+          } catch (error) {
+            this.database.registerPrecisionProvider({
+              language: "typescript/javascript",
+              provider: precision.id,
+              providerVersion: precision.version,
+              capability: "typed",
+              status: "failed",
+              lastError: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       }
     }
     for (const [language, languageProject] of [["python", project.pythonProject], ["go", project.coreProjects.go], ["rust", project.coreProjects.rust]] as const) {
@@ -846,36 +970,75 @@ export class CodeIndexer {
     let claimed;
     try {
       claimed = this.database.claimPrecisionProvider({ provider: provider.id, providerVersion: provider.version,
-        language, capability: provider.capability, owner: `indexer-${process.pid}-${randomUUID()}` });
+        language, capability: provider.capability, owner: `indexer-${process.pid}-${randomUUID()}`,
+        leaseMs: PRECISION_PROVIDER_LEASE_MS });
     } catch { return; }
     if (!claimed.claim) return;
+    let leaseLost = false;
+    const heartbeat = setInterval(() => {
+      try {
+        if (!this.database.heartbeatPrecisionProvider(claimed.claim!, PRECISION_PROVIDER_LEASE_MS)) leaseLost = true;
+      } catch {
+        leaseLost = true;
+      }
+    }, PRECISION_PROVIDER_HEARTBEAT_MS);
+    heartbeat.unref?.();
     try {
       const overlay = await provider.analyze(graph, generation);
-      this.database.commitPrecisionOverlay(claimed.claim, {
+      if (leaseLost || !this.database.commitPrecisionOverlay(claimed.claim, {
         edges: overlay.edges, eligibleEdges: overlay.eligibleEdges, diagnostics: overlay.diagnostics,
         ...(overlay.partial === undefined ? {} : { partial: overlay.partial }),
-      });
+      })) {
+        this.database.abandonPrecisionProvider(claimed.claim, "Precision provider lease lost before commit");
+      }
     } catch (error) {
-      this.database.failPrecisionProvider(claimed.claim, error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (!this.database.failPrecisionProvider(claimed.claim, message)) {
+        this.database.abandonPrecisionProvider(claimed.claim, `Precision provider lease lost: ${message}`);
+      }
+    } finally {
+      clearInterval(heartbeat);
     }
   }
 
-  private async runTypeScriptPrecisionOverlay(graph: ExtractedGraph, _generation: number): Promise<void> {
-    const provider = "typescript_type_checker";
+  private async runTypeScriptPrecisionOverlay(
+    graph: ExtractedGraph,
+    _generation: number,
+    provider = "typescript_type_checker",
+    providerVersion = ts.version,
+  ): Promise<boolean> {
     let claim;
     try {
-      claim = this.database.claimPrecisionProvider({ provider, providerVersion: ts.version,
+      claim = this.database.claimPrecisionProvider({ provider, providerVersion,
         language: "typescript/javascript", capability: "typed", owner: `indexer-${process.pid}-${randomUUID()}` });
-    } catch { return; }
-    if (!claim.claim) return;
+    } catch { return false; }
+    if (!claim.claim) return false;
     try {
+      const nodes = graph.nodes
+        .filter((node) => node.analysisLevel === "typed" || node.analysisLevel === "resolved")
+        .map((node) => ({
+          nodeId: node.id,
+          analysisLevel: node.analysisLevel as "resolved" | "typed",
+          signature: node.signature,
+          doc: node.doc,
+          contentHash: node.contentHash,
+          metadata: node.metadata,
+        }));
       const edges = graph.edges.filter((edge) => (edge.evidence ?? []).some((item) => item.source === "type_checker"))
         .map((edge) => ({ sourceId: edge.sourceId, targetId: edge.targetId, kind: edge.kind,
           status: "resolved" as const, confidence: edge.confidence, resolutionKind: edge.resolutionKind,
           evidence: (edge.evidence ?? []).filter((item) => item.source === "type_checker") }));
-      this.database.commitPrecisionOverlay(claim.claim, { edges, eligibleEdges: edges.length, diagnostics: [] });
+      if (!this.database.commitPrecisionOverlay(claim.claim, { nodes, edges, eligibleEdges: edges.length, diagnostics: [] })) {
+        this.database.abandonPrecisionProvider(claim.claim, "TypeScript precision-provider lease lost before commit");
+        return false;
+      }
+      return true;
     } catch (error) {
-      this.database.failPrecisionProvider(claim.claim, error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (!this.database.failPrecisionProvider(claim.claim, message)) {
+        this.database.abandonPrecisionProvider(claim.claim, `TypeScript precision-provider lease lost: ${message}`);
+      }
+      return false;
     }
   }
 
@@ -1477,7 +1640,7 @@ export class CodeIndexer {
     scannedFiles: ScannedFile[],
     generation: number,
   ): ExtractedGraph {
-    const stored = this.database.getStoredGraphPartition("non-python");
+    const stored = this.database.getStoredGraphPartition("non-python", false);
     const files: IndexedSourceFile[] = scannedFiles.map((scanned) => ({
       ...scanned,
       id: sha256(`${workspace.id}\0${scanned.pathKey}`),
@@ -1488,13 +1651,60 @@ export class CodeIndexer {
       diagnosticCount: 0,
       generation,
     }));
+    const fileIds = new Set(files.map((file) => file.id));
+    const nodes = stored.nodes.filter((node) => node.language && isTypeScriptLanguage(node.language));
+    const nodeIds = new Set(nodes.map((node) => node.id));
     return {
       files,
-      nodes: stored.nodes.map((node) => ({ ...node, generation })),
-      edges: stored.edges.filter((edge) => (edge.evidence ?? []).some((item) => item.source === "syntax"))
+      nodes: nodes.map((node) => ({ ...node, generation })),
+      edges: stored.edges.filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId) &&
+        (edge.evidence ?? []).some((item) => item.source === "syntax"))
         .map((edge) => ({ ...edge, generation, evidence: (edge.evidence ?? []).filter((item) => item.source === "syntax") })),
-      unresolvedReferences: stored.unresolvedReferences.map((item) => ({ ...item, generation })),
+      unresolvedReferences: stored.unresolvedReferences
+        .filter((item) => fileIds.has(item.fileId) && (!item.sourceNodeId || nodeIds.has(item.sourceNodeId)))
+        .map((item) => ({ ...item, generation })),
       diagnostics: [],
+    };
+  }
+
+  private reuseStoredCoreLanguageGraph(
+    workspace: WorkspaceRecord,
+    scannedFiles: ScannedFile[],
+    language: (typeof CORE_LANGUAGE_IDS)[number],
+    generation: number,
+    configHash: string,
+  ): SyntaxGraphBatch {
+    const stored = this.database.getStoredGraphPartition("non-python", false);
+    const baseline = new Map(this.database.getIndexedFileBaseline().map((file) => [file.pathKey, file]));
+    const adapter = this.coordinator.adapter(language)!;
+    const files: IndexedSourceFile[] = scannedFiles.map((scanned) => {
+      const prior = baseline.get(scanned.pathKey);
+      return {
+        ...scanned,
+        id: sha256(`${workspace.id}\0${scanned.pathKey}`),
+        workspaceId: workspace.id,
+        ecosystem: adapter.ecosystem as CodeEcosystem,
+        sourceRoot: prior?.sourceRoot ?? "",
+        adapterConfigHash: prior?.adapterConfigHash ?? configHash,
+        parseStatus: prior?.parseStatus ?? "ok",
+        diagnosticCount: prior?.diagnosticCount ?? 0,
+        generation,
+      };
+    });
+    const fileIds = new Set(files.map((file) => file.id));
+    const nodes = stored.nodes.filter((node) => node.language === language);
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    return {
+      files,
+      nodes: nodes.map((node) => ({ ...node, generation })),
+      edges: stored.edges
+        .filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId))
+        .map((edge) => ({ ...edge, generation })),
+      unresolvedReferences: stored.unresolvedReferences
+        .filter((reference) => fileIds.has(reference.fileId) && (!reference.sourceNodeId || nodeIds.has(reference.sourceNodeId)))
+        .map((reference) => ({ ...reference, generation })),
+      diagnostics: files.filter((file) => file.parseStatus === "partial").map((file) => `PROVIDER_PARSE_PARTIAL: ${file.relativePath}`),
+      providerMetrics: { filesParsed: 0, mode: "reuse" },
     };
   }
 
@@ -1676,16 +1886,30 @@ export class CodeIndexer {
     file: IndexedSourceFile,
     moduleId: string,
   ): void {
-    const recordUnresolved = (node: ts.Node, kind: string, rawName: string, qualifier: string | null): void => {
+    const recordUnresolved = (
+      node: ts.Node,
+      kind: string,
+      rawName: string,
+      qualifier: string | null,
+      sourceNodeId = moduleId,
+      candidates: string[] = [],
+    ): void => {
       const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
       const confidence = 0.5;
       const reference: UnresolvedReferenceRecord = {
-        workspaceId: state.workspace.id, fileId: file.id, sourceNodeId: moduleId, kind,
+        workspaceId: state.workspace.id, fileId: file.id, sourceNodeId, kind,
         rawName: clampText(rawName, 200), qualifier, line: location.line + 1, column: location.character + 1,
-        candidates: [], generation: state.generation, confidence,
+        candidates, generation: state.generation, confidence,
         evidence: [{ provider: "typescript_compiler_ast", providerVersion: ts.version, source: "syntax", confidence }],
       };
       state.unresolved.set(unresolvedKey(reference), reference);
+    };
+    const candidateNodeIds = (rawName: string): string[] => {
+      const name = rawName.split(".").at(-1) ?? rawName;
+      return [...state.nodes.values()]
+        .filter((candidate) => candidate.kind !== "module" && candidate.name === name)
+        .map((candidate) => candidate.id)
+        .sort();
     };
     const importSpecifier = (expression: ts.Expression): void => {
       if (!ts.isStringLiteralLike(expression)) {
@@ -1699,15 +1923,30 @@ export class CodeIndexer {
       if (ts.isImportDeclaration(statement)) importSpecifier(statement.moduleSpecifier);
       if (ts.isExportDeclaration(statement) && statement.moduleSpecifier) importSpecifier(statement.moduleSpecifier);
     }
-    const visit = (node: ts.Node): void => {
+    const visit = (node: ts.Node, callerId: string): void => {
+      const activeCaller = state.declarationNodes.get(node) ?? callerId;
       if (ts.isCallExpression(node)) {
         const requireCall = ts.isIdentifier(node.expression) && node.expression.text === "require" && node.arguments.length === 1;
         const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length === 1;
         if ((requireCall || dynamicImport) && node.arguments[0]) importSpecifier(node.arguments[0]);
+        else {
+          const rawName = node.expression.getText(sourceFile);
+          const qualifier = ts.isPropertyAccessExpression(node.expression)
+            ? node.expression.expression.getText(sourceFile)
+            : null;
+          recordUnresolved(
+            node.expression,
+            "CALLS",
+            rawName,
+            qualifier,
+            activeCaller,
+            candidateNodeIds(rawName),
+          );
+        }
       }
-      ts.forEachChild(node, visit);
+      ts.forEachChild(node, (child) => visit(child, activeCaller));
     };
-    visit(sourceFile);
+    visit(sourceFile, moduleId);
   }
 
   private extractRelationships(
@@ -1718,6 +1957,13 @@ export class CodeIndexer {
   ): void {
     const checker = state.checker;
     if (!checker) throw new Error("TypeScript precision provider has no TypeChecker");
+    const candidateNodeIds = (rawName: string): string[] => {
+      const name = rawName.split(".").at(-1) ?? rawName;
+      return [...state.nodes.values()]
+        .filter((candidate) => candidate.kind !== "module" && candidate.name === name)
+        .map((candidate) => candidate.id)
+        .sort();
+    };
     const recordUnresolved = (
       node: ts.Node,
       callerId: string,
@@ -1783,7 +2029,7 @@ export class CodeIndexer {
                 kind,
                 type.expression.getText(sourceFile),
                 null,
-                symbol ? [symbol.getName()] : [],
+                candidateNodeIds(symbol?.getName() ?? type.expression.getText(sourceFile)),
               );
             }
           }
@@ -1823,7 +2069,7 @@ export class CodeIndexer {
               "CALLS",
               node.expression.getText(sourceFile),
               qualifier,
-              symbol ? [symbol.getName()] : [],
+              candidateNodeIds(symbol?.getName() ?? node.expression.getText(sourceFile)),
             );
           }
         }
@@ -1840,7 +2086,7 @@ export class CodeIndexer {
             "CALLS",
             node.expression.getText(sourceFile),
             null,
-            symbol ? [symbol.getName()] : [],
+            candidateNodeIds(symbol?.getName() ?? node.expression.getText(sourceFile)),
           );
         }
       }

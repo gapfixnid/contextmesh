@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -122,6 +123,529 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
+  it("does not traverse beyond an edge rejected by a precision provider", async () => {
+    const root = workspace();
+    writeFileSync(
+      path.join(root, "go", "worker", "worker.go"),
+      "package worker\nfunc Deep() int { return 1 }\nfunc Target() int { return Deep() }\nfunc Caller() int { return Target() }\n",
+    );
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const nodes = app.database.getStoredGraphPartition("non-python").nodes.filter((node) => node.language === "go");
+      const caller = nodes.find((node) => node.name === "Caller")!;
+      const target = nodes.find((node) => node.name === "Target")!;
+      const deep = nodes.find((node) => node.name === "Deep")!;
+      const candidate = app.database.getStoredGraphPartition("non-python").edges.find((edge) =>
+        edge.sourceId === caller.id && edge.targetId === target.id && edge.kind === "CALLS");
+      expect(candidate).toBeDefined();
+      const acquired = app.database.claimPrecisionProvider({
+        provider: "rejected_path_provider",
+        providerVersion: "1",
+        language: "go",
+        capability: "resolved",
+        owner: "rejected-path-owner",
+      });
+      expect(acquired.reason).toBe("acquired");
+      expect(app.database.commitPrecisionOverlay(acquired.claim!, {
+        edges: [{
+          sourceId: caller.id,
+          targetId: target.id,
+          kind: "CALLS",
+          status: "rejected",
+          confidence: 1,
+          resolutionKind: "local",
+          evidence: [{
+            provider: "rejected_path_provider",
+            providerVersion: "1",
+            source: "type_checker",
+            confidence: 1,
+          }],
+        }],
+        eligibleEdges: 1,
+        diagnostics: [],
+      })).toBe(true);
+
+      const trace = await app.traceCode({
+        symbolId: caller.id,
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 2,
+      }) as Envelope<{ nodes: Array<{ id: string }>; edges: Array<{ sourceId: string; targetId: string; status: string }> }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        sourceId: caller.id,
+        targetId: target.id,
+        status: "rejected",
+      }));
+      expect(trace.data.edges).not.toContainEqual(expect.objectContaining({ sourceId: target.id, targetId: deep.id }));
+      expect(trace.data.nodes).not.toContainEqual(expect.objectContaining({ id: deep.id }));
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("fences an expired precision-provider lease from heartbeat, commit, and failure", async () => {
+    const root = workspace();
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const candidate = app.database.getStoredGraphPartition("non-python").edges.find((edge) =>
+        edge.kind === "CALLS" && edge.status === "candidate" &&
+        app.database.getCodeNode(edge.sourceId)?.language === "go");
+      expect(candidate).toBeDefined();
+      const acquired = app.database.claimPrecisionProvider({
+        provider: "expired_fixture_provider",
+        providerVersion: "1",
+        language: "go",
+        capability: "resolved",
+        owner: "expired-owner",
+        leaseMs: 60_000,
+      });
+      expect(acquired.reason).toBe("acquired");
+
+      const raw = new DatabaseSync(app.database.dbPath);
+      raw.prepare(
+        "UPDATE precision_provider_state SET lease_expires_epoch=? WHERE workspace_id=? AND provider=?",
+      ).run(Date.now() - 1_000, app.database.workspace.id, "expired_fixture_provider");
+      raw.close();
+
+      expect(app.database.heartbeatPrecisionProvider(acquired.claim!, 60_000)).toBe(false);
+      expect(app.database.commitPrecisionOverlay(acquired.claim!, { edges: [{
+        sourceId: candidate!.sourceId,
+        targetId: candidate!.targetId,
+        kind: candidate!.kind,
+        status: "rejected",
+        confidence: 1,
+        resolutionKind: candidate!.resolutionKind,
+        evidence: [{
+          provider: "expired_fixture_provider",
+          providerVersion: "1",
+          source: "type_checker",
+          confidence: 1,
+        }],
+      }], eligibleEdges: 1, diagnostics: [] })).toBe(false);
+      expect(app.database.failPrecisionProvider(acquired.claim!, "late failure")).toBe(false);
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("exposes typed node metadata only while its precision overlay is current and ready", async () => {
+    const root = workspace();
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const base = app.database.getStoredGraphPartition("non-python", false).nodes.find((node) =>
+        node.language === "go" && node.name === "Target");
+      expect(base).toMatchObject({ analysisLevel: "syntax", doc: "" });
+
+      const acquired = app.database.claimPrecisionProvider({
+        provider: "typed_node_fixture",
+        providerVersion: "1",
+        language: "go",
+        capability: "typed",
+        owner: "typed-node-owner-a",
+      });
+      expect(acquired.reason).toBe("acquired");
+      expect(app.database.commitPrecisionOverlay(acquired.claim!, {
+        nodes: [{
+          nodeId: base!.id,
+          analysisLevel: "typed",
+          signature: "func Target() string",
+          doc: "precisionOnlyDocumentation",
+          contentHash: base!.contentHash,
+          metadata: { ...base!.metadata, precisionFixture: true },
+        }],
+        edges: [],
+        eligibleEdges: 0,
+        diagnostics: [],
+      })).toBe(true);
+
+      expect(app.database.getCodeNode(base!.id)).toMatchObject({
+        analysisLevel: "typed",
+        signature: "func Target() string",
+        doc: "precisionOnlyDocumentation",
+        metadata: expect.objectContaining({ precisionFixture: true }),
+      });
+      expect(app.database.searchCode("precisionOnlyDocumentation", undefined, 10).map((node) => node.id))
+        .toContain(base!.id);
+      expect(app.database.getStoredGraphPartition("non-python", false).nodes.find((node) => node.id === base!.id))
+        .toMatchObject({ analysisLevel: "syntax", doc: "" });
+
+      const replacement = app.database.claimPrecisionProvider({
+        provider: "typed_node_fixture",
+        providerVersion: "1",
+        language: "go",
+        capability: "typed",
+        owner: "typed-node-owner-b",
+      });
+      expect(replacement.reason).toBe("acquired");
+      expect(app.database.getCodeNode(base!.id)).toMatchObject({ analysisLevel: "syntax", doc: "" });
+      expect(app.database.searchCode("precisionOnlyDocumentation", undefined, 10).map((node) => node.id))
+        .not.toContain(base!.id);
+      expect(app.database.abandonPrecisionProvider(replacement.claim!, "fixture stopped")).toBe(true);
+      expect(app.database.getCodeNode(base!.id)).toMatchObject({ analysisLevel: "syntax", doc: "" });
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("records an explicit terminal state when a precision provider loses its lease", async () => {
+    const root = workspace();
+    let now = new Date("2026-01-01T00:00:00.000Z");
+    const app = new ContextMeshApp(root, undefined, { clock: () => now });
+    const adapter = app.code.indexer.coordinator.adapter("go")!;
+    const mutableAdapter = adapter as {
+      createOverlayPrecisionProvider: NonNullable<typeof adapter.createOverlayPrecisionProvider>;
+    };
+    const originalProvider = mutableAdapter.createOverlayPrecisionProvider;
+    mutableAdapter.createOverlayPrecisionProvider = () => ({
+      id: "lease_loss_fixture",
+      version: "1",
+      capability: "typed",
+      available: async () => ({ available: true }),
+      analyze: async (_batch, baseGeneration) => {
+        now = new Date(now.getTime() + 31_000);
+        return {
+          language: "go", provider: "lease_loss_fixture", providerVersion: "1", capability: "typed",
+          baseGeneration, edges: [], eligibleEdges: 0, diagnostics: [],
+        };
+      },
+    });
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "lease_loss_fixture",
+        status: "failed",
+        lastError: expect.stringMatching(/lease lost/i),
+        leaseExpiresAt: null,
+      }));
+    } finally {
+      mutableAdapter.createOverlayPrecisionProvider = originalProvider;
+      await app.close();
+    }
+  });
+
+  it("rejects an overlay rejection without a current base candidate", async () => {
+    const root = workspace();
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const nodes = app.database.getStoredGraphPartition("non-python").nodes.filter((node) =>
+        node.language === "go" && (node.kind === "function" || node.kind === "method"));
+      const target = nodes.find((node) => node.name === "Target");
+      const caller = nodes.find((node) => node.name === "Caller");
+      expect(target).toBeDefined();
+      expect(caller).toBeDefined();
+      const acquired = app.database.claimPrecisionProvider({
+        provider: "orphan_rejection_provider",
+        providerVersion: "1",
+        language: "go",
+        capability: "resolved",
+        owner: "orphan-rejection-owner",
+      });
+      expect(acquired.reason).toBe("acquired");
+
+      expect(app.database.commitPrecisionOverlay(acquired.claim!, { edges: [{
+        sourceId: target!.id,
+        targetId: caller!.id,
+        kind: "CALLS",
+        status: "rejected",
+        confidence: 1,
+        resolutionKind: "local",
+        evidence: [{
+          provider: "orphan_rejection_provider",
+          providerVersion: "1",
+          source: "type_checker",
+          confidence: 1,
+        }],
+      }], eligibleEdges: 1, diagnostics: [] })).toBe(false);
+      expect(app.database.getStoredGraphPartition("non-python").edges).not.toContainEqual(expect.objectContaining({
+        sourceId: target!.id,
+        targetId: caller!.id,
+        kind: "CALLS",
+        status: "rejected",
+      }));
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("reports the graph snapshot captured by the final read attempt", async () => {
+    const root = workspace();
+    const app = new ContextMeshApp(root);
+    const originalFinalRead = app.code.indexer.readFinalRequestState.bind(app.code.indexer);
+    let raw: DatabaseSync | null = null;
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      raw = new DatabaseSync(app.database.dbPath);
+      const capturedRevisions: number[] = [];
+      app.code.indexer.readFinalRequestState = async () => {
+        const capturedRevision = app.database.getFreshnessState().precisionRevision;
+        capturedRevisions.push(capturedRevision);
+        raw!.prepare(
+          "UPDATE workspaces SET precision_revision=precision_revision+1 WHERE id=?",
+        ).run(app.database.workspace.id);
+        return originalFinalRead();
+      };
+
+      const response = await app.searchCode({ query: "caller" });
+
+      expect(capturedRevisions).toHaveLength(2);
+      expect(response.warnings).toContainEqual(expect.stringContaining("INDEX_STALE"));
+      expect(response.snapshot?.precisionRevision).toBe(capturedRevisions.at(-1));
+    } finally {
+      app.code.indexer.readFinalRequestState = originalFinalRead;
+      raw?.close();
+      await app.close();
+    }
+  });
+
+  it("replaces and deletes Go symbols during a mixed TypeScript incremental index", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-mixed-incremental-"));
+    roots.push(root);
+    writeFileSync(path.join(root, "entry.ts"), "export function TypeScriptAnchor() { return 1; }\n");
+    writeFileSync(path.join(root, "go.mod"), "module example.local/incremental\n\ngo 1.23\n");
+    const goFile = path.join(root, "worker.go");
+    writeFileSync(goFile, "package incremental\nfunc OldName() int { return 1 }\n");
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect((await app.searchCode({ query: "OldName" }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(1);
+
+      writeFileSync(goFile, "package incremental\nfunc NewName() int { return 2 }\n");
+      await app.indexWorkspace({ mode: "incremental" });
+      expect((await app.searchCode({ query: "OldName" }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(0);
+      expect((await app.searchCode({ query: "NewName" }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(1);
+
+      rmSync(goFile);
+      await app.indexWorkspace({ mode: "incremental" });
+      expect((await app.searchCode({ query: "NewName" }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(0);
+      expect((await app.searchCode({ query: "TypeScriptAnchor" }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(1);
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("does not reparse unchanged core languages during a TypeScript-only incremental index", async () => {
+    const root = workspace();
+    const typescriptFile = path.join(root, "entry.ts");
+    writeFileSync(typescriptFile, "export function Before() { return 1; }\n");
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      writeFileSync(typescriptFile, "export function After() { return 2; }\n");
+      const indexed = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{
+        adapterStats: Array<{ language: string; syntaxInvocations: number; filesReparsed?: number }>;
+      }>;
+      for (const language of ["go", "rust", "java", "csharp"]) {
+        expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+          language,
+          syntaxInvocations: 0,
+          filesReparsed: 0,
+        }));
+      }
+      const go = await app.searchCode({ query: "Target" }) as Envelope<{ results: Array<{ language: string }> }>;
+      const rust = await app.searchCode({ query: "rust_target" }) as Envelope<{ results: Array<{ language: string }> }>;
+      expect(go.data.results.some((item) => item.language === "go")).toBe(true);
+      expect(rust.data.results.some((item) => item.language === "rust")).toBe(true);
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("commits the TypeScript syntax graph when precision analysis fails", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-typescript-base-"));
+    roots.push(root);
+    writeFileSync(path.join(root, "entry.ts"), [
+      "export function SyntaxTarget() { return 1; }",
+      "export function SyntaxCaller() { return SyntaxTarget(); }",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    const adapter = app.code.indexer.coordinator.adapter("typescript/javascript")!;
+    const mutableAdapter = adapter as {
+      createPrecisionProvider: NonNullable<typeof adapter.createPrecisionProvider>;
+    };
+    const originalPrecisionProvider = mutableAdapter.createPrecisionProvider;
+    mutableAdapter.createPrecisionProvider = () => ({
+      id: "typescript_type_checker",
+      version: "failing-fixture",
+      refine: async () => { throw new Error("AUDIT_TYPECHECKER_UNAVAILABLE"); },
+    });
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" });
+      expect(indexed.generation).toBe(1);
+      expect((await app.searchCode({ query: "SyntaxCaller", kinds: ["function"] }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(1);
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "typescript_type_checker",
+        status: "failed",
+        lastError: "AUDIT_TYPECHECKER_UNAVAILABLE",
+      }));
+    } finally {
+      mutableAdapter.createPrecisionProvider = originalPrecisionProvider;
+      await app.close();
+    }
+  });
+
+  it("withdraws a ready TypeScript overlay when precision is disabled on a no-op run", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-typescript-disabled-"));
+    roots.push(root);
+    writeFileSync(path.join(root, "entry.ts"), "/** Typed-only documentation. */\nexport function DisabledLater() { return 1; }\n");
+    const priorDisable = process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
+    delete process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(app.database.searchCode("DisabledLater", ["function"], 1)[0]).toMatchObject({
+        analysisLevel: "typed",
+        doc: expect.stringContaining("Typed-only documentation"),
+      });
+
+      process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE = "1";
+      const noOp = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
+      expect(noOp.data.noOp).toBe(true);
+      expect(app.database.searchCode("DisabledLater", ["function"], 1)[0]).toMatchObject({
+        analysisLevel: "syntax",
+        doc: "",
+      });
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "typescript_type_checker",
+        status: "not_configured",
+        lastError: expect.stringMatching(/disabled/i),
+      }));
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
+      else process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("does not resolve a nested Python function outside its lexical scope", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "scope.py"), [
+      "def outer():",
+      "    def hidden():",
+      "        return 1",
+      "    return hidden()",
+      "",
+      "def scopeCaller():",
+      "    return hidden()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const caller = await app.searchCode({ query: "scopeCaller", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      const hidden = await app.searchCode({ query: "hidden", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      expect(caller.data.results).toHaveLength(1);
+      expect(hidden.data.results).toHaveLength(1);
+      const trace = await app.traceCode({
+        symbolId: caller.data.results[0]!.id,
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(trace.data.edges).not.toContainEqual(expect.objectContaining({
+        targetId: hidden.data.results[0]!.id,
+        status: "resolved",
+      }));
+    } finally { await app.close(); }
+  });
+
+  it("resolves relative aliases and bounded local Python re-exports", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "relative.py"), [
+      "from .target import Base as Parent",
+      "from .target import selected as chosen",
+      "",
+      "class RelativeChild(Parent):",
+      "    pass",
+      "",
+      "def relativeCaller():",
+      "    return chosen()",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "python", "pkg", "api.py"), "from pkg.target import selected as exported\n");
+    writeFileSync(path.join(root, "python", "pkg", "reexport_caller.py"), [
+      "from pkg.api import exported as through_api",
+      "",
+      "def reexportCaller():",
+      "    return through_api()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const selected = await app.searchCode({ query: "selected", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      const base = await app.searchCode({ query: "Base", kinds: ["class"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      expect(selected.data.results).toHaveLength(1);
+      expect(base.data.results).toHaveLength(1);
+
+      for (const callerName of ["relativeCaller", "reexportCaller"]) {
+        const caller = await app.searchCode({ query: callerName, kinds: ["function"] }) as Envelope<{
+          results: Array<{ id: string }>;
+        }>;
+        const trace = await app.traceCode({
+          symbolId: caller.data.results[0]!.id,
+          direction: "out",
+          edgeKinds: ["CALLS"],
+          depth: 1,
+        }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+        expect(trace.data.edges).toContainEqual(expect.objectContaining({
+          targetId: selected.data.results[0]!.id,
+          status: "resolved",
+        }));
+      }
+
+      const child = await app.searchCode({ query: "RelativeChild", kinds: ["class"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      const inheritance = await app.traceCode({
+        symbolId: child.data.results[0]!.id,
+        direction: "out",
+        edgeKinds: ["EXTENDS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(inheritance.data.edges).toContainEqual(expect.objectContaining({
+        targetId: base.data.results[0]!.id,
+        status: "resolved",
+      }));
+    } finally { await app.close(); }
+  });
+
   it("applies the provider conformance contract for deterministic IDs, spans, partial parses, and evidence", async () => {
     const root = workspace();
     writeFileSync(path.join(root, "rust", "src", "broken.rs"), "pub fn recoverable( {\n");
@@ -137,6 +661,192 @@ describe("v0.5 precision overlays and core languages", () => {
       expect(evidence.every((item) => item.provider.length > 0 && item.providerVersion.length > 0 && item.confidence >= 0 && item.confidence <= 1)).toBe(true);
       await app.indexWorkspace({ mode: "full" });
       expect(app.database.getStoredGraphPartition("non-python").nodes.map((node) => node.id).sort()).toEqual(firstIds);
+    } finally { await app.close(); }
+  });
+
+  it("reports a balanced Rust syntax error as a partial parse", async () => {
+    const root = workspace();
+    writeFileSync(
+      path.join(root, "rust", "src", "balanced-error.rs"),
+      "pub fn balanced_error() { let = 1; }\n",
+    );
+    const app = new ContextMeshApp(root);
+    let raw: DatabaseSync | null = null;
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{ diagnostics: string[] }>;
+      raw = new DatabaseSync(app.database.dbPath);
+      const file = raw.prepare(
+        "SELECT parse_status FROM source_files WHERE workspace_id=? AND relative_path=?",
+      ).get(app.database.workspace.id, "rust/src/balanced-error.rs") as { parse_status: string } | undefined;
+      expect(file?.parse_status).toBe("partial");
+      expect(indexed.data.diagnostics).toContainEqual(expect.stringContaining("PROVIDER_PARSE_PARTIAL"));
+      const recovered = await app.searchCode({ query: "balanced_error", kinds: ["function"] }) as Envelope<{
+        results: Array<{ language: string }>;
+      }>;
+      expect(recovered.data.results).toContainEqual(expect.objectContaining({ language: "rust" }));
+    } finally {
+      raw?.close();
+      await app.close();
+    }
+  });
+
+  it("uses a real Go parser for balanced syntax errors and recovers only valid declarations", async () => {
+    const root = workspace();
+    writeFileSync(
+      path.join(root, "go", "worker", "balanced-error.go"),
+      "package worker\nfunc RecoverableGo() int { return 1 }\nfunc BalancedBroken(a int,, b int) {}\n",
+    );
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    let raw: DatabaseSync | null = null;
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{ diagnostics: string[] }>;
+      raw = new DatabaseSync(app.database.dbPath);
+      const file = raw.prepare(
+        "SELECT parse_status FROM source_files WHERE workspace_id=? AND relative_path=?",
+      ).get(app.database.workspace.id, "go/worker/balanced-error.go") as { parse_status: string } | undefined;
+      expect(file?.parse_status).toBe("partial");
+      expect(indexed.data.diagnostics).toContainEqual(expect.stringContaining("PROVIDER_PARSE_PARTIAL"));
+      expect((await app.searchCode({ query: "RecoverableGo", kinds: ["function"] }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(1);
+      expect((await app.searchCode({ query: "BalancedBroken", kinds: ["function"] }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(0);
+    } finally {
+      raw?.close();
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("limits the Go precision provider to scanner-approved files", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, ".contextmeshignore"), "ignored.go\n");
+    writeFileSync(path.join(root, "ignored.go"), "package ignored\nfunc ScannerBypass( {\n");
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "go_types",
+        status: "ready",
+        lastError: null,
+      }));
+      expect((await app.searchCode({ query: "ScannerBypass" }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(0);
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("probes a configured rust-analyzer instead of reporting it permanently unavailable", async () => {
+    const root = workspace();
+    const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    const app = new ContextMeshApp(root);
+    try {
+      const adapter = app.code.indexer.coordinator.adapter("rust")!;
+      const project = adapter.discoverProject(root);
+      const provider = adapter.createOverlayPrecisionProvider?.(project);
+      expect(provider).toBeDefined();
+      await expect(provider!.available()).resolves.toMatchObject({ available: true });
+    } finally {
+      if (priorCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorCommand;
+      await app.close();
+    }
+  });
+
+  it("commits a resolved Rust call from a configured rust-analyzer LSP", async () => {
+    const root = workspace();
+    const server = path.join(root, "fake-rust-analyzer.mjs");
+    writeFileSync(server, [
+      "if (process.argv.includes('--version')) { console.log('rust-analyzer fixture'); process.exit(0); }",
+      "let buffer = Buffer.alloc(0); const documents = new Map();",
+      "function send(value) { const body = Buffer.from(JSON.stringify(value)); process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\\r\\n\\r\\n`), body])); }",
+      "function handle(message) {",
+      "  if (message.method === 'textDocument/didOpen') { documents.set(message.params.textDocument.uri, message.params.textDocument.text); return; }",
+      "  if (message.method === 'exit') process.exit(0);",
+      "  if (message.id === undefined) return;",
+      "  if (message.method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { definitionProvider: true } } });",
+      "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
+      "  if (message.method === 'textDocument/definition') {",
+      "    const entry = [...documents.entries()].find(([, text]) => text.includes('pub fn rust_target'));",
+      "    const lines = entry[1].split(/\\r?\\n/); const line = lines.findIndex((item) => item.includes('pub fn rust_target'));",
+      "    return send({ jsonrpc: '2.0', id: message.id, result: { uri: entry[0], range: { start: { line, character: 7 }, end: { line, character: 18 } } } });",
+      "  }",
+      "  send({ jsonrpc: '2.0', id: message.id, result: null });",
+      "}",
+      "process.stdin.on('data', (chunk) => { buffer = Buffer.concat([buffer, chunk]); while (true) { const end = buffer.indexOf('\\r\\n\\r\\n'); if (end < 0) break; const length = Number(buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)?.[1]); if (buffer.length < end + 4 + length) break; const body = buffer.subarray(end + 4, end + 4 + length).toString(); buffer = buffer.subarray(end + 4 + length); handle(JSON.parse(body)); } });",
+      "",
+    ].join("\n"));
+    const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    const priorGoDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const caller = await app.searchCode({ query: "rust_caller", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const target = await app.searchCode({ query: "rust_target", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string; evidence: Array<{ provider: string }> }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        targetId: target.data.results[0]!.id,
+        status: "resolved",
+        evidence: expect.arrayContaining([expect.objectContaining({ provider: "rust_analyzer" })]),
+      }));
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "rust_analyzer", status: "ready", resolvedEdges: 1,
+      }));
+    } finally {
+      if (priorCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorCommand;
+      if (priorArgs === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorArgs;
+      if (priorGoDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorGoDisable;
+      await app.close();
+    }
+  });
+
+  it("resolves a call through a local Go module import", async () => {
+    const root = workspace();
+    mkdirSync(path.join(root, "lib"), { recursive: true });
+    mkdirSync(path.join(root, "cmd"), { recursive: true });
+    writeFileSync(path.join(root, "lib", "lib.go"), "package lib\nfunc CrossPackageTarget() int { return 1 }\n");
+    writeFileSync(path.join(root, "cmd", "caller.go"), [
+      "package cmd",
+      "import \"example.local/contextmesh/lib\"",
+      "func CrossPackageCaller() int { return lib.CrossPackageTarget() }",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const caller = await app.searchCode({ query: "CrossPackageCaller", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      const target = await app.searchCode({ query: "CrossPackageTarget", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      expect(caller.data.results).toHaveLength(1);
+      expect(target.data.results).toHaveLength(1);
+      const trace = await app.traceCode({
+        symbolId: caller.data.results[0]!.id,
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string; evidence: Array<{ provider: string }> }> }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        targetId: target.data.results[0]!.id,
+        status: "resolved",
+        evidence: expect.arrayContaining([expect.objectContaining({ provider: "go_types" })]),
+      }));
     } finally { await app.close(); }
   });
 });

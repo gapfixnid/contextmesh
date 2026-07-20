@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, rmSync, mkdtempSync } from "node:fs";
+import { copyFileSync, readFileSync, readdirSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -48,6 +48,26 @@ function phase4Database(): { root: string; databasePath: string } {
     db.exec(readFileSync(path.join(process.cwd(), "migrations", name), "utf8"));
     db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(Number(name.slice(0, 3)), name, "2026-01-01T00:00:00.000Z");
   }
+  db.close();
+  return fixture;
+}
+
+function precisionDatabase(): { root: string; databasePath: string } {
+  const fixture = phase4Database();
+  const db = new DatabaseSync(fixture.databasePath);
+  const name = "009_precision_overlay.sql";
+  db.exec(readFileSync(path.join(process.cwd(), "migrations", name), "utf8"));
+  db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(9, name, "2026-01-01T00:00:00.000Z");
+  db.close();
+  return fixture;
+}
+
+function writerLeaseDatabase(): { root: string; databasePath: string } {
+  const fixture = precisionDatabase();
+  const db = new DatabaseSync(fixture.databasePath);
+  const name = "010_index_writer_lease.sql";
+  db.exec(readFileSync(path.join(process.cwd(), "migrations", name), "utf8"));
+  db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(10, name, "2026-01-01T00:00:00.000Z");
   db.close();
   return fixture;
 }
@@ -108,6 +128,135 @@ describe("migration 009", () => {
     const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
     expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=9").get()?.value).toBe(0);
     expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('workspaces') WHERE name='precision_revision'").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+});
+
+describe("migration backup and writer-lease migration", () => {
+  it("refuses migration when a complete WAL checkpoint cannot be captured", () => {
+    const fixture = precisionDatabase();
+    const reader = new DatabaseSync(fixture.databasePath);
+    const writer = new DatabaseSync(fixture.databasePath);
+    reader.exec("PRAGMA journal_mode=WAL; BEGIN DEFERRED;");
+    reader.prepare("SELECT count(*) FROM memory_events").get();
+    writer.exec("PRAGMA journal_mode=WAL;");
+    writer.prepare(
+      "INSERT INTO memory_events(workspace_id,fragment_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
+    ).run("ws_legacy", "mem_1", "recalled", '{"sentinel":"wal"}', "2026-01-02T00:00:00.000Z");
+
+    let migrationError: unknown;
+    try {
+      const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+      database.close();
+    } catch (error) {
+      migrationError = error;
+    } finally {
+      writer.close();
+      reader.exec("ROLLBACK");
+      reader.close();
+    }
+    expect(() => {
+      if (migrationError) throw migrationError;
+    }).toThrow(/migration backup checkpoint incomplete/i);
+
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM memory_events WHERE payload_json='{\"sentinel\":\"wal\"}'").get()?.value).toBe(1);
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=10").get()?.value).toBe(0);
+    raw.close();
+    expect(readdirSync(fixture.root).filter((name) => name.includes(".backup-"))).toEqual([]);
+  });
+
+  it("rejects a corrupt migration backup before applying pending migrations", () => {
+    const fixture = precisionDatabase();
+    const options = {
+      migrationBackupValidationHook: (backupPath: string) => writeFileSync(backupPath, "corrupt-backup", "utf8"),
+    } as unknown as ConstructorParameters<typeof ContextMeshDatabase>[2];
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, options))
+      .toThrow(/migration backup validation failed/i);
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=10").get()?.value).toBe(0);
+    raw.close();
+  });
+
+  it("adds the durable index-writer lease table without changing existing state", () => {
+    const fixture = precisionDatabase();
+    const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+    database.close();
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=10").get()?.value).toBe(1);
+    expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='index_writer_leases'").get()?.value).toBe(1);
+    expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
+    expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("rolls migration 010 back atomically when validation fails", () => {
+    const fixture = precisionDatabase();
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      migrationValidationHook: (version) => { if (version === 10) throw new Error("injected writer-lease migration failure"); },
+    })).toThrow("injected writer-lease migration failure");
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=10").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='index_writer_leases'").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
+    expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("restores a generated backup and resumes the pending migration with data intact", () => {
+    const fixture = precisionDatabase();
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      migrationValidationHook: (version) => { if (version === 10) throw new Error("restore-probe"); },
+    })).toThrow("restore-probe");
+    const backups = readdirSync(fixture.root)
+      .filter((name) => name.startsWith(`${path.basename(fixture.databasePath)}.backup-`));
+    expect(backups).toHaveLength(1);
+    const backupPath = path.join(fixture.root, backups[0]!);
+    const backup = new DatabaseSync(backupPath, { readOnly: true });
+    expect(backup.prepare("PRAGMA integrity_check").get()).toMatchObject({ integrity_check: "ok" });
+    expect(backup.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(9);
+    expect(backup.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    backup.close();
+
+    copyFileSync(backupPath, fixture.databasePath);
+    const restored = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+    restored.close();
+    const verified = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(verified.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(11);
+    expect(verified.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(verified.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
+    expect(verified.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    verified.close();
+  });
+});
+
+describe("migration 011", () => {
+  it("adds independently fenced precision-node overlays without changing existing graph state", () => {
+    const fixture = writerLeaseDatabase();
+    const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+    database.close();
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(11);
+    expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='precision_nodes'").get()?.value).toBe(1);
+    expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
+    expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("rolls migration 011 back atomically when validation fails", () => {
+    const fixture = writerLeaseDatabase();
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      migrationValidationHook: (version) => { if (version === 11) throw new Error("injected precision-node migration failure"); },
+    })).toThrow("injected precision-node migration failure");
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=11").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='precision_nodes'").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
     expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     raw.close();

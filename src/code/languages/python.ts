@@ -289,11 +289,11 @@ class PythonSyntaxProvider implements SyntaxProvider {
             const matches = declarationsByName.get(callable.rawName) ?? [];
             const target = matches.length === 1 ? matches[0] : undefined;
             if (target && nodes.get(target)?.language === "python") addEdge(sourceId, target, "CALLS", 0.8, "candidate", callable.span);
-            else addUnresolved(entry.file, sourceId, "CALLS", callable.rawName, callable.span, 0.5);
+            else addUnresolved(entry.file, sourceId, "CALLS", callable.rawName, callable.span, 0.5, matches);
           } else addUnresolved(entry.file, sourceId, "CALLS", callable.rawName, callable.span, 0.5);
       }
     }
-    return { files, nodes: [...nodes.values()], edges: [...edges.values()], unresolvedReferences: [...unresolved.values()], diagnostics: [...input.project.diagnostics, ...kernel.diagnostics, `GRAPH_KERNEL_MODE: ${kernel.mode}`], providerMetrics: { filesParsed: kernel.filesParsed, mode: kernel.mode, kernelRssBytes: kernel.kernelRssBytes } };
+    return { files, nodes: [...nodes.values()], edges: [...edges.values()], unresolvedReferences: [...unresolved.values()], diagnostics: [...input.project.diagnostics, ...kernel.diagnostics, `GRAPH_KERNEL_MODE: ${kernel.mode}`], providerMetrics: { filesParsed: kernel.filesParsed, mode: kernel.mode, kernelRssBytes: kernel.kernelRssBytes, providerVersion: kernel.providerVersion } };
   }
 }
 
@@ -313,6 +313,10 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
   async analyze(batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch> {
     const pythonNodes = batch.nodes.filter((node) => node.language === "python");
     const nodesByFile = new Map<string, CodeNodeRecord[]>();
+    const nodesById = new Map(pythonNodes.map((node) => [node.id, node]));
+    const containerByNodeId = new Map(
+      batch.edges.filter((edge) => edge.kind === "CONTAINS").map((edge) => [edge.targetId, edge.sourceId]),
+    );
     const moduleByFile = new Map<string, CodeNodeRecord>();
     const modulesByName = new Map<string, CodeNodeRecord[]>();
     for (const node of pythonNodes) {
@@ -325,7 +329,74 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
     }
     for (const values of nodesByFile.values()) values.sort((a, b) => a.startByte - b.startByte || a.id.localeCompare(b.id));
     const nodeByModuleAndName = (moduleName: string, name: string): CodeNodeRecord[] =>
-      (modulesByName.get(moduleName) ?? []).flatMap((module) => (nodesByFile.get(module.fileId!) ?? []).filter((node) => node.name === name && node.kind !== "module"));
+      (modulesByName.get(moduleName) ?? []).flatMap((module) => (nodesByFile.get(module.fileId!) ?? []).filter((node) =>
+        node.name === name && node.kind !== "module" && containerByNodeId.get(node.id) === module.id));
+    type ImportBinding = { module: string; symbol: string | null };
+    const aliasesByFile = new Map<string, Map<string, ImportBinding>>();
+    const absoluteImportModule = (file: SyntaxGraphBatch["files"][number], module: CodeNodeRecord, rawModule: string): string => {
+      const leading = rawModule.match(/^\.+/)?.[0].length ?? 0;
+      if (leading === 0) return rawModule;
+      const baseParts = module.name.split(".");
+      if (!file.relativePath.endsWith("/__init__.py")) baseParts.pop();
+      return [
+        ...baseParts.slice(0, Math.max(0, baseParts.length - leading + 1)),
+        rawModule.slice(leading),
+      ].filter(Boolean).join(".");
+    };
+    for (const file of batch.files.filter((item) => item.language === "python")) {
+      const module = moduleByFile.get(file.id);
+      if (!module) continue;
+      const aliases = new Map<string, ImportBinding>();
+      for (const match of file.content.matchAll(/^from\s+([.\w]+)\s+import\s+([^#\r\n]+)/gm)) {
+        const importedModule = absoluteImportModule(file, module, match[1] ?? "");
+        for (const part of (match[2] ?? "").split(",")) {
+          const item = part.trim().match(/^([\w]+)(?:\s+as\s+([\w]+))?/);
+          if (item?.[1]) aliases.set(item[2] ?? item[1], { module: importedModule, symbol: item[1] });
+        }
+      }
+      for (const match of file.content.matchAll(/^import\s+([\w.]+)(?:\s+as\s+([\w]+))?/gm)) {
+        if (match[1]) aliases.set(match[2] ?? match[1].split(".")[0]!, { module: match[1], symbol: null });
+      }
+      aliasesByFile.set(file.id, aliases);
+    }
+    const resolveModuleSymbol = (
+      moduleName: string,
+      name: string,
+      visited = new Set<string>(),
+      depth = 0,
+    ): CodeNodeRecord[] => {
+      const key = `${moduleName}\0${name}`;
+      if (depth > 8 || visited.has(key)) return [];
+      const nextVisited = new Set(visited).add(key);
+      const targets = [...nodeByModuleAndName(moduleName, name)];
+      for (const module of modulesByName.get(moduleName) ?? []) {
+        if (!module.fileId) continue;
+        const binding = aliasesByFile.get(module.fileId)?.get(name);
+        if (binding?.symbol) targets.push(...resolveModuleSymbol(
+          binding.module,
+          binding.symbol,
+          nextVisited,
+          depth + 1,
+        ));
+      }
+      return [...new Map(targets.map((target) => [target.id, target])).values()];
+    };
+    const visibleLocalTargets = (module: CodeNodeRecord, owner: CodeNodeRecord, name: string): CodeNodeRecord[] => {
+      const visibleContainers = new Set([module.id, owner.id]);
+      let current: CodeNodeRecord | undefined = owner;
+      const visited = new Set<string>();
+      while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        const containerId = containerByNodeId.get(current.id);
+        if (!containerId) break;
+        const container = nodesById.get(containerId);
+        if (!container) break;
+        if (container.kind === "function" || container.kind === "method") visibleContainers.add(container.id);
+        current = container;
+      }
+      return (nodesByFile.get(module.fileId!) ?? []).filter((node) =>
+        node.name === name && node.kind !== "module" && visibleContainers.has(containerByNodeId.get(node.id) ?? ""));
+    };
     const evidence = (confidence: number, details: Record<string, unknown>) => [{ provider: this.id, providerVersion: this.version, source: "resolver" as const, confidence, details }];
     const overlays = new Map<string, PrecisionOverlayBatch["edges"][number]>();
     const key = (edge: Pick<PrecisionOverlayBatch["edges"][number], "sourceId" | "targetId" | "kind">) => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
@@ -334,17 +405,7 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
     for (const file of batch.files.filter((item) => item.language === "python")) {
       const module = moduleByFile.get(file.id);
       if (!module) continue;
-      const aliases = new Map<string, { module: string; symbol: string | null }>();
-      for (const match of file.content.matchAll(/^\s*from\s+([.\w]+)\s+import\s+([^#\r\n]+)/gm)) {
-        const importedModule = match[1] ?? "";
-        for (const part of (match[2] ?? "").split(",")) {
-          const item = part.trim().match(/^([\w]+)(?:\s+as\s+([\w]+))?/);
-          if (item?.[1]) aliases.set(item[2] ?? item[1], { module: importedModule.replace(/^\.+/, ""), symbol: item[1] });
-        }
-      }
-      for (const match of file.content.matchAll(/^\s*import\s+([\w.]+)(?:\s+as\s+([\w]+))?/gm)) {
-        if (match[1]) aliases.set(match[2] ?? match[1].split(".")[0]!, { module: match[1], symbol: null });
-      }
+      const aliases = aliasesByFile.get(file.id) ?? new Map<string, ImportBinding>();
       const masked = pythonMask(file.content);
       for (const match of masked.matchAll(/\b(?:(\w+)\.)?(\w+)\s*\(/g)) {
         if (match.index === undefined || !match[2] || ["if", "for", "while", "def", "class", "return", "with", "lambda", "print", "super"].includes(match[2])) continue;
@@ -359,12 +420,12 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
         let targets: CodeNodeRecord[] = [];
         if (qualifier && aliases.has(qualifier)) {
           const imported = aliases.get(qualifier)!;
-          targets = nodeByModuleAndName(imported.module, imported.symbol ?? name);
+          targets = resolveModuleSymbol(imported.module, imported.symbol ?? name);
         } else if (!qualifier && aliases.has(name)) {
           const imported = aliases.get(name)!;
-          targets = nodeByModuleAndName(imported.module, imported.symbol ?? name);
+          targets = resolveModuleSymbol(imported.module, imported.symbol ?? name);
         } else if (!qualifier) {
-          targets = (nodesByFile.get(file.id) ?? []).filter((node) => node.name === name && node.kind !== "module");
+          targets = visibleLocalTargets(module, owner, name);
         }
         const uniqueTargets = [...new Map(targets.map((target) => [target.id, target])).values()];
         if (uniqueTargets.length !== 1 || !uniqueTargets[0]) continue;
@@ -388,7 +449,7 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
           const parts = rawBase.split(".");
           const name = parts.at(-1)!;
           const imported = parts.length > 1 ? aliases.get(parts[0]!) : aliases.get(name);
-          const targets = imported ? nodeByModuleAndName(imported.module, imported.symbol ?? name)
+          const targets = imported ? resolveModuleSymbol(imported.module, imported.symbol ?? name)
             : pythonNodes.filter((node) => (node.kind === "class" || node.kind === "interface") && node.name === name);
           const uniqueTargets = [...new Map(targets.map((target) => [target.id, target])).values()];
           if (uniqueTargets.length !== 1 || !uniqueTargets[0]) continue;
@@ -410,5 +471,7 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   readonly extensions = [".py"] as const;
   discoverProject(rootPath: string): ProjectDescriptor { return discoverPythonProject(rootPath); }
   createSyntaxProvider(): SyntaxProvider { return new PythonSyntaxProvider(); }
-  createOverlayPrecisionProvider(): OverlayPrecisionProvider { return new PythonResolvedProvider(); }
+  createOverlayPrecisionProvider(): OverlayPrecisionProvider | undefined {
+    return process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE === "1" ? undefined : new PythonResolvedProvider();
+  }
 }

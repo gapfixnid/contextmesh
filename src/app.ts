@@ -43,7 +43,12 @@ import { nowIso } from "./utils.js";
 import type { FreshnessMode, RequestGenerationState } from "./code/indexer.js";
 import { buildCodeRedundancyText, buildMemoryRedundancyText } from "./semantic/redundancy.js";
 import { GraphWatchCoordinator, type WatcherOptions } from "./code/watcher.js";
-import { graphKernelExecutablePath } from "./code/native-kernel.js";
+import {
+  graphKernelExecutablePath,
+  GRAPH_KERNEL_PROTOCOL,
+  GRAPH_KERNEL_VERSION,
+  observedGraphKernelVersion,
+} from "./code/native-kernel.js";
 
 const QUERY_TRUNCATED_WARNING = "QUERY_TRUNCATED";
 const PAGINATION_STALLED_WARNING = "PAGINATION_STALLED";
@@ -168,8 +173,13 @@ export class ContextMeshApp {
     if (this.closing) throw new ContextMeshError("INTERNAL_ERROR", "ContextMeshApp is closing or closed");
   }
 
-  private scope(generation = this.database.getWorkspace().currentGeneration, includeSnapshot = true): EnvelopeScope {
-    const freshness = this.database.getFreshnessState();
+  private scope(
+    snapshotOrGeneration: number | RequestGenerationState = this.database.getWorkspace().currentGeneration,
+    includeSnapshot = true,
+  ): EnvelopeScope {
+    const captured = typeof snapshotOrGeneration === "number" ? null : snapshotOrGeneration;
+    const generation = captured?.generation ?? snapshotOrGeneration as number;
+    const freshness = captured ?? this.database.getFreshnessState();
     return {
       workspaceId: this.database.workspace.id,
       generation,
@@ -268,8 +278,10 @@ export class ContextMeshApp {
       })),
       adapterStats,
       graphKernel: {
-        protocol: "contextmesh.graph-kernel/v1",
-        version: "0.5.0",
+        protocol: GRAPH_KERNEL_PROTOCOL,
+        version: process.env.CONTEXTMESH_KERNEL_POLICY === "portable" ? "web-tree-sitter@0.26.11" : observedGraphKernelVersion(),
+        expectedVersion: process.env.CONTEXTMESH_KERNEL_POLICY === "portable" ? null : GRAPH_KERNEL_VERSION,
+        versionSource: process.env.CONTEXTMESH_KERNEL_POLICY === "portable" ? "portable-runtime" : observedGraphKernelVersion() ? "hello" : "unobserved",
         mode: process.env.CONTEXTMESH_KERNEL_POLICY === "portable" ? "portable" : "sidecar",
         status: kernelFailure ? "failed" : process.env.CONTEXTMESH_KERNEL_POLICY === "portable" || graphKernelExecutablePath() ? "ready" : "unavailable",
         diagnostics: kernelFailure ? [{ code: kernelFailure.split(":", 1)[0], severity: "error", message: kernelFailure }] : [],
@@ -348,7 +360,7 @@ export class ContextMeshApp {
         continue;
       }
       return stabilizeEnvelope(
-        this.scope(read.snapshot.generation),
+        this.scope(read.snapshot),
         { results: read.value.result.results, nextOffset: read.value.result.nextOffset },
         [
           ...(read.stale || read.generationChanged ? [INDEX_STALE_WARNING] : []),
@@ -368,7 +380,7 @@ export class ContextMeshApp {
       const read = await this.graphReadAttempt(() => this.code.trace(parsed));
       if (read.generationChanged && attempt === 0) continue;
       return stabilizeEnvelope(
-        this.scope(read.snapshot.generation),
+        this.scope(read.snapshot),
         read.value,
         [
           ...(read.stale || read.generationChanged
@@ -418,7 +430,7 @@ export class ContextMeshApp {
         ...(relations.some((edge) => !edge.confirmed) ? ["Candidate or low-confidence relations require source verification"] : []),
         ...(entryPoints.some((entry) => entry.snippet === null) ? ["SOURCE_VERIFICATION_REQUIRED: one or more current snippets were unavailable"] : []),
       ]);
-      const scope = this.scope(snapshotResult.snapshot.generation);
+      const scope = this.scope(snapshotResult.snapshot);
       const makeData = () => ({ query: parsed.query, intent: parsed.intent, entryPoints, relations: selectedRelations,
         unresolved: (snapshotResult.focused?.unresolved ?? []).slice(0, parsed.limit),
         trace: { toolCalls: 1, fileReads: entryPoints.filter((entry) => entry.snippet !== null).length, strategy: "one-shot" as const } });
@@ -716,7 +728,8 @@ export class ContextMeshApp {
       return this.packContext(
         parsed,
         hydrated.assembled,
-        this.scope(snapshotResult.snapshot.generation, false),
+        this.scope(snapshotResult.snapshot, false),
+        this.scope(snapshotResult.snapshot),
         [
           ...(stale ? [INDEX_STALE_WARNING] : []),
           ...(semanticChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
@@ -731,6 +744,7 @@ export class ContextMeshApp {
     parsed: GetContextInput,
     result: AssembledContext,
     scope: EnvelopeScope,
+    snapshotScope: EnvelopeScope,
     staleWarnings: string[],
     forceTruncated: boolean,
   ): Envelope<unknown> {
@@ -948,7 +962,6 @@ export class ContextMeshApp {
       candidateOmitted ||
       relationshipOmitted ||
       data.memories.some((memory) => memory.provenance.codeLinksOmitted > 0);
-    const snapshotScope = this.scope(scope.generation, true);
     const finalScope = envelopeFits(snapshotScope, data, warnings, truncated, parsed.tokenBudget)
       ? snapshotScope
       : scope;

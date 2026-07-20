@@ -89,7 +89,7 @@ Omit `--semantic-model` for the Phase 1–3 lexical/graph behavior. When supplie
 
 ContextMesh reads `tsconfig.json` or `jsconfig.json` when available and otherwise creates a synthetic TypeScript project. It supports the TypeScript/JavaScript family plus `.py`, `.go`, `.rs`, `.java`, and `.cs`. The graph contains modules, external modules, functions, classes, methods, interfaces, type aliases, enums, and variables, connected by `CONTAINS`, `IMPORTS`, `EXPORTS`, `CALLS`, `EXTENDS`, and `IMPLEMENTS` edges.
 
-Syntax candidates are always available. TypeScript TypeChecker, the Python local-package resolver, and optional Go `go/types` results are stored as an independent precision overlay. `workspace_status` reports provider capability and failure state; missing Go/Rust tooling does not prevent base indexing.
+Syntax candidates are always available. Go and Rust syntax use pinned Tree-sitter WASM grammars, while Java and C# remain deterministic syntax prototypes. TypeScript TypeChecker, the Python local-package resolver, optional Go `go/types`, and optional Rust `rust-analyzer` results are stored as independently fenced precision overlays. `workspace_status` reports provider capability and failure state; missing Go/Rust tooling does not prevent base indexing. `CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE=1`, `CONTEXTMESH_PYTHON_PRECISION_DISABLE=1`, `CONTEXTMESH_GO_TYPES_DISABLE=1`, and `CONTEXTMESH_RUST_ANALYZER_DISABLE=1` exercise the base-only policies.
 
 Dynamic JavaScript calls that cannot be resolved safely are retained as unresolved evidence rather than guessed. Source bodies are not copied into SQLite; snippets are read from disk only after validating the indexed file hash.
 
@@ -102,7 +102,7 @@ Fast freshness compares the configured path set, size, and modification time, th
 - Symbol traversal depth and result counts are bounded.
 - Memory is returned as untrusted contextual data, never promoted to system instructions.
 - Add project-specific exclusions to `.contextmeshignore` using `.gitignore` syntax.
-- Run only one `index_workspace` writer process for a workspace. Multiple reader processes and generation-change detection are supported; cross-process concurrent index writers are not. Index-time code embedding additionally acquires a DB lease fenced to the pending target generation before inference.
+- Run only one `index_workspace` writer at a time for a workspace. ContextMesh enforces this across processes with a durable SQLite lease: concurrent writers receive `DB_BUSY`, expired owners are fenced from heartbeat/commit/fail, and a later writer may take over only after expiry. Multiple reader processes continue to serve the last committed generation. Index-time code embedding additionally acquires its own lease fenced to the pending target generation before inference.
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 

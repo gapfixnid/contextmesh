@@ -9,6 +9,14 @@ import ts from "typescript";
 import { ContextMeshApp } from "../src/app.js";
 import { probeTypeScriptTreeSitter } from "../src/code/native-kernel.js";
 import { sha256 } from "../src/utils.js";
+import {
+  expectedNativeRuntime,
+  stableStringify,
+  V04_ARTIFACT_CONTRACT,
+  V04_FIXED_HARDWARE,
+  validateFixedHardwareIdentity,
+  v04SourceEvidence,
+} from "./v04-artifact-contract.js";
 
 const sizes = { small: 6, medium: 30, large: 90 } as const;
 const coldSamples = 5;
@@ -26,19 +34,6 @@ interface Fixture {
   pythonPath: string;
   tsFiles: string[];
   manifest: Array<{ path: string; content: string }>;
-}
-
-function stableStringify(value: unknown): string {
-  const normalize = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(normalize);
-    if (item && typeof item === "object") {
-      return Object.fromEntries(Object.entries(item)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, normalize(nested)]));
-    }
-    return item;
-  };
-  return JSON.stringify(normalize(value));
 }
 
 function percentile(values: number[], fraction: number): number {
@@ -145,6 +140,21 @@ function pythonAdapter(result: unknown): Record<string, unknown> | undefined {
 
 function typescriptAdapter(result: unknown): Record<string, unknown> | undefined {
   return adapterStats(result).find((item) => item.language === "typescript/javascript");
+}
+
+function pythonRuntimeVersion(result: unknown): string | null {
+  const versions = pythonAdapter(result)?.providerVersions;
+  if (!versions || typeof versions !== "object") return null;
+  const runtime = (versions as Record<string, unknown>).runtime;
+  return typeof runtime === "string" ? runtime : null;
+}
+
+function activePowerSchemeGuid(): string {
+  if (process.platform !== "win32") throw new Error("Canonical v0.4 evidence must be measured on Windows");
+  const output = execFileSync("powercfg", ["/getactivescheme"], { encoding: "utf8" });
+  const guid = output.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+  if (!guid) throw new Error("Cannot identify the active Windows power scheme");
+  return guid.toLocaleLowerCase("en-US");
 }
 
 async function waitForGeneration(app: ContextMeshApp, generation: number, timeoutMs = 5_000): Promise<number> {
@@ -291,6 +301,7 @@ async function runEvaluation(): Promise<void> {
     const cold: Record<string, unknown> = {};
     let parentPeakRss = process.memoryUsage().rss;
     let kernelPeakRss = 0;
+    let nativeRuntimeVersion: string | null = null;
     for (const label of Object.keys(sizes) as FixtureSize[]) {
       const timings: number[] = [];
       const parentRss: number[] = [];
@@ -302,6 +313,12 @@ async function runEvaluation(): Promise<void> {
         try {
           const started = performance.now();
           const result = await app.indexWorkspace({ mode: "full" });
+          const observedRuntime = pythonRuntimeVersion(result);
+          if (!observedRuntime) throw new Error("Native graph-kernel handshake version was not recorded");
+          if (nativeRuntimeVersion && nativeRuntimeVersion !== observedRuntime) {
+            throw new Error(`Native graph-kernel version changed during evaluation: ${nativeRuntimeVersion} -> ${observedRuntime}`);
+          }
+          nativeRuntimeVersion = observedRuntime;
           timings.push(performance.now() - started);
           const currentParent = process.memoryUsage().rss;
           const currentKernel = Number(pythonAdapter(result)?.kernelRssBytes ?? 0);
@@ -404,23 +421,41 @@ async function runEvaluation(): Promise<void> {
         && !typeScriptDecision.treeSitterBenchmarkOnly.hasError,
     };
     const sourceOverrideIndex = process.argv.indexOf("--source-commit");
+    const source = v04SourceEvidence();
     const sourceCommit = sourceOverrideIndex >= 0 && process.argv[sourceOverrideIndex + 1]
       ? process.argv[sourceOverrideIndex + 1]!
-      : execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      : source.headCommit;
+    if (sourceCommit !== source.headCommit) {
+      throw new Error(`Source commit override must equal measured HEAD ${source.headCommit}`);
+    }
+    if (source.dirty) {
+      throw new Error("Canonical v0.4 performance evidence requires a clean non-artifact source snapshot");
+    }
+    const powerSchemeGuid = activePowerSchemeGuid();
+    const hardwareIdentity = {
+      hardwareProfile: V04_FIXED_HARDWARE.profile,
+      os: `${os.platform()} ${os.release()} ${os.arch()}`,
+      cpu: os.cpus()[0]?.model.trim() ?? "unknown",
+      logicalCpus: os.cpus().length,
+      ramBytes: os.totalmem(),
+      powerSchemeGuid,
+    };
+    validateFixedHardwareIdentity(hardwareIdentity);
+    if (nativeRuntimeVersion !== expectedNativeRuntime()) {
+      throw new Error(`Native handshake version mismatch: ${nativeRuntimeVersion ?? "missing"}`);
+    }
     const artifact = {
-      schemaVersion: 2,
+      schemaVersion: 4,
       git: { commit: sourceCommit, baseline: "e37977199e231fc95b581e6254003941b8f447b2" },
+      source,
       fixtureDigest: sha256(stableStringify(fixtureDigests)),
       fixtures: fixtureDigests,
       runner: {
-        contract: "contextmesh-v04-fixed-fixtures-v2",
-        os: `${os.platform()} ${os.release()} ${os.arch()}`,
-        cpu: os.cpus()[0]?.model ?? "unknown",
-        logicalCpus: os.cpus().length,
-        ramBytes: os.totalmem(),
+        contract: V04_ARTIFACT_CONTRACT,
+        ...hardwareIdentity,
         node: process.version,
         rust: execFileSync("rustc", ["--version"], { encoding: "utf8" }).trim(),
-        native: "contextmesh-graph-kernel@0.4.0",
+        native: nativeRuntimeVersion,
         mode: "sidecar",
         runtimeNetwork: 0,
       },

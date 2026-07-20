@@ -147,7 +147,8 @@ export class TypeScriptLanguageAdapter implements LanguageAdapter {
     };
   }
 
-  createPrecisionProvider(project: ProjectDescriptor): PrecisionProvider {
+  createPrecisionProvider(project: ProjectDescriptor): PrecisionProvider | undefined {
+    if (process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE === "1") return undefined;
     return {
       id: "typescript_type_checker",
       version: ts.version,
