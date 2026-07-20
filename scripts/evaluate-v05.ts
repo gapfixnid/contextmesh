@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ContextMeshApp } from "../src/app.js";
 import type { CodeEdgeRecord, CodeNodeRecord, UnresolvedReferenceRecord } from "../src/contracts.js";
-import { v04SourceEvidence } from "./v04-artifact-contract.js";
+import { V04_SOURCE_CONTRACT, v04SourceEvidence, type V04SourceEvidence } from "./v04-artifact-contract.js";
 
 type Tier1Language = "typescript" | "python" | "go";
 type CaseCategory = "positive" | "negative" | "ambiguous";
@@ -56,6 +56,29 @@ interface CaseResult {
 const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json");
 const PINNED_FIXTURE_DIGEST = "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
+
+function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
+  if (existsSync(path.join(root, ".git"))) return v04SourceEvidence(root);
+  const sourceCommitPath = path.join(root, "SOURCE_COMMIT");
+  const sourceEvidencePath = path.join(root, "SOURCE_EVIDENCE.json");
+  if (!existsSync(sourceCommitPath) || !existsSync(sourceEvidencePath)) {
+    throw new Error("V05_SOURCE_EVIDENCE_MISSING: Git metadata or signed source-archive evidence is required");
+  }
+  const sourceCommit = readFileSync(sourceCommitPath, "utf8").trim();
+  const evidence = JSON.parse(readFileSync(sourceEvidencePath, "utf8")) as V04SourceEvidence;
+  if (
+    evidence.contract !== V04_SOURCE_CONTRACT ||
+    !/^[0-9a-f]{40}$/.test(sourceCommit) ||
+    evidence.headCommit !== sourceCommit ||
+    !/^[0-9a-f]{64}$/.test(evidence.treeDigest) ||
+    evidence.headTreeDigest !== evidence.treeDigest ||
+    !Number.isSafeInteger(evidence.files) || evidence.files <= 0 ||
+    evidence.dirty !== false
+  ) {
+    throw new Error("V05_SOURCE_EVIDENCE_INVALID: source-archive evidence does not identify a clean exact source snapshot");
+  }
+  return evidence;
+}
 
 function outputPath(): string | null {
   const index = process.argv.indexOf("--output");
@@ -357,7 +380,7 @@ try {
   const artifact = {
     schemaVersion: 3,
     release: "v0.5",
-    source: v04SourceEvidence(),
+    source: evaluationSourceEvidence(),
     fixture: {
       id: fixture.id,
       schemaVersion: fixture.schemaVersion,

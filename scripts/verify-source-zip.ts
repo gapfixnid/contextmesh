@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stableStringify, v04SourceEvidence } from "./v04-artifact-contract.js";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -22,6 +23,10 @@ const project = process.cwd();
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" }).trim();
 if (dirty) throw new Error("Source ZIP verification requires a clean worktree");
 const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+const sourceEvidence = v04SourceEvidence(project);
+if (sourceEvidence.headCommit !== sourceCommit || sourceEvidence.dirty) {
+  throw new Error("Source ZIP evidence must identify the clean current HEAD");
+}
 const temporary = mkdtempSync(path.join(os.tmpdir(), "contextmesh-source-zip-"));
 if (
   path.dirname(path.resolve(temporary)) !== path.resolve(os.tmpdir()) ||
@@ -48,7 +53,14 @@ const forbidden = [
 try {
   execFileSync(
     "git",
-    ["archive", "--format=zip", `--add-virtual-file=SOURCE_COMMIT:${sourceCommit}`, `--output=${archive}`, "HEAD"],
+    [
+      "archive",
+      "--format=zip",
+      `--add-virtual-file=SOURCE_COMMIT:${sourceCommit}`,
+      `--add-virtual-file=SOURCE_EVIDENCE.json:${stableStringify(sourceEvidence)}`,
+      `--output=${archive}`,
+      "HEAD",
+    ],
     { cwd: project },
   );
   if (process.platform === "win32") {
