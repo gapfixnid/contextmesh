@@ -1,0 +1,469 @@
+{
+  "schemaVersion": 1,
+  "id": "contextmesh-v051-external-holdout-v1",
+  "immutable": true,
+  "description": "Offline-replayable external-source holdout built from byte-identical files at pinned public release commits. Gold paths are derived from upstream source semantics and pinned by exact source and target spans; runtime output is not embedded as gold. This fixture measures only the selected cases, not whole-repository provider coverage.",
+  "frozenAt": "2026-07-20",
+  "mutationPolicy": "Any repository, byte, harness, case, threshold, or expected-path change requires a new fixture id, schema version, and pinned SHA-256.",
+  "thresholds": {
+    "precision": 0.9,
+    "recall": 0.8,
+    "classificationCoverage": 1
+  },
+  "repositories": [
+    {
+      "id": "nx",
+      "repository": "nrwl/nx",
+      "url": "https://github.com/nrwl/nx",
+      "tag": "23.1.0",
+      "commit": "a5b10cd10f98dc9b41aee2a491d2bf5b686de929",
+      "license": "MIT",
+      "profiles": [
+        "large-monorepo"
+      ],
+      "files": [
+        {
+          "upstreamPath": "LICENSE",
+          "corpusPath": "nx/LICENSE",
+          "sha256": "50bb7bf81374073606d3c3f277762d5222d82c918b2088f3789ed7e5f9f8b496"
+        },
+        {
+          "upstreamPath": "packages/nx/src/utils/async-iterator.ts",
+          "corpusPath": "nx/packages/nx/src/utils/async-iterator.ts",
+          "sha256": "a6928a292bec18ff2c3525e450a347bfbfb794f5ef9af3f33ecb44e02f8cf01a"
+        },
+        {
+          "upstreamPath": "packages/nx/src/utils/cache-directory.ts",
+          "corpusPath": "nx/packages/nx/src/utils/cache-directory.ts",
+          "sha256": "9d8ae494faa3f5baa3d00d577e4e2e7f32e2565088dea37e8b41d93cc40f6a0c"
+        },
+        {
+          "upstreamPath": "packages/nx/src/utils/chunkify.ts",
+          "corpusPath": "nx/packages/nx/src/utils/chunkify.ts",
+          "sha256": "a4aa2ffb76b5614678b334902006bd633fed06e05a364cafb748adda6d074f10"
+        },
+        {
+          "upstreamPath": "packages/nx/src/utils/code-frames.ts",
+          "corpusPath": "nx/packages/nx/src/utils/code-frames.ts",
+          "sha256": "f00ec8ef6673b4c2e71b4bb3b2bf626affb436f7176d3427d0eee468bb4c1344"
+        }
+      ]
+    },
+    {
+      "id": "flask",
+      "repository": "pallets/flask",
+      "url": "https://github.com/pallets/flask",
+      "tag": "3.1.3",
+      "commit": "22d924701a6ae2e4cd01e9a15bbaf3946094af65",
+      "license": "BSD-3-Clause",
+      "profiles": [
+        "complex-src-layout"
+      ],
+      "files": [
+        {
+          "upstreamPath": "LICENSE.txt",
+          "corpusPath": "flask/LICENSE.txt",
+          "sha256": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea"
+        },
+        {
+          "upstreamPath": "src/flask/__init__.py",
+          "corpusPath": "flask/src/flask/__init__.py",
+          "sha256": "987bc937d4b0b65d510ed8c2a82218c889e22bf499fe5fe1a94ca73b382927da"
+        },
+        {
+          "upstreamPath": "src/flask/json/__init__.py",
+          "corpusPath": "flask/src/flask/json/__init__.py",
+          "sha256": "84b351f3df296aaa1e7dd78086b69ae70c89cbe6e6441da4d9d578120572d99f"
+        },
+        {
+          "upstreamPath": "src/flask/json/tag.py",
+          "corpusPath": "flask/src/flask/json/tag.py",
+          "sha256": "0e168dc2e20e85db7647be28382f58e19f19a6bc4562245be5d50fe5bcb220dc"
+        },
+        {
+          "upstreamPath": "src/flask/signals.py",
+          "corpusPath": "flask/src/flask/signals.py",
+          "sha256": "57b94c530c3b0aa809d93854067d4f89ab59b506a73b2b7b399a6ed86648fb7e"
+        },
+        {
+          "upstreamPath": "src/flask/templating.py",
+          "corpusPath": "flask/src/flask/templating.py",
+          "sha256": "bdb224c18031b1211f0f14080f580a46f05041c19612e5980a71f45cadc4a8e2"
+        }
+      ]
+    },
+    {
+      "id": "client-go",
+      "repository": "kubernetes/client-go",
+      "url": "https://github.com/kubernetes/client-go",
+      "tag": "v0.36.2",
+      "commit": "877f5359348b5df85619f2aa379abc5bd74bca2d",
+      "license": "Apache-2.0",
+      "profiles": [
+        "generated-code"
+      ],
+      "files": [
+        {
+          "upstreamPath": "LICENSE",
+          "corpusPath": "client-go/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "upstreamPath": "tools/clientcmd/api/helpers.go",
+          "corpusPath": "client-go/tools/clientcmd/api/helpers.go",
+          "sha256": "10777322e551caf03f0dfd9ec8ccd3a71341e66cb43f4a897942e6dbf62ae627"
+        },
+        {
+          "upstreamPath": "tools/clientcmd/api/types.go",
+          "corpusPath": "client-go/tools/clientcmd/api/types.go",
+          "sha256": "0e23ace1bd559f1d8640eddd2585b98baf90d186d874ea6a0f0cbcda748d1387"
+        },
+        {
+          "upstreamPath": "tools/clientcmd/api/zz_generated.deepcopy.go",
+          "corpusPath": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go",
+          "sha256": "b02559718e8eeb5b0de6789667794c595cab3184d6fdf70854a36fadcaedfb30"
+        }
+      ]
+    }
+  ],
+  "harness": {
+    "description": "Minimal deterministic project-discovery metadata and one Go external-interface stub; upstream files above remain byte-identical.",
+    "files": [
+      {
+        "path": "tsconfig.json",
+        "sha256": "7cdead6e140d54134903de204af60ae20ed8b5828bf39910cb3fa5b64634b35f",
+        "purpose": "TypeScript project discovery"
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "f75cdc49b4359edbd0a9237fe1fb55937ff29f6959bcad7295f8ecaea6a77e55",
+        "purpose": "Python src-layout discovery"
+      },
+      {
+        "path": "go.mod",
+        "sha256": "f27e9ece8584abe2bf19ec8b38eb20eee2689cd948f633377bf956be7a029d14",
+        "purpose": "Offline Go module identity"
+      },
+      {
+        "path": "apimachinery/pkg/runtime/runtime.go",
+        "sha256": "f5daf33f9a01876e561ff2cfd0932c6665f5ca09a0c7f08803a0265c400ce501",
+        "purpose": "Minimal interface stub for client-go generated source"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "nx-cache-directory-branches",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#cacheDirectory",
+      "sourceStartLine": 28,
+      "expectedCallEdges": [
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#absolutePath",
+          "targetStartLine": 20,
+          "status": "resolved"
+        },
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#defaultCacheDirectory",
+          "targetStartLine": 60,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "nx-default-cache",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#defaultCacheDirectory",
+      "sourceStartLine": 60,
+      "expectedCallEdges": [
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#pickCacheDirectory",
+          "targetStartLine": 40,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "nx-default-workspace-data",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#defaultWorkspaceDataDirectory",
+      "sourceStartLine": 64,
+      "expectedCallEdges": [
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#pickCacheDirectory",
+          "targetStartLine": 40,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "nx-shared-cache",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#sharedCacheDirectory",
+      "sourceStartLine": 79,
+      "expectedCallEdges": [
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#cacheDirectoryForWorkspace",
+          "targetStartLine": 75,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "nx-workspace-data",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#workspaceDataDirectoryForWorkspace",
+      "sourceStartLine": 94,
+      "expectedCallEdges": [
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#absolutePath",
+          "targetStartLine": 20,
+          "status": "resolved"
+        },
+        {
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#defaultWorkspaceDataDirectory",
+          "targetStartLine": 64,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "nx-code-frame",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/code-frames.ts#codeFrameColumns",
+      "sourceStartLine": 99,
+      "expectedCallEdges": [
+        {
+          "target": "nx/packages/nx/src/utils/code-frames.ts#getMarkerLines",
+          "targetStartLine": 32,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "nx-missing-local-import",
+      "repositoryId": "nx",
+      "language": "typescript",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#readCacheDirectoryProperty",
+      "sourceStartLine": 8,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "rawName": "readJsonFile",
+        "minimumCandidates": 0
+      }
+    },
+    {
+      "id": "flask-render-template",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#render_template",
+      "sourceStartLine": 139,
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#_render",
+          "targetStartLine": 127,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "flask-render-template-string",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#render_template_string",
+      "sourceStartLine": 154,
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#_render",
+          "targetStartLine": 127,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "flask-stream-template",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#stream_template",
+      "sourceStartLine": 189,
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#_stream",
+          "targetStartLine": 166,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "flask-stream-template-string",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#stream_template_string",
+      "sourceStartLine": 208,
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#_stream",
+          "targetStartLine": 166,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "flask-nested-generator",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#_stream",
+      "sourceStartLine": 166,
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#_stream.generate",
+          "targetStartLine": 174,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "flask-method-dispatch-unresolved",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#DispatchingJinjaLoader.get_source",
+      "sourceStartLine": 61,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "rawName": "self._get_source_explained",
+        "minimumCandidates": 0
+      }
+    },
+    {
+      "id": "flask-import-alias-ambiguous",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/json/tag.py#TaggedJSONSerializer.dumps",
+      "sourceStartLine": 321,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "rawName": "dumps",
+        "minimumCandidates": 2
+      }
+    },
+    {
+      "id": "client-go-flatten-config",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#FlattenConfig",
+      "sourceStartLine": 115,
+      "expectedCallEdges": [
+        {
+          "target": "client-go/tools/clientcmd/api/helpers.go#MakeAbs",
+          "targetStartLine": 179,
+          "status": "resolved"
+        },
+        {
+          "target": "client-go/tools/clientcmd/api/helpers.go#FlattenContent",
+          "targetStartLine": 147,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "client-go-flatten-content",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#FlattenContent",
+      "sourceStartLine": 147,
+      "expectedCallEdges": [
+        {
+          "target": "client-go/tools/clientcmd/api/helpers.go#ResolvePath",
+          "targetStartLine": 167,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "client-go-redact-entry",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#RedactSecrets",
+      "sourceStartLine": 194,
+      "expectedCallEdges": [
+        {
+          "target": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+          "targetStartLine": 198,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "client-go-redact-recursion",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+      "sourceStartLine": 198,
+      "expectedCallEdges": [
+        {
+          "target": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+          "targetStartLine": 198,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "client-go-generated-deep-copy",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopy",
+      "sourceStartLine": 35,
+      "expectedCallEdges": [
+        {
+          "target": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopyInto",
+          "targetStartLine": 29,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "client-go-generated-object-copy",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopyObject",
+      "sourceStartLine": 240,
+      "expectedCallEdges": [
+        {
+          "target": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopy",
+          "targetStartLine": 230,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "client-go-stdlib-path-unresolved",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#MakeAbs",
+      "sourceStartLine": 179,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "rawName": "IsAbs",
+        "minimumCandidates": 0
+      }
+    },
+    {
+      "id": "client-go-resolve-path-unresolved",
+      "repositoryId": "client-go",
+      "language": "go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#ResolvePath",
+      "sourceStartLine": 167,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "rawName": "IsAbs",
+        "minimumCandidates": 0
+      }
+    }
+  ]
+}

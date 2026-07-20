@@ -79,6 +79,7 @@ try {
   execFileSync(process.execPath, [npmCli, "run", "check"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:v04-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:v05-artifact"], { cwd: extracted, stdio: "inherit" });
+  execFileSync(process.execPath, [npmCli, "run", "verify:v051-holdout"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:package"], { cwd: extracted, stdio: "inherit" });
 
   if (modelPath) {

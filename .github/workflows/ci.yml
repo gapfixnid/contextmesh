@@ -44,11 +44,15 @@ jobs:
       - run: npm run check
       - run: npm run evaluate:v05 -- --output artifacts/v05-quality.json
       - run: npm run verify:v05-artifact
+      - run: npm run evaluate:v051-holdout -- --output artifacts/v051-external-holdout.json
+      - run: npm run verify:v051-holdout
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: v05-quality-${{ runner.os }}-${{ github.sha }}
-          path: artifacts/v05-quality.json
+          path: |
+            artifacts/v05-quality.json
+            artifacts/v051-external-holdout.json
           if-no-files-found: error
       - run: npm run verify:native-supply-chain
       - run: npm run verify:v04-artifact

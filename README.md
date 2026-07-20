@@ -19,6 +19,7 @@ npm run benchmark:semantic
 npm run benchmark:hydration
 npm run benchmark:unavailable -- --model-path C:/models/multilingual-e5-small
 npm run evaluate:v05
+npm run evaluate:v051-holdout -- --output artifacts/v051-external-holdout.json
 npm run verify:package
 ```
 
