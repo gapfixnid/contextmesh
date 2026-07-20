@@ -23,6 +23,7 @@ type edge struct {
 	SourceFile   string `json:"sourceFile"`
 	SourceName   string `json:"sourceName"`
 	SourceOffset int    `json:"sourceOffset"`
+	CallOffset   int    `json:"callOffset"`
 	TargetFile   string `json:"targetFile"`
 	TargetName   string `json:"targetName"`
 	TargetOffset int    `json:"targetOffset"`
@@ -339,8 +340,10 @@ func main() {
 					if relErr != nil || strings.HasPrefix(targetFile, "..") {
 						return true
 					}
+					callPosition := fset.Position(call.Fun.Pos())
 					edges = append(edges, edge{
 						SourceFile: sourceFile, SourceName: function.Name.Name, SourceOffset: sourcePosition.Offset,
+						CallOffset: callPosition.Offset,
 						TargetFile: filepath.ToSlash(targetFile), TargetName: target.Name(), TargetOffset: targetPosition.Offset,
 					})
 					return true

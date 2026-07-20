@@ -1224,6 +1224,35 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     ).all(this.workspace.id, provider).map((row) => stringValue(row.node_id));
   }
 
+  private hasVisiblePrecisionOverlay(provider: string): boolean {
+    const generation = this.getWorkspace().currentGeneration;
+    return Boolean(this.db.prepare(
+      `SELECT 1
+       FROM precision_provider_state state
+       WHERE state.workspace_id=? AND state.provider=?
+         AND state.status IN ('ready','partial','running')
+         AND (
+           EXISTS(SELECT 1 FROM precision_nodes node
+                  WHERE node.workspace_id=state.workspace_id AND node.provider=state.provider
+                    AND node.base_generation=? AND node.precision_revision=state.precision_revision)
+           OR EXISTS(SELECT 1 FROM precision_edges edge
+                     WHERE edge.workspace_id=state.workspace_id AND edge.provider=state.provider
+                       AND edge.base_generation=? AND edge.precision_revision=state.precision_revision)
+         )
+       LIMIT 1`,
+    ).get(this.workspace.id, provider, generation, generation));
+  }
+
+  private fencePrecisionOverlayWithdrawal(provider: string): void {
+    const revision = this.getPrecisionRevision() + 1;
+    const timestamp = this.nowIso();
+    this.db.prepare("UPDATE workspaces SET precision_revision=?,updated_at=? WHERE id=?")
+      .run(revision, timestamp, this.workspace.id);
+    this.db.prepare(
+      "UPDATE precision_provider_state SET precision_revision=?,updated_at=? WHERE workspace_id=? AND provider=?",
+    ).run(revision, timestamp, this.workspace.id, provider);
+  }
+
   private applyPrecisionNodeOverlays<T extends CodeSearchResult>(nodes: T[]): T[] {
     if (nodes.length === 0) return nodes;
     const currentGeneration = this.getWorkspace().currentGeneration;
@@ -1241,7 +1270,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          WHERE overlay.workspace_id=? AND overlay.base_generation=?
            AND state.base_generation=overlay.base_generation
            AND state.precision_revision=overlay.precision_revision
-           AND state.status IN ('ready','partial')
+           AND state.status IN ('ready','partial','running')
            AND overlay.node_id IN (${placeholders(chunk.length)})
          ORDER BY overlay.node_id,
            CASE overlay.analysis_level WHEN 'typed' THEN 2 ELSE 1 END DESC,
@@ -1341,6 +1370,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   ): void {
     this.transaction(() => {
       const affectedNodes = this.precisionNodeIds(input.provider);
+      const overlayWasVisible = this.hasVisiblePrecisionOverlay(input.provider);
       const timestamp = this.nowIso();
       this.db.prepare(
         `INSERT INTO precision_provider_state(
@@ -1355,6 +1385,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            base_generation=excluded.base_generation,last_error=excluded.last_error,updated_at=excluded.updated_at`,
       ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability, input.status,
         this.getWorkspace().currentGeneration, input.lastError ?? null, timestamp);
+      const state = this.db.prepare(
+        "SELECT status FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+      ).get(this.workspace.id, input.provider);
+      if (overlayWasVisible && !["ready", "partial", "running"].includes(stringValue(state?.status))) {
+        this.fencePrecisionOverlayWithdrawal(input.provider);
+      }
       this.refreshEffectiveNodeMaterializations(affectedNodes);
     });
   }
@@ -1418,11 +1454,17 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           numberValue(state.base_generation) !== claim.baseGeneration ||
           numberValue(state.lease_expires_epoch) <= Date.parse(this.nowIso())) return;
       const rejectCommit = (reason: string): void => {
-        this.db.prepare(
+        const overlayWasVisible = this.hasVisiblePrecisionOverlay(claim.provider);
+        const result = this.db.prepare(
           `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
              lease_expires_epoch=NULL,updated_at=?
            WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=?`,
         ).run(`PRECISION_OVERLAY_INVALID: ${reason}`, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner);
+        if (overlayWasVisible && Number(result.changes) === 1) {
+          const affectedNodes = this.precisionNodeIds(claim.provider);
+          this.fencePrecisionOverlayWithdrawal(claim.provider);
+          this.refreshEffectiveNodeMaterializations(affectedNodes);
+        }
       };
       const sorted = [...commit.edges].sort((left, right) =>
         `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
@@ -1546,6 +1588,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   failPrecisionProvider(claim: PrecisionClaim, error: string): boolean {
     return this.transaction(() => {
       const affectedNodes = this.precisionNodeIds(claim.provider);
+      const overlayWasVisible = this.hasVisiblePrecisionOverlay(claim.provider);
       const nowIso = this.nowIso();
       const now = Date.parse(nowIso);
       const result = this.db.prepare(
@@ -1553,7 +1596,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
          AND lease_token=? AND lease_owner=? AND base_generation=? AND lease_expires_epoch>?`,
       ).run(error, nowIso, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration, now);
-      if (Number(result.changes) === 1) this.refreshEffectiveNodeMaterializations(affectedNodes);
+      if (Number(result.changes) === 1) {
+        if (overlayWasVisible) this.fencePrecisionOverlayWithdrawal(claim.provider);
+        this.refreshEffectiveNodeMaterializations(affectedNodes);
+      }
       return Number(result.changes) === 1;
     });
   }
@@ -1561,13 +1607,17 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   abandonPrecisionProvider(claim: PrecisionClaim, error: string): boolean {
     return this.transaction(() => {
       const affectedNodes = this.precisionNodeIds(claim.provider);
+      const overlayWasVisible = this.hasVisiblePrecisionOverlay(claim.provider);
       const timestamp = this.nowIso();
       const result = this.db.prepare(
         `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
          lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
          AND lease_token=? AND lease_owner=? AND base_generation=?`,
       ).run(error, timestamp, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
-      if (Number(result.changes) === 1) this.refreshEffectiveNodeMaterializations(affectedNodes);
+      if (Number(result.changes) === 1) {
+        if (overlayWasVisible) this.fencePrecisionOverlayWithdrawal(claim.provider);
+        this.refreshEffectiveNodeMaterializations(affectedNodes);
+      }
       return Number(result.changes) === 1;
     });
   }
@@ -1594,7 +1644,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
        JOIN precision_provider_state state ON state.workspace_id=edge.workspace_id AND state.provider=edge.provider
        JOIN code_nodes source ON source.id=edge.source_id
        JOIN code_nodes target ON target.id=edge.target_id
-       WHERE edge.workspace_id=? AND edge.base_generation=? AND state.status IN ('ready','partial')
+       WHERE edge.workspace_id=? AND edge.base_generation=?
+         AND state.base_generation=edge.base_generation
+         AND state.precision_revision=edge.precision_revision
+         AND state.status IN ('ready','partial','running')
          AND source.language ${comparison} 'python' AND target.language ${comparison} 'python'
        ORDER BY edge.kind,edge.source_id,edge.target_id,edge.provider`,
     ).all(this.workspace.id, this.getWorkspace().currentGeneration);

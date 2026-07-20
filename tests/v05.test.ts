@@ -326,7 +326,7 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
-  it("exposes typed node metadata only while its precision overlay is current and ready", async () => {
+  it("retains a committed precision overlay during replacement and fences withdrawal with a revision", async () => {
     const root = workspace();
     const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
     process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
@@ -369,6 +369,7 @@ describe("v0.5 precision overlays and core languages", () => {
         .toContain(base!.id);
       expect(app.database.getStoredGraphPartition("non-python", false).nodes.find((node) => node.id === base!.id))
         .toMatchObject({ analysisLevel: "syntax", doc: "" });
+      const committedRevision = app.database.getPrecisionRevision();
 
       const replacement = app.database.claimPrecisionProvider({
         provider: "typed_node_fixture",
@@ -378,11 +379,26 @@ describe("v0.5 precision overlays and core languages", () => {
         owner: "typed-node-owner-b",
       });
       expect(replacement.reason).toBe("acquired");
-      expect(app.database.getCodeNode(base!.id)).toMatchObject({ analysisLevel: "syntax", doc: "" });
+      expect(app.database.getPrecisionRevision()).toBe(committedRevision);
+      expect(app.database.getCodeNode(base!.id)).toMatchObject({
+        analysisLevel: "typed",
+        doc: "precisionOnlyDocumentation",
+      });
       expect(app.database.searchCode("precisionOnlyDocumentation", undefined, 10).map((node) => node.id))
-        .not.toContain(base!.id);
+        .toContain(base!.id);
+      const duringReplacement = await app.searchCode({ query: "precisionOnlyDocumentation" }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      expect(duringReplacement.snapshot!.precisionRevision).toBe(committedRevision);
+      expect(duringReplacement.data.results.map((node) => node.id)).toContain(base!.id);
       expect(app.database.abandonPrecisionProvider(replacement.claim!, "fixture stopped")).toBe(true);
+      expect(app.database.getPrecisionRevision()).toBe(committedRevision + 1);
       expect(app.database.getCodeNode(base!.id)).toMatchObject({ analysisLevel: "syntax", doc: "" });
+      const afterWithdrawal = await app.searchCode({ query: "precisionOnlyDocumentation" }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      expect(afterWithdrawal.snapshot!.precisionRevision).toBe(committedRevision + 1);
+      expect(afterWithdrawal.data.results.map((node) => node.id)).not.toContain(base!.id);
     } finally {
       if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
       else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
@@ -702,6 +718,7 @@ describe("v0.5 precision overlays and core languages", () => {
     const app = new ContextMeshApp(root);
     try {
       await app.indexWorkspace({ mode: "full" });
+      const readyRevision = app.database.getPrecisionRevision();
       expect(app.database.searchCode("DisabledLater", ["function"], 1)[0]).toMatchObject({
         analysisLevel: "typed",
         doc: expect.stringContaining("Typed-only documentation"),
@@ -710,6 +727,7 @@ describe("v0.5 precision overlays and core languages", () => {
       process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE = "1";
       const noOp = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
       expect(noOp.data.noOp).toBe(true);
+      expect(noOp.snapshot!.precisionRevision).toBe(readyRevision + 1);
       expect(app.database.searchCode("DisabledLater", ["function"], 1)[0]).toMatchObject({
         analysisLevel: "syntax",
         doc: "",
@@ -853,6 +871,43 @@ describe("v0.5 precision overlays and core languages", () => {
       const resolved = graph.edges.filter((edge) => edge.sourceId === caller!.id && edge.kind === "CALLS" && edge.status === "resolved");
       expect(resolved).toContainEqual(expect.objectContaining({ targetId: nested!.id }));
       expect(resolved).not.toContainEqual(expect.objectContaining({ targetId: imported!.id }));
+    } finally { await app.close(); }
+  });
+
+  it("does not reject an unrelated Python candidate when another call in the same function resolves", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "multi_call.py"), [
+      "from pkg.target import selected as chosen",
+      "",
+      "def outer():",
+      "    def hidden():",
+      "        return 1",
+      "    return hidden()",
+      "",
+      "def mixed_caller():",
+      "    chosen()",
+      "    return hidden()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("python");
+      const caller = graph.nodes.find((node) => node.qualifiedName === "python/pkg/multi_call.py#mixed_caller");
+      const imported = graph.nodes.find((node) => node.qualifiedName === "python/pkg/target.py#selected");
+      const hidden = graph.nodes.find((node) => node.qualifiedName === "python/pkg/multi_call.py#outer.hidden");
+      expect(caller).toBeDefined();
+      expect(imported).toBeDefined();
+      expect(hidden).toBeDefined();
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: caller!.id, targetId: imported!.id, kind: "CALLS", status: "resolved",
+      }));
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: caller!.id, targetId: hidden!.id, kind: "CALLS", status: "candidate",
+      }));
+      expect(graph.edges).not.toContainEqual(expect.objectContaining({
+        sourceId: caller!.id, targetId: hidden!.id, kind: "CALLS", status: "rejected",
+      }));
     } finally { await app.close(); }
   });
 
@@ -1175,7 +1230,7 @@ describe("v0.5 precision overlays and core languages", () => {
       await app.indexWorkspace({ mode: "full" });
       expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
         provider: "go_types",
-        providerVersion: expect.stringMatching(/^go\/types-stdlib-v1\+go\d+\.\d+/),
+        providerVersion: expect.stringMatching(/^go\/types-stdlib-v2\+go\d+\.\d+/),
         status: "ready",
         lastError: null,
       }));

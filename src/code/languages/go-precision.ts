@@ -9,13 +9,14 @@ import type { OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor
 const outputSchema = z.object({
   edges: z.array(z.object({
     sourceFile: z.string(), sourceName: z.string(), sourceOffset: z.number().int().nonnegative(),
+    callOffset: z.number().int().nonnegative(),
     targetFile: z.string(), targetName: z.string(), targetOffset: z.number().int().nonnegative(),
   })).max(1_000_000),
   diagnostics: z.array(z.string()).max(100_000),
   toolchain: z.string().regex(/^go\d+\.\d+/),
 });
 
-const GO_PROVIDER_BASE_VERSION = "go/types-stdlib-v1";
+const GO_PROVIDER_BASE_VERSION = "go/types-stdlib-v2";
 let cachedGoToolchain: string | null = null;
 
 function runGo(args: string[], cwd: string, timeoutMs: number, stdin?: string): Promise<{ stdout: string; stderr: string; code: number }> {
@@ -117,10 +118,12 @@ export class GoTypesProvider implements OverlayPrecisionProvider {
       const resolved = { sourceId: source.id, targetId: target.id, kind: "CALLS" as const, status: "resolved" as const,
         confidence: 1, resolutionKind: source.fileId === target.fileId ? "local" as const : "import" as const,
         evidence: [{ provider: this.id, providerVersion: this.version, source: "type_checker" as const, confidence: 1,
-          details: { sourceFile: item.sourceFile, sourceOffset: item.sourceOffset, targetFile: item.targetFile,
+          details: { sourceFile: item.sourceFile, sourceOffset: item.sourceOffset, callOffset: item.callOffset, targetFile: item.targetFile,
             targetOffset: item.targetOffset, toolchain: parsed.toolchain } }] };
       overlays.set(edgeKey(resolved), resolved);
-      for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === source.id && edge.status === "candidate" && edge.targetId !== target.id)) {
+      for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === source.id &&
+        edge.status === "candidate" && edge.targetId !== target.id && edge.evidence?.some((evidence) =>
+          evidence.source === "syntax" && evidence.sourceSpan?.startByte === item.callOffset))) {
         const rejected = { sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind, status: "rejected" as const,
           confidence: 1, resolutionKind: candidate.resolutionKind,
           evidence: [{ provider: this.id, providerVersion: this.version, source: "type_checker" as const, confidence: 1,

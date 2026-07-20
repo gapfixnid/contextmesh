@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 3,
-  "id": "contextmesh-v05-tier1-resolved-edge-v3",
+  "schemaVersion": 4,
+  "id": "contextmesh-v05-tier1-resolved-edge-v4",
   "immutable": true,
   "description": "Pinned Tier 1 resolved-edge gold with independent development and holdout splits for TypeScript, Python, and Go.",
   "provenance": {
@@ -73,6 +73,10 @@
     {
       "path": "python/pkg/scope.py",
       "content": "def outer():\n    def hidden():\n        return 1\n    return hidden()\n\ndef py_scope_candidate():\n    return hidden()\n"
+    },
+    {
+      "path": "python/pkg/multi_call.py",
+      "content": "from pkg.target import py_target as chosen\n\ndef mixed_outer():\n    def mixed_hidden():\n        return 1\n    return mixed_hidden()\n\ndef py_mixed_call_sites():\n    chosen()\n    return mixed_hidden()\n"
     },
     {
       "path": "go.mod",
@@ -195,6 +199,19 @@
       "sourceQualifiedName": "python/pkg/scope.py#py_scope_candidate",
       "expectedResolvedTargets": [],
       "expectedCallEdges": [{ "target": "python/pkg/scope.py#outer.hidden", "status": "candidate" }]
+    },
+    {
+      "id": "python-positive-resolved-call-preserves-unrelated-candidate",
+      "language": "python",
+      "split": "development",
+      "category": "positive",
+      "sourceQualifiedName": "python/pkg/multi_call.py#py_mixed_call_sites",
+      "syntaxForm": "mixed-resolved-and-candidate-call-sites",
+      "expectedResolvedTargets": ["python/pkg/target.py#py_target"],
+      "expectedCallEdges": [
+        { "target": "python/pkg/multi_call.py#mixed_outer.mixed_hidden", "status": "candidate" },
+        { "target": "python/pkg/target.py#py_target", "status": "resolved" }
+      ]
     },
     {
       "id": "python-holdout-positive-import-alias",

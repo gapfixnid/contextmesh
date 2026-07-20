@@ -13,7 +13,7 @@ type CaseCategory = "positive" | "negative" | "ambiguous";
 type CaseSplit = "development" | "holdout";
 
 interface QualityFixture {
-  schemaVersion: 3;
+  schemaVersion: 4;
   id: string;
   immutable: true;
   description: string;
@@ -56,7 +56,7 @@ interface CaseResult {
 }
 
 interface SemanticFixture {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
   immutable: true;
   description: string;
@@ -99,10 +99,10 @@ interface SemanticCaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v3.json");
-const PINNED_FIXTURE_DIGEST = "56fc33d85e682973802df32da6620fa2166662cb3391560836bd06fb6dc6e5ca";
-const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v2.json");
-const PINNED_SEMANTIC_FIXTURE_DIGEST = "f048e67fdfbb6ef5db104089aafdc2fcd4ca8ac62679aaf01483366b42ddbb75";
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v4.json");
+const PINNED_FIXTURE_DIGEST = "72b6606f714c638b5b8e52cb635dd1d6feda2e5b953dde6982d230e3e7aebfb2";
+const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json");
+const PINNED_SEMANTIC_FIXTURE_DIGEST = "61e3f30443a15f3fa128e304db09cdc5c271443164833f061901ddf54c2d2e52";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
 
 function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
@@ -151,8 +151,8 @@ function digest(value: unknown): string {
 function loadFixture(): QualityFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as QualityFixture;
   if (
-    fixture.schemaVersion !== 3 ||
-    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v3" ||
+    fixture.schemaVersion !== 4 ||
+    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v4" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||
@@ -195,8 +195,8 @@ function loadFixture(): QualityFixture {
 function loadSemanticFixture(): SemanticFixture {
   const fixture = JSON.parse(readFileSync(SEMANTIC_FIXTURE_PATH, "utf8")) as SemanticFixture;
   if (
-    fixture.schemaVersion !== 2 ||
-    fixture.id !== "contextmesh-v05-semantic-conformance-v2" ||
+    fixture.schemaVersion !== 3 ||
+    fixture.id !== "contextmesh-v05-semantic-conformance-v3" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||

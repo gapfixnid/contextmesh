@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "id": "contextmesh-v05-semantic-conformance-v2",
+  "schemaVersion": 3,
+  "id": "contextmesh-v05-semantic-conformance-v3",
   "immutable": true,
   "description": "Pinned semantic conformance cases beyond simple call-name matching, including Python binding visibility and Go receiver/test/build behavior.",
   "provenance": {
@@ -174,7 +174,7 @@
     {
       "provider": "go_types",
       "statuses": ["partial"],
-      "providerVersionPattern": "^go/types-stdlib-v1\\+go[0-9]+\\.[0-9]+",
+      "providerVersionPattern": "^go/types-stdlib-v2\\+go[0-9]+\\.[0-9]+",
       "lastErrorIncludes": ["excluded by local Go build constraints"]
     }
   ]

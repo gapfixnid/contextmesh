@@ -531,7 +531,9 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
           confidence: 0.95, resolutionKind: target.fileId === file.id ? "local" as const : "import" as const,
           evidence: evidence(0.95, { rawName: qualifier ? `${qualifier}.${name}` : name }) };
         overlays.set(key(resolved), resolved);
-        for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === owner.id && edge.status === "candidate" && edge.targetId !== target.id)) {
+        for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === owner.id &&
+          edge.status === "candidate" && edge.targetId !== target.id && edge.evidence?.some((item) =>
+            item.source === "syntax" && item.sourceSpan?.startByte === byte))) {
           const rejected = { sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind, status: "rejected" as const,
             confidence: 0.95, resolutionKind: candidate.resolutionKind,
             evidence: evidence(0.95, { reason: "resolver_selected_different_target", selectedTargetId: target.id }) };

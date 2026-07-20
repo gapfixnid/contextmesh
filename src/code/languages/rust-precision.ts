@@ -330,7 +330,9 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
         };
         overlays.set(edgeKey(resolved), resolved);
         for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.status === "candidate"
-          && edge.sourceId === query.sourceId && edge.targetId !== target.id)) {
+          && edge.sourceId === query.sourceId && edge.targetId !== target.id && edge.evidence?.some((item) =>
+            item.source === "syntax" && item.sourceSpan?.line === query.line + 1 &&
+            item.sourceSpan.column === query.character + 1))) {
           const rejected = {
             sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind, status: "rejected" as const,
             confidence: 1, resolutionKind: candidate.resolutionKind,
