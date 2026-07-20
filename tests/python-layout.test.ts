@@ -43,7 +43,9 @@ describe("Python source-root discovery", () => {
       const graph = app.database.getStoredGraphPartition("python");
       const main = graph.nodes.find((node) => node.kind === "module" && node.name === "main")!;
       const sharedIds = graph.nodes.filter((node) => node.kind === "module" && node.name === "shared")
-        .map((node) => node.id).sort();
+        .sort((left, right) => left.qualifiedName.localeCompare(right.qualifiedName) ||
+          left.startByte - right.startByte || left.id.localeCompare(right.id))
+        .map((node) => node.id);
       expect(sharedIds).toHaveLength(2);
       expect(graph.edges.filter((edge) => edge.kind === "IMPORTS" && edge.sourceId === main.id)).toHaveLength(0);
       const unresolved = graph.unresolvedReferences.find((item) => item.sourceNodeId === main.id && item.rawName === "shared")!;
