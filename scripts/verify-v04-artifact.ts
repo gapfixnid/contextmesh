@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -85,31 +85,46 @@ requireCondition(
 requireCondition(artifact.schemaVersion === 4, "schemaVersion must be 4");
 requireCondition(artifact.git.baseline === "e37977199e231fc95b581e6254003941b8f447b2", "baseline mismatch");
 requireCondition(/^[0-9a-f]{40}$/.test(artifact.git.commit), "source commit must be a full SHA");
-execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], { stdio: "inherit" });
 requireCondition(artifact.source.headCommit === artifact.git.commit, "measured source HEAD does not match git.commit");
 requireCondition(artifact.source.dirty === false, "canonical measurement source was dirty");
 requireCondition(artifact.source.treeDigest === artifact.source.headTreeDigest, "measured working source did not equal its HEAD tree");
-const committedSource = v04CommitSourceEvidence(artifact.git.commit);
-requireCondition(
-  artifact.source.treeDigest === committedSource.treeDigest && artifact.source.files === committedSource.files,
-  "artifact source digest does not match its exact source commit",
-);
-try {
-  execFileSync("git", [
-    "diff", "--quiet", artifact.git.commit, "HEAD", "--", ".",
-    ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
-  ]);
-} catch {
-  throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
-}
-const currentSource = v04SourceEvidence();
 requireCondition(artifact.source.contract === V04_SOURCE_CONTRACT, "source contract mismatch");
 requireCondition(/^[0-9a-f]{64}$/.test(artifact.source.treeDigest), "source tree digest missing");
-requireCondition(
-  artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
-  "artifact was measured from a different source tree",
-);
-requireCondition(currentSource.dirty === false, "current non-artifact source working tree is dirty");
+if (existsSync(path.join(process.cwd(), ".git"))) {
+  execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], { stdio: "inherit" });
+  const committedSource = v04CommitSourceEvidence(artifact.git.commit);
+  requireCondition(
+    artifact.source.treeDigest === committedSource.treeDigest && artifact.source.files === committedSource.files,
+    "artifact source digest does not match its exact source commit",
+  );
+  try {
+    execFileSync("git", [
+      "diff", "--quiet", artifact.git.commit, "HEAD", "--", ".",
+      ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
+    ]);
+  } catch {
+    throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
+  }
+  const currentSource = v04SourceEvidence();
+  requireCondition(
+    artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
+    "artifact was measured from a different source tree",
+  );
+  requireCondition(currentSource.dirty === false, "current non-artifact source working tree is dirty");
+} else {
+  const sourceCommitPath = path.join(process.cwd(), "SOURCE_COMMIT");
+  const sourceEvidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");
+  requireCondition(existsSync(sourceCommitPath) && existsSync(sourceEvidencePath), "archive source evidence is missing");
+  const archiveCommit = readFileSync(sourceCommitPath, "utf8").trim();
+  const archiveEvidence = JSON.parse(readFileSync(sourceEvidencePath, "utf8")) as Artifact["source"];
+  requireCondition(archiveCommit === archiveEvidence.headCommit && archiveEvidence.dirty === false, "archive commit evidence is invalid");
+  requireCondition(
+    archiveEvidence.contract === artifact.source.contract &&
+    archiveEvidence.treeDigest === artifact.source.treeDigest &&
+    archiveEvidence.files === artifact.source.files,
+    "archive source tree does not match artifact source",
+  );
+}
 requireCondition(/^[0-9a-f]{64}$/.test(artifact.fixtureDigest), "fixture digest missing");
 requireCondition(artifact.runner.contract === V04_ARTIFACT_CONTRACT, "runner contract mismatch");
 requireCondition(Boolean(artifact.runner.os && artifact.runner.cpu && artifact.runner.node && artifact.runner.rust), "runner identity incomplete");
