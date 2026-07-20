@@ -46,6 +46,18 @@ afterEach(() => {
 });
 
 describe("v0.4 performance artifact verifier", () => {
+  it("accepts the checked artifact across generated-artifact-only commits", () => {
+    const npmCli = process.env.npm_execpath;
+    if (!npmCli) throw new Error("npm_execpath is required for the artifact verifier contract test");
+    const run = spawnSync(process.execPath, [npmCli, "run", "verify:v04-artifact"], {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
+  });
+
   it("does not bind source evidence to generated release artifacts", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v04-source-contract-"));
     roots.push(root);

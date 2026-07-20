@@ -95,7 +95,10 @@ requireCondition(
   "artifact source digest does not match its exact source commit",
 );
 try {
-  execFileSync("git", ["diff", "--quiet", artifact.git.commit, "HEAD", "--", ".", ":(exclude)artifacts/**"]);
+  execFileSync("git", [
+    "diff", "--quiet", artifact.git.commit, "HEAD", "--", ".",
+    ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
+  ]);
 } catch {
   throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
 }
