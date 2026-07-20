@@ -287,6 +287,52 @@
     {
       "actualEdges": [
         {
+          "status": "candidate",
+          "target": "python/pkg/multi_call.py#mixed_outer.mixed_hidden"
+        },
+        {
+          "status": "resolved",
+          "target": "python/pkg/target.py#py_target"
+        }
+      ],
+      "actualResolvedTargets": [
+        "python/pkg/target.py#py_target"
+      ],
+      "actualStatuses": [
+        "candidate",
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "candidate",
+          "target": "python/pkg/multi_call.py#mixed_outer.mixed_hidden"
+        },
+        {
+          "status": "resolved",
+          "target": "python/pkg/target.py#py_target"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "python/pkg/target.py#py_target"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-positive-resolved-call-preserves-unrelated-candidate",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/multi_call.py#py_mixed_call_sites",
+      "split": "development",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [
+        {
           "status": "resolved",
           "target": "python/pkg/target.py#py_holdout_target"
         }
@@ -551,30 +597,30 @@
     "identical": true,
     "runs": 20,
     "signatures": [
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
-      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6"
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d",
+      "f14eac8f1dbc84fa4335e86dc21b073e462e40cf66b5fd0306ec63a1b4440e8d"
     ]
   },
   "fixture": {
-    "caseCount": 19,
+    "caseCount": 20,
     "categoriesByLanguage": {
       "go": [
         "ambiguous",
@@ -592,8 +638,8 @@
         "positive"
       ]
     },
-    "digest": "56fc33d85e682973802df32da6620fa2166662cb3391560836bd06fb6dc6e5ca",
-    "id": "contextmesh-v05-tier1-resolved-edge-v3",
+    "digest": "72b6606f714c638b5b8e52cb635dd1d6feda2e5b953dde6982d230e3e7aebfb2",
+    "id": "contextmesh-v05-tier1-resolved-edge-v4",
     "immutable": true,
     "provenance": {
       "authoredAgainst": "language behavior and product contracts; no runtime output is embedded as gold",
@@ -601,14 +647,14 @@
       "mutationPolicy": "Any case, source, split, or expected-path change requires a new fixture id, schema version, and pinned SHA-256",
       "origin": "ContextMesh v0.5 product-design acceptance criteria plus published TypeScript, Python, and Go name-resolution semantics"
     },
-    "schemaVersion": 3,
+    "schemaVersion": 4,
     "splitsByLanguage": {
       "go": {
         "development": 3,
         "holdout": 3
       },
       "python": {
-        "development": 4,
+        "development": 5,
         "holdout": 3
       },
       "typescript": {
@@ -642,19 +688,19 @@
     },
     {
       "ambiguousCases": 2,
-      "cases": 7,
-      "developmentCases": 4,
+      "cases": 8,
+      "developmentCases": 5,
       "falseNegative": 0,
       "falsePositive": 0,
-      "goldPositive": 2,
+      "goldPositive": 3,
       "holdoutCases": 3,
       "language": "python",
       "missingPaths": 0,
       "negativeCases": 3,
       "precision": 1,
-      "predictedResolved": 2,
+      "predictedResolved": 3,
       "recall": 1,
-      "truePositive": 2,
+      "truePositive": 3,
       "unexpectedPaths": 0
     },
     {
@@ -688,9 +734,9 @@
       "providerState": "not_configured"
     },
     {
-      "actualBaseDigest": "1090d8aed4207f4b441c4825a63b53bc9a475a3aca00edb355d8b8d740db0ddf",
+      "actualBaseDigest": "60eb555e10128ab523148ad6285a0b0eb60db33604cb72eae2dbbfc459c691e4",
       "exactBaseGraph": true,
-      "expectedBaseDigest": "1090d8aed4207f4b441c4825a63b53bc9a475a3aca00edb355d8b8d740db0ddf",
+      "expectedBaseDigest": "60eb555e10128ab523148ad6285a0b0eb60db33604cb72eae2dbbfc459c691e4",
       "language": "python",
       "preservesBase": true,
       "provider": "contextmesh_python_resolver",
@@ -718,7 +764,7 @@
     },
     {
       "actualStatus": "partial",
-      "actualVersion": "go/types-stdlib-v1+go1.23.12",
+      "actualVersion": "go/types-stdlib-v2+go1.23.12",
       "diagnosticsMatch": true,
       "passed": true,
       "provider": "go_types",
@@ -736,7 +782,7 @@
       "lastError": "go/caller: <fixture>\\go\\caller\\caller.go:4:32: undefined: GoMissing; go/caller: <fixture>\\go\\caller\\caller.go:5:39: undefined: GoAmbiguous; go/caller: <fixture>\\go\\caller\\caller.go:7:39: undefined: GoHoldoutMissing; go/caller: <fixture>\\go\\caller\\caller.go:8:46: undefined: GoHoldoutAmbiguous; go/receiver/excluded.go: excluded by local Go build constraints",
       "precisionRevision": 60,
       "provider": "go_types",
-      "providerVersion": "go/types-stdlib-v1+go1.23.12",
+      "providerVersion": "go/types-stdlib-v2+go1.23.12",
       "rejectedEdges": 0,
       "resolvedEdges": 4,
       "status": "partial"
@@ -744,15 +790,15 @@
     {
       "baseGeneration": 20,
       "capability": "resolved",
-      "coverage": 0.5333333333333333,
-      "eligibleEdges": 15,
+      "coverage": 0.5555555555555556,
+      "eligibleEdges": 18,
       "language": "python",
       "lastError": null,
       "precisionRevision": 58,
       "provider": "contextmesh_python_resolver",
       "providerVersion": "0.5.0",
       "rejectedEdges": 2,
-      "resolvedEdges": 8,
+      "resolvedEdges": 10,
       "status": "ready"
     },
     {
@@ -994,8 +1040,8 @@
   ],
   "semanticFixture": {
     "caseCount": 9,
-    "digest": "f048e67fdfbb6ef5db104089aafdc2fcd4ca8ac62679aaf01483366b42ddbb75",
-    "id": "contextmesh-v05-semantic-conformance-v2",
+    "digest": "61e3f30443a15f3fa128e304db09cdc5c271443164833f061901ddf54c2d2e52",
+    "id": "contextmesh-v05-semantic-conformance-v3",
     "immutable": true,
     "provenance": {
       "authoredAgainst": "v0.5 provider contracts for Python resolver and Go go/types overlay",
@@ -1003,15 +1049,15 @@
       "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold.",
       "origin": "ContextMesh v0.5 product-design acceptance criteria and independent release review findings"
     },
-    "schemaVersion": 2
+    "schemaVersion": 3
   },
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
     "files": 136,
-    "headCommit": "34e69f74f76638b93f592cc3bd60abbce4e2ba54",
-    "headTreeDigest": "fc530d3676c5cad72f68e92222ae77d43c40d39e02ce87ea30430639dc8b2cd3",
-    "treeDigest": "fc530d3676c5cad72f68e92222ae77d43c40d39e02ce87ea30430639dc8b2cd3"
+    "headCommit": "a02863ab9c609963d497cbb86f840636b5badca8",
+    "headTreeDigest": "fbac5f02ddd4980903e74269eae48270894609e1031bfd2a7a692ee02a0e850d",
+    "treeDigest": "fbac5f02ddd4980903e74269eae48270894609e1031bfd2a7a692ee02a0e850d"
   },
   "statusCoverage": [
     "candidate",
