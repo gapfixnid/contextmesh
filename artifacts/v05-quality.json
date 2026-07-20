@@ -1,22 +1,591 @@
 {
-  "schemaVersion": 3,
-  "release": "v0.5",
-  "source": {
-    "contract": "git-source-snapshot-lf-v3",
-    "treeDigest": "b061e62ae6a8bca9e784ddb4dc26489c4825b442ce72c6ab3937bb731f7186d0",
-    "files": 134,
-    "headCommit": "bf0eff157015ea2c19c89efa953dca4be2ff2cad",
-    "headTreeDigest": "b061e62ae6a8bca9e784ddb4dc26489c4825b442ce72c6ab3937bb731f7186d0",
-    "dirty": false
+  "baseLanguages": [
+    "go",
+    "python",
+    "typescript"
+  ],
+  "caseResults": [
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "target": "src/ts/target.ts#ts_target"
+        }
+      ],
+      "actualResolvedTargets": [
+        "src/ts/target.ts#ts_target"
+      ],
+      "actualStatuses": [
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "src/ts/target.ts#ts_target"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "src/ts/target.ts#ts_target"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "typescript-positive-import-alias",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "src/ts/caller.ts#ts_positive",
+      "split": "development",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "negative",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "typescript-negative-missing",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "src/ts/caller.ts#ts_negative",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 0,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "ambiguous",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "typescript-ambiguous-duplicate",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "src/ts/caller.ts#ts_ambiguous_caller",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 2,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "target": "src/ts/target.ts#ts_holdout_target"
+        }
+      ],
+      "actualResolvedTargets": [
+        "src/ts/target.ts#ts_holdout_target"
+      ],
+      "actualStatuses": [
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "src/ts/target.ts#ts_holdout_target"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "src/ts/target.ts#ts_holdout_target"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "typescript-holdout-positive-import-alias",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_positive",
+      "split": "holdout",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "negative",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "typescript-holdout-negative-missing",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_negative",
+      "split": "holdout",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 0,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "ambiguous",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "typescript-holdout-ambiguous-duplicate",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_ambiguous_caller",
+      "split": "holdout",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 2,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "rejected",
+          "target": "python/pkg/distractor.py#selected"
+        },
+        {
+          "status": "resolved",
+          "target": "python/pkg/target.py#py_target"
+        }
+      ],
+      "actualResolvedTargets": [
+        "python/pkg/target.py#py_target"
+      ],
+      "actualStatuses": [
+        "rejected",
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "rejected",
+          "target": "python/pkg/distractor.py#selected"
+        },
+        {
+          "status": "resolved",
+          "target": "python/pkg/target.py#py_target"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "python/pkg/target.py#py_target"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-positive-import-alias",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/caller.py#py_positive",
+      "split": "development",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "negative",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-negative-missing",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/caller.py#py_negative",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 0,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "ambiguous",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-ambiguous-duplicate",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/caller.py#py_ambiguous_caller",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 2,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "candidate",
+          "target": "python/pkg/scope.py#outer.hidden"
+        }
+      ],
+      "actualResolvedTargets": [],
+      "actualStatuses": [
+        "candidate"
+      ],
+      "category": "negative",
+      "expectedCallEdges": [
+        {
+          "status": "candidate",
+          "target": "python/pkg/scope.py#outer.hidden"
+        }
+      ],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-negative-out-of-scope-candidate",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/scope.py#py_scope_candidate",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "rejected",
+          "target": "python/pkg/distractor.py#holdout_selected"
+        },
+        {
+          "status": "resolved",
+          "target": "python/pkg/target.py#py_holdout_target"
+        }
+      ],
+      "actualResolvedTargets": [
+        "python/pkg/target.py#py_holdout_target"
+      ],
+      "actualStatuses": [
+        "rejected",
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "rejected",
+          "target": "python/pkg/distractor.py#holdout_selected"
+        },
+        {
+          "status": "resolved",
+          "target": "python/pkg/target.py#py_holdout_target"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "python/pkg/target.py#py_holdout_target"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-holdout-positive-import-alias",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_positive",
+      "split": "holdout",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "negative",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-holdout-negative-missing",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_negative",
+      "split": "holdout",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 0,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "ambiguous",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "python-holdout-ambiguous-duplicate",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_ambiguous_caller",
+      "split": "holdout",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 2,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "target": "go/target/target.go#GoTarget"
+        }
+      ],
+      "actualResolvedTargets": [
+        "go/target/target.go#GoTarget"
+      ],
+      "actualStatuses": [
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "go/target/target.go#GoTarget"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "go/target/target.go#GoTarget"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "go-positive-local-module-import",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "go/caller/caller.go#GoPositive",
+      "split": "development",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "negative",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "go-negative-missing",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "go/caller/caller.go#GoNegative",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 0,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "ambiguous",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "go-ambiguous-duplicate",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "go/caller/caller.go#GoAmbiguousCaller",
+      "split": "development",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 2,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "target": "go/target/target.go#GoHoldoutTarget"
+        }
+      ],
+      "actualResolvedTargets": [
+        "go/target/target.go#GoHoldoutTarget"
+      ],
+      "actualStatuses": [
+        "resolved"
+      ],
+      "category": "positive",
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "go/target/target.go#GoHoldoutTarget"
+        }
+      ],
+      "expectedResolvedTargets": [
+        "go/target/target.go#GoHoldoutTarget"
+      ],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "go-holdout-positive-local-module-import",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutPositive",
+      "split": "holdout",
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": null,
+      "unresolvedObserved": null
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "negative",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "go-holdout-negative-missing",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutNegative",
+      "split": "holdout",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 0,
+      "unresolvedObserved": true
+    },
+    {
+      "actualEdges": [],
+      "actualResolvedTargets": [],
+      "actualStatuses": [],
+      "category": "ambiguous",
+      "expectedCallEdges": [],
+      "expectedResolvedTargets": [],
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "go-holdout-ambiguous-duplicate",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutAmbiguousCaller",
+      "split": "holdout",
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedCandidates": 2,
+      "unresolvedObserved": true
+    }
+  ],
+  "checks": {
+    "ambiguousCasesHandled": true,
+    "baseGraphWithoutPrecision": true,
+    "candidateRejectedResolvedCovered": true,
+    "developmentAndHoldoutCoverage": true,
+    "exactCandidateRejectedResolvedPaths": true,
+    "fixtureProvenancePinned": true,
+    "immutableFixturePinned": true,
+    "immutableSemanticFixturePinned": true,
+    "negativeCasesHandled": true,
+    "noFalseNegatives": true,
+    "noFalsePositives": true,
+    "noUnexpectedCandidateOrRejectedPaths": true,
+    "optionalProviderAbsencePreservesBase": true,
+    "providerAbsenceExactBaseFingerprint": true,
+    "providerStatesHealthy": true,
+    "providerUpdateAdvancesPrecisionRevision": true,
+    "providerUpdatePreservesGeneration": true,
+    "semanticCallAndInheritanceConformance": true,
+    "semanticProviderConformance": true,
+    "tier1FixtureCoverage": true,
+    "tier1Precision": true,
+    "tier1Recall": true,
+    "twentyRunGraphDeterminism": true
+  },
+  "determinism": {
+    "identical": true,
+    "runs": 20,
+    "signatures": [
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340",
+      "571180b8f17164684e1c9efd9b0f4681b9baa12d043b00488bdaef3f85867340"
+    ]
   },
   "fixture": {
-    "id": "contextmesh-v05-tier1-resolved-edge-v2",
-    "schemaVersion": 2,
-    "immutable": true,
-    "digest": "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823",
     "caseCount": 19,
     "categoriesByLanguage": {
-      "typescript": [
+      "go": [
         "ambiguous",
         "negative",
         "positive"
@@ -26,14 +595,24 @@
         "negative",
         "positive"
       ],
-      "go": [
+      "typescript": [
         "ambiguous",
         "negative",
         "positive"
       ]
     },
+    "digest": "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823",
+    "id": "contextmesh-v05-tier1-resolved-edge-v2",
+    "immutable": true,
+    "provenance": {
+      "authoredAgainst": "language behavior and product contracts; no runtime output is embedded as gold",
+      "frozenAt": "2026-07-20",
+      "mutationPolicy": "Any case, source, split, or expected-path change requires a new fixture id, schema version, and pinned SHA-256",
+      "origin": "ContextMesh v0.5 product-design acceptance criteria plus published TypeScript, Python, and Go name-resolution semantics"
+    },
+    "schemaVersion": 2,
     "splitsByLanguage": {
-      "typescript": {
+      "go": {
         "development": 3,
         "holdout": 3
       },
@@ -41,716 +620,345 @@
         "development": 4,
         "holdout": 3
       },
-      "go": {
+      "typescript": {
         "development": 3,
         "holdout": 3
       }
-    },
-    "provenance": {
-      "origin": "ContextMesh v0.5 product-design acceptance criteria plus published TypeScript, Python, and Go name-resolution semantics",
-      "authoredAgainst": "language behavior and product contracts; no runtime output is embedded as gold",
-      "frozenAt": "2026-07-20",
-      "mutationPolicy": "Any case, source, split, or expected-path change requires a new fixture id, schema version, and pinned SHA-256"
     },
     "thresholds": {
       "precision": 0.9,
       "recall": 0.9
     }
   },
-  "runner": {
-    "node": "v24.18.0",
-    "platform": "win32-x64",
-    "go": "go version go1.23.12 windows/amd64"
-  },
-  "generation": 1,
-  "precisionRevision": 4,
+  "generation": 20,
   "languageResults": [
     {
-      "language": "typescript",
-      "cases": 6,
-      "goldPositive": 2,
-      "predictedResolved": 2,
-      "negativeCases": 2,
       "ambiguousCases": 2,
+      "cases": 6,
       "developmentCases": 3,
-      "holdoutCases": 3,
-      "unexpectedPaths": 0,
-      "missingPaths": 0,
-      "truePositive": 2,
-      "falsePositive": 0,
       "falseNegative": 0,
+      "falsePositive": 0,
+      "goldPositive": 2,
+      "holdoutCases": 3,
+      "language": "typescript",
+      "missingPaths": 0,
+      "negativeCases": 2,
       "precision": 1,
-      "recall": 1
+      "predictedResolved": 2,
+      "recall": 1,
+      "truePositive": 2,
+      "unexpectedPaths": 0
     },
     {
-      "language": "python",
+      "ambiguousCases": 2,
       "cases": 7,
-      "goldPositive": 2,
-      "predictedResolved": 2,
-      "negativeCases": 3,
-      "ambiguousCases": 2,
       "developmentCases": 4,
-      "holdoutCases": 3,
-      "unexpectedPaths": 0,
-      "missingPaths": 0,
-      "truePositive": 2,
-      "falsePositive": 0,
       "falseNegative": 0,
-      "precision": 1,
-      "recall": 1
-    },
-    {
-      "language": "go",
-      "cases": 6,
+      "falsePositive": 0,
       "goldPositive": 2,
-      "predictedResolved": 2,
-      "negativeCases": 2,
-      "ambiguousCases": 2,
-      "developmentCases": 3,
       "holdoutCases": 3,
-      "unexpectedPaths": 0,
+      "language": "python",
       "missingPaths": 0,
-      "truePositive": 2,
-      "falsePositive": 0,
-      "falseNegative": 0,
+      "negativeCases": 3,
       "precision": 1,
-      "recall": 1
+      "predictedResolved": 2,
+      "recall": 1,
+      "truePositive": 2,
+      "unexpectedPaths": 0
+    },
+    {
+      "ambiguousCases": 2,
+      "cases": 6,
+      "developmentCases": 3,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "goldPositive": 2,
+      "holdoutCases": 3,
+      "language": "go",
+      "missingPaths": 0,
+      "negativeCases": 2,
+      "precision": 1,
+      "predictedResolved": 2,
+      "recall": 1,
+      "truePositive": 2,
+      "unexpectedPaths": 0
     }
   ],
-  "caseResults": [
+  "passed": true,
+  "precisionRevision": 61,
+  "providerAbsence": [
     {
-      "id": "typescript-positive-import-alias",
+      "actualBaseDigest": "db8b3b93fc20516291d19b3adb09fe21fb5b4d692dd75af11bfd4946e4792305",
+      "exactBaseGraph": true,
+      "expectedBaseDigest": "db8b3b93fc20516291d19b3adb09fe21fb5b4d692dd75af11bfd4946e4792305",
       "language": "typescript",
-      "split": "development",
-      "category": "positive",
-      "sourceQualifiedName": "src/ts/caller.ts#ts_positive",
-      "expectedResolvedTargets": [
-        "src/ts/target.ts#ts_target"
-      ],
-      "actualResolvedTargets": [
-        "src/ts/target.ts#ts_target"
-      ],
-      "actualStatuses": [
-        "resolved"
-      ],
-      "actualEdges": [
-        {
-          "target": "src/ts/target.ts#ts_target",
-          "status": "resolved"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "src/ts/target.ts#ts_target",
-          "status": "resolved"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 1,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
+      "preservesBase": true,
+      "provider": "typescript_type_checker",
+      "providerState": "not_configured"
     },
     {
-      "id": "typescript-negative-missing",
-      "language": "typescript",
-      "split": "development",
-      "category": "negative",
-      "sourceQualifiedName": "src/ts/caller.ts#ts_negative",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 0,
-      "passed": true
-    },
-    {
-      "id": "typescript-ambiguous-duplicate",
-      "language": "typescript",
-      "split": "development",
-      "category": "ambiguous",
-      "sourceQualifiedName": "src/ts/caller.ts#ts_ambiguous_caller",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 2,
-      "passed": true
-    },
-    {
-      "id": "typescript-holdout-positive-import-alias",
-      "language": "typescript",
-      "split": "holdout",
-      "category": "positive",
-      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_positive",
-      "expectedResolvedTargets": [
-        "src/ts/target.ts#ts_holdout_target"
-      ],
-      "actualResolvedTargets": [
-        "src/ts/target.ts#ts_holdout_target"
-      ],
-      "actualStatuses": [
-        "resolved"
-      ],
-      "actualEdges": [
-        {
-          "target": "src/ts/target.ts#ts_holdout_target",
-          "status": "resolved"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "src/ts/target.ts#ts_holdout_target",
-          "status": "resolved"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 1,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
-    },
-    {
-      "id": "typescript-holdout-negative-missing",
-      "language": "typescript",
-      "split": "holdout",
-      "category": "negative",
-      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_negative",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 0,
-      "passed": true
-    },
-    {
-      "id": "typescript-holdout-ambiguous-duplicate",
-      "language": "typescript",
-      "split": "holdout",
-      "category": "ambiguous",
-      "sourceQualifiedName": "src/ts/caller.ts#ts_holdout_ambiguous_caller",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 2,
-      "passed": true
-    },
-    {
-      "id": "python-positive-import-alias",
+      "actualBaseDigest": "b8c0d51cd2f2f07bc6ba70628d4bddfa3b39a251c4733cd38f0d621cad25a436",
+      "exactBaseGraph": true,
+      "expectedBaseDigest": "b8c0d51cd2f2f07bc6ba70628d4bddfa3b39a251c4733cd38f0d621cad25a436",
       "language": "python",
-      "split": "development",
-      "category": "positive",
-      "sourceQualifiedName": "python/pkg/caller.py#py_positive",
-      "expectedResolvedTargets": [
-        "python/pkg/target.py#py_target"
-      ],
-      "actualResolvedTargets": [
-        "python/pkg/target.py#py_target"
-      ],
-      "actualStatuses": [
-        "rejected",
-        "resolved"
-      ],
-      "actualEdges": [
-        {
-          "target": "python/pkg/distractor.py#selected",
-          "status": "rejected"
-        },
-        {
-          "target": "python/pkg/target.py#py_target",
-          "status": "resolved"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "python/pkg/distractor.py#selected",
-          "status": "rejected"
-        },
-        {
-          "target": "python/pkg/target.py#py_target",
-          "status": "resolved"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 1,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
+      "preservesBase": true,
+      "provider": "contextmesh_python_resolver",
+      "providerState": "not_configured"
     },
     {
-      "id": "python-negative-missing",
-      "language": "python",
-      "split": "development",
-      "category": "negative",
-      "sourceQualifiedName": "python/pkg/caller.py#py_negative",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 0,
-      "passed": true
-    },
-    {
-      "id": "python-ambiguous-duplicate",
-      "language": "python",
-      "split": "development",
-      "category": "ambiguous",
-      "sourceQualifiedName": "python/pkg/caller.py#py_ambiguous_caller",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 2,
-      "passed": true
-    },
-    {
-      "id": "python-negative-out-of-scope-candidate",
-      "language": "python",
-      "split": "development",
-      "category": "negative",
-      "sourceQualifiedName": "python/pkg/scope.py#py_scope_candidate",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [
-        "candidate"
-      ],
-      "actualEdges": [
-        {
-          "target": "python/pkg/scope.py#outer.hidden",
-          "status": "candidate"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "python/pkg/scope.py#outer.hidden",
-          "status": "candidate"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
-    },
-    {
-      "id": "python-holdout-positive-import-alias",
-      "language": "python",
-      "split": "holdout",
-      "category": "positive",
-      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_positive",
-      "expectedResolvedTargets": [
-        "python/pkg/target.py#py_holdout_target"
-      ],
-      "actualResolvedTargets": [
-        "python/pkg/target.py#py_holdout_target"
-      ],
-      "actualStatuses": [
-        "rejected",
-        "resolved"
-      ],
-      "actualEdges": [
-        {
-          "target": "python/pkg/distractor.py#holdout_selected",
-          "status": "rejected"
-        },
-        {
-          "target": "python/pkg/target.py#py_holdout_target",
-          "status": "resolved"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "python/pkg/distractor.py#holdout_selected",
-          "status": "rejected"
-        },
-        {
-          "target": "python/pkg/target.py#py_holdout_target",
-          "status": "resolved"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 1,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
-    },
-    {
-      "id": "python-holdout-negative-missing",
-      "language": "python",
-      "split": "holdout",
-      "category": "negative",
-      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_negative",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 0,
-      "passed": true
-    },
-    {
-      "id": "python-holdout-ambiguous-duplicate",
-      "language": "python",
-      "split": "holdout",
-      "category": "ambiguous",
-      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_ambiguous_caller",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 2,
-      "passed": true
-    },
-    {
-      "id": "go-positive-local-module-import",
+      "actualBaseDigest": "e760f04a75d9c62ecabf0de00027d5d91fe32510442955ea42cab77a976b4340",
+      "exactBaseGraph": true,
+      "expectedBaseDigest": "e760f04a75d9c62ecabf0de00027d5d91fe32510442955ea42cab77a976b4340",
       "language": "go",
-      "split": "development",
-      "category": "positive",
-      "sourceQualifiedName": "go/caller/caller.go#GoPositive",
-      "expectedResolvedTargets": [
-        "go/target/target.go#GoTarget"
-      ],
-      "actualResolvedTargets": [
-        "go/target/target.go#GoTarget"
-      ],
-      "actualStatuses": [
-        "resolved"
-      ],
-      "actualEdges": [
-        {
-          "target": "go/target/target.go#GoTarget",
-          "status": "resolved"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "go/target/target.go#GoTarget",
-          "status": "resolved"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 1,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
-    },
-    {
-      "id": "go-negative-missing",
-      "language": "go",
-      "split": "development",
-      "category": "negative",
-      "sourceQualifiedName": "go/caller/caller.go#GoNegative",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 0,
-      "passed": true
-    },
-    {
-      "id": "go-ambiguous-duplicate",
-      "language": "go",
-      "split": "development",
-      "category": "ambiguous",
-      "sourceQualifiedName": "go/caller/caller.go#GoAmbiguousCaller",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 2,
-      "passed": true
-    },
-    {
-      "id": "go-holdout-positive-local-module-import",
-      "language": "go",
-      "split": "holdout",
-      "category": "positive",
-      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutPositive",
-      "expectedResolvedTargets": [
-        "go/target/target.go#GoHoldoutTarget"
-      ],
-      "actualResolvedTargets": [
-        "go/target/target.go#GoHoldoutTarget"
-      ],
-      "actualStatuses": [
-        "resolved"
-      ],
-      "actualEdges": [
-        {
-          "target": "go/target/target.go#GoHoldoutTarget",
-          "status": "resolved"
-        }
-      ],
-      "expectedCallEdges": [
-        {
-          "target": "go/target/target.go#GoHoldoutTarget",
-          "status": "resolved"
-        }
-      ],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 1,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": null,
-      "unresolvedCandidates": null,
-      "passed": true
-    },
-    {
-      "id": "go-holdout-negative-missing",
-      "language": "go",
-      "split": "holdout",
-      "category": "negative",
-      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutNegative",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 0,
-      "passed": true
-    },
-    {
-      "id": "go-holdout-ambiguous-duplicate",
-      "language": "go",
-      "split": "holdout",
-      "category": "ambiguous",
-      "sourceQualifiedName": "go/caller/caller.go#GoHoldoutAmbiguousCaller",
-      "expectedResolvedTargets": [],
-      "actualResolvedTargets": [],
-      "actualStatuses": [],
-      "actualEdges": [],
-      "expectedCallEdges": [],
-      "unexpectedPaths": [],
-      "missingPaths": [],
-      "pathPassed": true,
-      "truePositive": 0,
-      "falsePositive": 0,
-      "falseNegative": 0,
-      "unresolvedObserved": true,
-      "unresolvedCandidates": 2,
-      "passed": true
+      "preservesBase": true,
+      "provider": "go_types",
+      "providerState": "not_configured"
     }
   ],
+  "providerConformance": [
+    {
+      "actualStatus": "ready",
+      "actualVersion": "0.5.0",
+      "diagnosticsMatch": true,
+      "passed": true,
+      "provider": "contextmesh_python_resolver",
+      "statusMatches": true,
+      "versionMatches": true
+    },
+    {
+      "actualStatus": "partial",
+      "actualVersion": "go/types-stdlib-v1+go1.23.12",
+      "diagnosticsMatch": true,
+      "passed": true,
+      "provider": "go_types",
+      "statusMatches": true,
+      "versionMatches": true
+    }
+  ],
+  "providerStates": [
+    {
+      "baseGeneration": 20,
+      "capability": "typed",
+      "coverage": 0.5,
+      "eligibleEdges": 8,
+      "language": "go",
+      "lastError": "go/caller: <fixture>\\go\\caller\\caller.go:4:32: undefined: GoMissing; go/caller: <fixture>\\go\\caller\\caller.go:5:39: undefined: GoAmbiguous; go/caller: <fixture>\\go\\caller\\caller.go:7:39: undefined: GoHoldoutMissing; go/caller: <fixture>\\go\\caller\\caller.go:8:46: undefined: GoHoldoutAmbiguous; go/receiver/excluded.go: excluded by local Go build constraints",
+      "precisionRevision": 60,
+      "provider": "go_types",
+      "providerVersion": "go/types-stdlib-v1+go1.23.12",
+      "rejectedEdges": 0,
+      "resolvedEdges": 4,
+      "status": "partial"
+    },
+    {
+      "baseGeneration": 20,
+      "capability": "resolved",
+      "coverage": 0.4166666666666667,
+      "eligibleEdges": 12,
+      "language": "python",
+      "lastError": null,
+      "precisionRevision": 58,
+      "provider": "contextmesh_python_resolver",
+      "providerVersion": "0.5.0",
+      "rejectedEdges": 3,
+      "resolvedEdges": 5,
+      "status": "ready"
+    },
+    {
+      "baseGeneration": 20,
+      "capability": "resolved",
+      "coverage": 1,
+      "eligibleEdges": 0,
+      "language": "python",
+      "lastError": null,
+      "precisionRevision": 61,
+      "provider": "quality_update_probe",
+      "providerVersion": "2",
+      "rejectedEdges": 0,
+      "resolvedEdges": 0,
+      "status": "ready"
+    },
+    {
+      "baseGeneration": 20,
+      "capability": "typed",
+      "coverage": 1,
+      "eligibleEdges": 2,
+      "language": "typescript/javascript",
+      "lastError": null,
+      "precisionRevision": 59,
+      "provider": "typescript_type_checker",
+      "providerVersion": "5.9.3",
+      "rejectedEdges": 0,
+      "resolvedEdges": 2,
+      "status": "ready"
+    }
+  ],
+  "release": "v0.5",
+  "runner": {
+    "go": "go version go1.23.12 windows/amd64",
+    "node": "v24.18.0",
+    "platform": "win32-x64"
+  },
+  "schemaVersion": 4,
+  "semanticCaseResults": [
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/base.py#ImportedBase",
+          "targetSignature": "class ImportedBase"
+        }
+      ],
+      "edgeKind": "EXTENDS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/base.py#ImportedBase"
+        }
+      ],
+      "id": "python-imported-inheritance-resolved",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/inheritance.py#ImportedChild",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "candidate",
+          "targetQualifiedName": "python/pkg/base.py#UnimportedBase",
+          "targetSignature": "class UnimportedBase"
+        }
+      ],
+      "edgeKind": "EXTENDS",
+      "expectedEdges": [
+        {
+          "status": "candidate",
+          "targetQualifiedName": "python/pkg/base.py#UnimportedBase"
+        }
+      ],
+      "id": "python-unimported-inheritance-not-resolved",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/unimported.py#UnimportedChild",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "rejected",
+          "targetQualifiedName": "python/pkg/target.py#py_target",
+          "targetSignature": "def py_target()"
+        }
+      ],
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "status": "rejected",
+          "targetQualifiedName": "python/pkg/target.py#py_target"
+        }
+      ],
+      "id": "python-parameter-shadow-rejected",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/bindings.py#shadowed",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/target.py#py_target",
+          "targetSignature": "def py_target()"
+        }
+      ],
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/target.py#py_target"
+        }
+      ],
+      "id": "python-qualified-module-call-resolved",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/bindings.py#dotted",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "go/receiver/receiver.go#Run",
+          "targetSignature": "func (A) Run() int"
+        }
+      ],
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "go/receiver/receiver.go#Run",
+          "targetSignatureIncludes": "func (A) Run"
+        }
+      ],
+      "id": "go-receiver-dispatch-resolved",
+      "language": "go",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "go/receiver/receiver.go#CallA",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "go/receiver/receiver.go#CallA",
+          "targetSignature": "func CallA(value A) int"
+        }
+      ],
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "go/receiver/receiver.go#CallA"
+        }
+      ],
+      "id": "go-test-file-participates-in-precision",
+      "language": "go",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "go/receiver/receiver_test.go#TestCaller",
+      "unexpectedEdges": []
+    }
+  ],
+  "semanticFixture": {
+    "caseCount": 6,
+    "digest": "db830a4a5644045a5f6a0b1ced3391377fe3e6cf164dc9458f7b7052dd6a169c",
+    "id": "contextmesh-v05-semantic-conformance-v1",
+    "immutable": true,
+    "provenance": {
+      "authoredAgainst": "v0.5 provider contracts for Python resolver and Go go/types overlay",
+      "frozenAt": "2026-07-20",
+      "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold.",
+      "origin": "ContextMesh v0.5 product-design acceptance criteria and independent release review findings"
+    },
+    "schemaVersion": 1
+  },
+  "source": {
+    "contract": "git-source-snapshot-lf-v3",
+    "dirty": false,
+    "files": 136,
+    "headCommit": "5a9561cbfcc45b8b218acff900177cf07c5a7c8b",
+    "headTreeDigest": "6bc7cd2058ddb0ce6a95c1996fc36296532a2c9a539aadbcd8275917af5eb647",
+    "treeDigest": "6bc7cd2058ddb0ce6a95c1996fc36296532a2c9a539aadbcd8275917af5eb647"
+  },
   "statusCoverage": [
     "candidate",
     "rejected",
     "resolved"
-  ],
-  "baseLanguages": [
-    "go",
-    "python",
-    "typescript"
-  ],
-  "providerStates": [
-    {
-      "language": "go",
-      "provider": "go_types",
-      "providerVersion": "go/types-stdlib-v1",
-      "capability": "typed",
-      "status": "partial",
-      "baseGeneration": 1,
-      "precisionRevision": 3,
-      "eligibleEdges": 2,
-      "resolvedEdges": 2,
-      "rejectedEdges": 0,
-      "coverage": 1,
-      "lastError": "go/caller: <fixture>\\go\\caller\\caller.go:4:32: undefined: GoMissing; go/caller: <fixture>\\go\\caller\\caller.go:5:39: undefined: GoAmbiguous; go/caller: <fixture>\\go\\caller\\caller.go:7:39: undefined: GoHoldoutMissing; go/caller: <fixture>\\go\\caller\\caller.go:8:46: undefined: GoHoldoutAmbiguous"
-    },
-    {
-      "language": "python",
-      "provider": "contextmesh_python_resolver",
-      "providerVersion": "0.5.0",
-      "capability": "resolved",
-      "status": "ready",
-      "baseGeneration": 1,
-      "precisionRevision": 1,
-      "eligibleEdges": 8,
-      "resolvedEdges": 3,
-      "rejectedEdges": 2,
-      "coverage": 0.375,
-      "lastError": null
-    },
-    {
-      "language": "python",
-      "provider": "quality_update_probe",
-      "providerVersion": "2",
-      "capability": "resolved",
-      "status": "ready",
-      "baseGeneration": 1,
-      "precisionRevision": 4,
-      "eligibleEdges": 0,
-      "resolvedEdges": 0,
-      "rejectedEdges": 0,
-      "coverage": 1,
-      "lastError": null
-    },
-    {
-      "language": "typescript/javascript",
-      "provider": "typescript_type_checker",
-      "providerVersion": "5.9.3",
-      "capability": "typed",
-      "status": "ready",
-      "baseGeneration": 1,
-      "precisionRevision": 2,
-      "eligibleEdges": 2,
-      "resolvedEdges": 2,
-      "rejectedEdges": 0,
-      "coverage": 1,
-      "lastError": null
-    }
-  ],
-  "providerAbsence": [
-    {
-      "language": "typescript",
-      "provider": "typescript_type_checker",
-      "providerState": "not_configured",
-      "preservesBase": true
-    },
-    {
-      "language": "python",
-      "provider": "contextmesh_python_resolver",
-      "providerState": "not_configured",
-      "preservesBase": true
-    },
-    {
-      "language": "go",
-      "provider": "go_types",
-      "providerState": "not_configured",
-      "preservesBase": true
-    }
-  ],
-  "checks": {
-    "immutableFixturePinned": true,
-    "fixtureProvenancePinned": true,
-    "tier1FixtureCoverage": true,
-    "developmentAndHoldoutCoverage": true,
-    "tier1Precision": true,
-    "tier1Recall": true,
-    "noFalsePositives": true,
-    "noFalseNegatives": true,
-    "exactCandidateRejectedResolvedPaths": true,
-    "noUnexpectedCandidateOrRejectedPaths": true,
-    "ambiguousCasesHandled": true,
-    "negativeCasesHandled": true,
-    "candidateRejectedResolvedCovered": true,
-    "baseGraphWithoutPrecision": true,
-    "optionalProviderAbsencePreservesBase": true,
-    "providerUpdatePreservesGeneration": true,
-    "providerUpdateAdvancesPrecisionRevision": true,
-    "providerStatesHealthy": true
-  },
-  "passed": true
+  ]
 }
