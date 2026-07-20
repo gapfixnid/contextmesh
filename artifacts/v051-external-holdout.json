@@ -913,8 +913,8 @@
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
     "files": 160,
-    "headCommit": "eada065278c83d87e5fc22de31c897dce5ba9863",
-    "headTreeDigest": "3e320ac474dc3d547b1ad369a7d6a6c695d29d25c4ba9104e365f918bac5f865",
-    "treeDigest": "3e320ac474dc3d547b1ad369a7d6a6c695d29d25c4ba9104e365f918bac5f865"
+    "headCommit": "738ba5be4484a2244688e3e7e602305c1b1f95e1",
+    "headTreeDigest": "ed87a3d8496e747ed88304b1858215c10690831b0119490938dd4a3dc68b377e",
+    "treeDigest": "ed87a3d8496e747ed88304b1858215c10690831b0119490938dd4a3dc68b377e"
   }
 }
