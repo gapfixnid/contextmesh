@@ -77,6 +77,7 @@ try {
   if (leaked.length > 0) throw new Error(`Source ZIP contains forbidden files: ${leaked.join(", ")}`);
   execFileSync(process.execPath, [npmCli, "ci"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "check"], { cwd: extracted, stdio: "inherit" });
+  execFileSync(process.execPath, [npmCli, "run", "verify:v05-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:package"], { cwd: extracted, stdio: "inherit" });
 
   if (modelPath) {

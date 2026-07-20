@@ -4,8 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { ContextMeshApp } from "../src/app.js";
-import type { CodeEdgeRecord, CodeNodeRecord, UnresolvedReferenceRecord } from "../src/contracts.js";
-import { V04_SOURCE_CONTRACT, v04SourceEvidence, type V04SourceEvidence } from "./v04-artifact-contract.js";
+import type { CodeEdgeKind, CodeEdgeRecord, CodeNodeRecord, ExtractedGraph, UnresolvedReferenceRecord } from "../src/contracts.js";
+import type { StoredGraphPartition } from "../src/storage/database.js";
+import { stableStringify, V04_SOURCE_CONTRACT, v04SourceEvidence, type V04SourceEvidence } from "./v04-artifact-contract.js";
 
 type Tier1Language = "typescript" | "python" | "go";
 type CaseCategory = "positive" | "negative" | "ambiguous";
@@ -53,8 +54,54 @@ interface CaseResult {
   passed: boolean;
 }
 
+interface SemanticFixture {
+  schemaVersion: 1;
+  id: string;
+  immutable: true;
+  description: string;
+  provenance: { origin: string; authoredAgainst: string; frozenAt: string; mutationPolicy: string };
+  files: Array<{ path: string; content: string }>;
+  cases: Array<{
+    id: string;
+    language: "python" | "go";
+    sourceQualifiedName: string;
+    edgeKind: CodeEdgeKind;
+    expectedEdges: Array<{
+      targetQualifiedName: string;
+      targetSignatureIncludes?: string;
+      status: "candidate" | "rejected" | "resolved";
+    }>;
+  }>;
+  providerExpectations: Array<{
+    provider: string;
+    statuses: Array<"ready" | "partial">;
+    providerVersionPattern?: string;
+    lastErrorIncludes?: string[];
+  }>;
+}
+
+interface SemanticEdgeResult {
+  targetQualifiedName: string;
+  targetSignature: string;
+  status: string;
+}
+
+interface SemanticCaseResult {
+  id: string;
+  language: "python" | "go";
+  sourceQualifiedName: string;
+  edgeKind: CodeEdgeKind;
+  expectedEdges: SemanticFixture["cases"][number]["expectedEdges"];
+  actualEdges: SemanticEdgeResult[];
+  unexpectedEdges: SemanticEdgeResult[];
+  missingEdges: SemanticFixture["cases"][number]["expectedEdges"];
+  passed: boolean;
+}
+
 const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json");
 const PINNED_FIXTURE_DIGEST = "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823";
+const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v1.json");
+const PINNED_SEMANTIC_FIXTURE_DIGEST = "db830a4a5644045a5f6a0b1ced3391377fe3e6cf164dc9458f7b7052dd6a169c";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
 
 function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
@@ -133,7 +180,34 @@ function loadFixture(): QualityFixture {
   return fixture;
 }
 
-function writeFixture(root: string, fixture: QualityFixture): void {
+function loadSemanticFixture(): SemanticFixture {
+  const fixture = JSON.parse(readFileSync(SEMANTIC_FIXTURE_PATH, "utf8")) as SemanticFixture;
+  if (
+    fixture.schemaVersion !== 1 ||
+    fixture.id !== "contextmesh-v05-semantic-conformance-v1" ||
+    fixture.immutable !== true ||
+    !fixture.provenance?.origin ||
+    !fixture.provenance.authoredAgainst ||
+    !fixture.provenance.mutationPolicy ||
+    !Array.isArray(fixture.files) ||
+    !Array.isArray(fixture.cases) ||
+    !Array.isArray(fixture.providerExpectations) ||
+    digest(fixture) !== PINNED_SEMANTIC_FIXTURE_DIGEST
+  ) {
+    throw new Error("V05_SEMANTIC_FIXTURE_INVALID: immutable fixture identity or digest mismatch");
+  }
+  if (new Set(fixture.cases.map((item) => item.id)).size !== fixture.cases.length) {
+    throw new Error("V05_SEMANTIC_FIXTURE_INVALID: case ids must be unique");
+  }
+  const coveredKinds = new Set(fixture.cases.map((item) => item.edgeKind));
+  const coveredLanguages = new Set(fixture.cases.map((item) => item.language));
+  if (!coveredKinds.has("CALLS") || !coveredKinds.has("EXTENDS") || !coveredLanguages.has("python") || !coveredLanguages.has("go")) {
+    throw new Error("V05_SEMANTIC_FIXTURE_INVALID: Python/Go CALLS and EXTENDS coverage is required");
+  }
+  return fixture;
+}
+
+function writeFixture(root: string, fixture: Pick<QualityFixture | SemanticFixture, "files">): void {
   for (const entry of fixture.files) {
     const target = path.resolve(root, entry.path);
     const relative = path.relative(root, target);
@@ -143,6 +217,53 @@ function writeFixture(root: string, fixture: QualityFixture): void {
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, entry.content, "utf8");
   }
+}
+
+function scoreSemanticCases(
+  fixture: SemanticFixture,
+  nodes: CodeNodeRecord[],
+  edges: CodeEdgeRecord[],
+): SemanticCaseResult[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return fixture.cases.map((item) => {
+    const sources = nodes.filter((node) =>
+      node.language === item.language && node.qualifiedName === item.sourceQualifiedName);
+    if (sources.length !== 1 || !sources[0]) {
+      throw new Error(`V05_SEMANTIC_FIXTURE_MISMATCH: expected one source node for ${item.id}, found ${sources.length}`);
+    }
+    const actualEdges = edges
+      .filter((edge) => edge.sourceId === sources[0]!.id && edge.kind === item.edgeKind)
+      .map((edge) => {
+        const target = nodeById.get(edge.targetId);
+        return {
+          targetQualifiedName: target?.qualifiedName ?? `missing:${edge.targetId}`,
+          targetSignature: target?.signature ?? "",
+          status: edge.status ?? "resolved",
+        };
+      })
+      .sort((left, right) => canonical(left).localeCompare(canonical(right)));
+    const unmatched = [...actualEdges];
+    const missingEdges = item.expectedEdges.filter((expected) => {
+      const match = unmatched.findIndex((actual) =>
+        actual.targetQualifiedName === expected.targetQualifiedName &&
+        actual.status === expected.status &&
+        (!expected.targetSignatureIncludes || actual.targetSignature.includes(expected.targetSignatureIncludes)));
+      if (match < 0) return true;
+      unmatched.splice(match, 1);
+      return false;
+    });
+    return {
+      id: item.id,
+      language: item.language,
+      sourceQualifiedName: item.sourceQualifiedName,
+      edgeKind: item.edgeKind,
+      expectedEdges: item.expectedEdges,
+      actualEdges,
+      unexpectedEdges: unmatched,
+      missingEdges,
+      passed: unmatched.length === 0 && missingEdges.length === 0,
+    };
+  });
 }
 
 function scoreCases(
@@ -246,13 +367,92 @@ function languageResults(caseResults: CaseResult[]) {
   });
 }
 
+type GraphLike = Pick<ExtractedGraph, "nodes" | "edges" | "unresolvedReferences"> | StoredGraphPartition;
+
+function graphFingerprint(graph: GraphLike, language?: Tier1Language): string {
+  const selectedNodes = graph.nodes.filter((node) => language === undefined || node.language === language);
+  const selectedIds = new Set(selectedNodes.map((node) => node.id));
+  const nodeDescriptor = (node: CodeNodeRecord) => ({
+    language: node.language ?? null,
+    ecosystem: node.ecosystem ?? null,
+    kind: node.kind,
+    nativeKind: node.nativeKind ?? null,
+    analysisLevel: node.analysisLevel ?? null,
+    name: node.name,
+    qualifiedName: node.qualifiedName,
+    localKey: node.localKey,
+    signature: node.signature,
+    doc: node.doc,
+    isExported: node.isExported,
+    startByte: node.startByte,
+    endByte: node.endByte,
+    startLine: node.startLine,
+    startColumn: node.startColumn,
+    endLine: node.endLine,
+    endColumn: node.endColumn,
+    contentHash: node.contentHash,
+    metadata: node.metadata,
+  });
+  const descriptorById = new Map(selectedNodes.map((node) => [node.id, nodeDescriptor(node)]));
+  const nodeKey = (id: string): unknown => descriptorById.get(id) ?? { missingNode: id };
+  const normalized = {
+    nodes: selectedNodes.map(nodeDescriptor).sort((left, right) => canonical(left).localeCompare(canonical(right))),
+    edges: graph.edges
+      .filter((edge) => selectedIds.has(edge.sourceId) && selectedIds.has(edge.targetId))
+      .map((edge) => ({
+        source: nodeKey(edge.sourceId),
+        target: nodeKey(edge.targetId),
+        kind: edge.kind,
+        confidence: edge.confidence,
+        resolutionKind: edge.resolutionKind,
+        metadata: edge.metadata,
+        status: edge.status ?? "resolved",
+        evidence: edge.evidence ?? [],
+      }))
+      .sort((left, right) => canonical(left).localeCompare(canonical(right))),
+    unresolvedReferences: graph.unresolvedReferences
+      .filter((reference) => reference.sourceNodeId !== null && selectedIds.has(reference.sourceNodeId))
+      .map((reference) => ({
+        source: reference.sourceNodeId ? nodeKey(reference.sourceNodeId) : null,
+        kind: reference.kind,
+        rawName: reference.rawName,
+        qualifier: reference.qualifier,
+        line: reference.line,
+        column: reference.column,
+        candidates: reference.candidates.map(nodeKey).sort((left, right) => canonical(left).localeCompare(canonical(right))),
+        confidence: reference.confidence ?? null,
+        evidence: reference.evidence ?? [],
+      }))
+      .sort((left, right) => canonical(left).localeCompare(canonical(right))),
+  };
+  return digest(normalized);
+}
+
+function currentEffectiveGraph(app: ContextMeshApp): StoredGraphPartition {
+  const partitions = [
+    app.database.getStoredGraphPartition("non-python"),
+    app.database.getStoredGraphPartition("python"),
+  ];
+  return {
+    nodes: partitions.flatMap((partition) => partition.nodes),
+    edges: partitions.flatMap((partition) => partition.edges),
+    unresolvedReferences: partitions.flatMap((partition) => partition.unresolvedReferences),
+  };
+}
+
+function stablePretty(value: unknown): string {
+  return JSON.stringify(JSON.parse(stableStringify(value)), null, 2);
+}
+
 const fixture = loadFixture();
+const semanticFixture = loadSemanticFixture();
 const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-quality-"));
 let app: ContextMeshApp | null = null;
 try {
   writeFixture(fixtureRoot, fixture);
+  writeFixture(fixtureRoot, semanticFixture);
   app = new ContextMeshApp(fixtureRoot);
-  const indexed = await app.indexWorkspace({ mode: "full" });
+  await app.indexWorkspace({ mode: "full" });
   const syntax = await app.code.indexer.evaluationGraph("syntax");
   const partitions = [
     app.database.getStoredGraphPartition("non-python"),
@@ -262,11 +462,23 @@ try {
   const edges = partitions.flatMap((partition) => partition.edges);
   const unresolved = partitions.flatMap((partition) => partition.unresolvedReferences);
   const caseResults = scoreCases(fixture, nodes, edges, unresolved);
+  const semanticCaseResults = scoreSemanticCases(semanticFixture, nodes, edges);
   const perLanguage = languageResults(caseResults);
   const baseLanguages = [...new Set(
     syntax.nodes.map((node) => node.language).filter((language) => language !== undefined),
   )].sort();
   const statusCoverage = [...new Set(caseResults.flatMap((item) => item.actualStatuses))].sort();
+
+  const determinismSignatures = [graphFingerprint(currentEffectiveGraph(app))];
+  for (let run = 1; run < 20; run += 1) {
+    await app.indexWorkspace({ mode: "full" });
+    determinismSignatures.push(graphFingerprint(currentEffectiveGraph(app)));
+  }
+  const determinism = {
+    runs: determinismSignatures.length,
+    identical: new Set(determinismSignatures).size === 1,
+    signatures: determinismSignatures,
+  };
 
   const generationBeforeProviderUpdate = app.database.getWorkspace().currentGeneration;
   const revisionBeforeProviderUpdate = app.database.getPrecisionRevision();
@@ -300,13 +512,38 @@ try {
     coverage: state.coverage,
     lastError: state.lastError?.split(fixtureRoot).join("<fixture>") ?? null,
   }));
+  const providerConformance = semanticFixture.providerExpectations.map((expectation) => {
+    const state = providerStates.find((item) => item.provider === expectation.provider);
+    const statusMatches = Boolean(state && expectation.statuses.includes(state.status as "ready" | "partial"));
+    const versionMatches = Boolean(state && (!expectation.providerVersionPattern
+      || new RegExp(expectation.providerVersionPattern).test(state.providerVersion)));
+    const diagnosticsMatch = Boolean(state && (expectation.lastErrorIncludes ?? [])
+      .every((value) => state.lastError?.includes(value)));
+    return {
+      provider: expectation.provider,
+      actualStatus: state?.status ?? "missing",
+      actualVersion: state?.providerVersion ?? null,
+      statusMatches,
+      versionMatches,
+      diagnosticsMatch,
+      passed: statusMatches && versionMatches && diagnosticsMatch,
+    };
+  });
 
   const absenceSpecifications = [
     { language: "typescript", environment: "CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE", provider: "typescript_type_checker", partition: "non-python" as const },
     { language: "python", environment: "CONTEXTMESH_PYTHON_PRECISION_DISABLE", provider: "contextmesh_python_resolver", partition: "python" as const },
     { language: "go", environment: "CONTEXTMESH_GO_TYPES_DISABLE", provider: "go_types", partition: "non-python" as const },
   ] as const;
-  const providerAbsence: Array<{ language: Tier1Language; provider: string; providerState: string; preservesBase: boolean }> = [];
+  const providerAbsence: Array<{
+    language: Tier1Language;
+    provider: string;
+    providerState: string;
+    expectedBaseDigest: string;
+    actualBaseDigest: string;
+    exactBaseGraph: boolean;
+    preservesBase: boolean;
+  }> = [];
   for (const specification of absenceSpecifications) {
     const root = mkdtempSync(path.join(os.tmpdir(), `contextmesh-v05-${specification.language}-provider-absent-`));
     const prior = process.env[specification.environment];
@@ -314,6 +551,7 @@ try {
     try {
       process.env[specification.environment] = "1";
       writeFixture(root, fixture);
+      writeFixture(root, semanticFixture);
       absentApp = new ContextMeshApp(root);
       const absentIndex = await absentApp.indexWorkspace({ mode: "full" });
       const absentGraph = absentApp.database.getStoredGraphPartition(specification.partition);
@@ -321,13 +559,17 @@ try {
       const capability = absentApp.code.indexer.coordinator.capabilities(root)
         .find((item) => item.language === (specification.language === "typescript" ? "typescript/javascript" : specification.language));
       const providerState = state?.status ?? (capability?.precisionProvider === null ? "not_configured" : "missing");
+      const expectedBaseDigest = graphFingerprint(syntax, specification.language);
+      const actualBaseDigest = graphFingerprint(absentGraph, specification.language);
+      const exactBaseGraph = expectedBaseDigest === actualBaseDigest;
       providerAbsence.push({
         language: specification.language,
         provider: specification.provider,
         providerState,
-        preservesBase: absentIndex.generation > 0
-          && absentGraph.nodes.some((node) => node.language === specification.language)
-          && providerState === "not_configured",
+        expectedBaseDigest,
+        actualBaseDigest,
+        exactBaseGraph,
+        preservesBase: absentIndex.generation > 0 && exactBaseGraph && providerState === "not_configured",
       });
     } finally {
       await absentApp?.close();
@@ -351,6 +593,7 @@ try {
   const expectedStatusCoverage = [...new Set(fixture.cases.flatMap((item) => item.expectedCallEdges.map((edge) => edge.status)))].sort();
   const checks = {
     immutableFixturePinned: digest(fixture) === PINNED_FIXTURE_DIGEST,
+    immutableSemanticFixturePinned: digest(semanticFixture) === PINNED_SEMANTIC_FIXTURE_DIGEST,
     fixtureProvenancePinned: Boolean(fixture.provenance.origin && fixture.provenance.authoredAgainst && fixture.provenance.mutationPolicy),
     tier1FixtureCoverage: TIER1_LANGUAGES.every((language) =>
       JSON.stringify(categoriesByLanguage[language]) === JSON.stringify(["ambiguous", "negative", "positive"])),
@@ -369,8 +612,12 @@ try {
       .every((item) => item.passed && item.unresolvedObserved !== false),
     candidateRejectedResolvedCovered: JSON.stringify(statusCoverage) === JSON.stringify(["candidate", "rejected", "resolved"])
       && JSON.stringify(expectedStatusCoverage) === JSON.stringify(statusCoverage),
+    semanticCallAndInheritanceConformance: semanticCaseResults.every((item) => item.passed),
+    semanticProviderConformance: providerConformance.every((item) => item.passed),
     baseGraphWithoutPrecision: TIER1_LANGUAGES.every((language) => baseLanguages.includes(language)),
     optionalProviderAbsencePreservesBase: providerAbsence.length === 3 && providerAbsence.every((item) => item.preservesBase),
+    providerAbsenceExactBaseFingerprint: providerAbsence.length === 3 && providerAbsence.every((item) => item.exactBaseGraph),
+    twentyRunGraphDeterminism: determinism.runs === 20 && determinism.identical,
     providerUpdatePreservesGeneration: generationBeforeProviderUpdate === generationAfterProviderUpdate,
     providerUpdateAdvancesPrecisionRevision: revisionAfterProviderUpdate === revisionBeforeProviderUpdate + 1,
     providerStatesHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
@@ -378,7 +625,7 @@ try {
   };
   const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
   const artifact = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     release: "v0.5",
     source: evaluationSourceEvidence(),
     fixture: {
@@ -392,26 +639,39 @@ try {
       provenance: fixture.provenance,
       thresholds: fixture.thresholds,
     },
+    semanticFixture: {
+      id: semanticFixture.id,
+      schemaVersion: semanticFixture.schemaVersion,
+      immutable: semanticFixture.immutable,
+      digest: digest(semanticFixture),
+      caseCount: semanticFixture.cases.length,
+      provenance: semanticFixture.provenance,
+    },
     runner: {
       node: process.version,
       platform: `${process.platform}-${process.arch}`,
       go: goVersion.status === 0 ? goVersion.stdout.trim() : "unavailable",
     },
-    generation: indexed.generation,
+    generation: generationBeforeProviderUpdate,
     precisionRevision: revisionAfterProviderUpdate,
     languageResults: perLanguage,
     caseResults,
+    semanticCaseResults,
     statusCoverage,
     baseLanguages,
     providerStates,
+    providerConformance,
     providerAbsence,
+    determinism,
     checks,
-    passed: Object.values(checks).every(Boolean) && caseResults.every((item) => item.passed),
+    passed: Object.values(checks).every(Boolean)
+      && caseResults.every((item) => item.passed)
+      && semanticCaseResults.every((item) => item.passed),
   };
   const target = outputPath();
   if (target) {
     mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+    writeFileSync(target, `${stablePretty(artifact)}\n`, "utf8");
   }
   process.stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
   if (!artifact.passed) {

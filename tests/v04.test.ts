@@ -60,6 +60,26 @@ class RecoverableSource implements WatchEventSource {
   fail(): void { this.onError?.(new Error("recoverable-source-failure")); }
 }
 
+class DeferredCloseSource implements WatchEventSource {
+  starts = 0;
+  closes = 0;
+  private onError: ((error: Error) => void) | null = null;
+  private readonly closeReleases: Array<() => void> = [];
+
+  async start(_root: string, _onEvent: (event: WatchEvent) => void, onError: (error: Error) => void): Promise<void> {
+    this.starts += 1;
+    this.onError = onError;
+  }
+
+  close(): Promise<void> {
+    this.closes += 1;
+    return new Promise<void>((resolve) => this.closeReleases.push(resolve));
+  }
+
+  fail(): void { this.onError?.(new Error("recoverable-source-failure")); }
+  releaseClose(index: number): void { this.closeReleases[index]?.(); }
+}
+
 async function generationAfter(app: ContextMeshApp, generation: number): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (app.database.getWorkspace().currentGeneration > generation) return;
@@ -339,6 +359,30 @@ describe("v0.4 graph kernel, watcher, and explore vertical slice", () => {
       await coordinator.close();
       await app.close();
     }
+  });
+
+  it("does not restart a fired source retry after coordinator shutdown", async () => {
+    const root = createFixtureWorkspace(); roots.push(root);
+    const source = new DeferredCloseSource();
+    const clock = new FakeClock();
+    const coordinator = new GraphWatchCoordinator(root, async () => {}, () => {}, { eventSource: source, clock });
+
+    await coordinator.start();
+    source.fail();
+    clock.flush();
+    expect(source.closes).toBe(1);
+
+    let closed = false;
+    const closing = coordinator.close().then(() => { closed = true; });
+    expect(source.closes).toBe(2);
+    source.releaseClose(1);
+    for (let attempt = 0; attempt < 5; attempt += 1) await Promise.resolve();
+    expect(closed).toBe(false);
+    source.releaseClose(0);
+    await closing;
+
+    expect(source.starts).toBe(1);
+    expect(coordinator.status().state).toBe("closed");
   });
 
   it("observes an actual native OS watcher event in a separate smoke", async () => {

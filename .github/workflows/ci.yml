@@ -43,6 +43,7 @@ jobs:
         working-directory: native/go-provider
       - run: npm run check
       - run: npm run evaluate:v05 -- --output artifacts/v05-quality.json
+      - run: npm run verify:v05-artifact
       - uses: actions/upload-artifact@v4
         if: always()
         with:

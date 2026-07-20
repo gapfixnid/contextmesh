@@ -1417,24 +1417,74 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           stringValue(state.lease_token) !== claim.token || stringValue(state.lease_owner) !== claim.owner ||
           numberValue(state.base_generation) !== claim.baseGeneration ||
           numberValue(state.lease_expires_epoch) <= Date.parse(this.nowIso())) return;
+      const rejectCommit = (reason: string): void => {
+        this.db.prepare(
+          `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
+             lease_expires_epoch=NULL,updated_at=?
+           WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=?`,
+        ).run(`PRECISION_OVERLAY_INVALID: ${reason}`, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner);
+      };
       const sorted = [...commit.edges].sort((left, right) =>
         `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
       const sortedNodes = [...(commit.nodes ?? [])].sort((left, right) => left.nodeId.localeCompare(right.nodeId));
-      if (new Set(sortedNodes.map((node) => node.nodeId)).size !== sortedNodes.length) return;
-      if (claim.capability === "resolved" && sortedNodes.some((node) => node.analysisLevel === "typed")) return;
+      if (!Number.isSafeInteger(commit.eligibleEdges) || commit.eligibleEdges < 0) {
+        rejectCommit("eligibleEdges must be a non-negative safe integer");
+        return;
+      }
+      if (new Set(sorted.map((edge) => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`)).size !== sorted.length) {
+        rejectCommit("duplicate precision edge");
+        return;
+      }
+      if (new Set(sortedNodes.map((node) => node.nodeId)).size !== sortedNodes.length) {
+        rejectCommit("duplicate precision node");
+        return;
+      }
+      if (claim.capability === "resolved" && sortedNodes.some((node) => node.analysisLevel === "typed")) {
+        rejectCommit("resolved provider cannot commit typed node metadata");
+        return;
+      }
       const baseNode = this.db.prepare(
         "SELECT content_hash,generation,language FROM code_nodes WHERE workspace_id=? AND id=?",
       );
+      const languageMatches = (nodeLanguage: string): boolean => claim.language === "typescript/javascript"
+        ? ["typescript", "tsx", "javascript", "jsx", "mjs", "cjs"].includes(nodeLanguage)
+        : nodeLanguage === claim.language;
       if (sortedNodes.some((node) => {
         const row = baseNode.get(this.workspace.id, node.nodeId);
         const nodeLanguage = stringValue(row?.language);
-        const languageMatches = claim.language === "typescript/javascript"
-          ? ["typescript", "tsx", "javascript", "jsx", "mjs", "cjs"].includes(nodeLanguage)
-          : nodeLanguage === claim.language;
         return !row || numberValue(row.generation) !== claim.baseGeneration ||
-          !languageMatches || stringValue(row.content_hash) !== node.contentHash ||
+          !languageMatches(nodeLanguage) || stringValue(row.content_hash) !== node.contentHash ||
           !node.metadata || Array.isArray(node.metadata);
-      })) return;
+      })) {
+        rejectCommit("node overlay is outside the provider generation, language, or content identity");
+        return;
+      }
+      const semanticEvidenceSources = new Set(["resolver", "type_checker", "language_server", "manifest"]);
+      for (const edge of sorted) {
+        const source = baseNode.get(this.workspace.id, edge.sourceId);
+        const target = baseNode.get(this.workspace.id, edge.targetId);
+        if (!source || !target || numberValue(source.generation) !== claim.baseGeneration ||
+            numberValue(target.generation) !== claim.baseGeneration) {
+          rejectCommit("edge endpoint is outside the active base generation");
+          return;
+        }
+        if (!languageMatches(stringValue(source.language)) || !languageMatches(stringValue(target.language))) {
+          rejectCommit("edge endpoint is outside the claiming provider language");
+          return;
+        }
+        if (!Number.isFinite(edge.confidence) || edge.confidence < 0 || edge.confidence > 1) {
+          rejectCommit("edge confidence must be between zero and one");
+          return;
+        }
+        if (!Array.isArray(edge.evidence) || edge.evidence.length === 0 || edge.evidence.some((item) =>
+          item.provider !== claim.provider || item.providerVersion !== claim.providerVersion ||
+          !semanticEvidenceSources.has(item.source) || !Number.isFinite(item.confidence) ||
+          item.confidence < 0 || item.confidence > 1 || Math.abs(item.confidence - edge.confidence) > 1e-9 ||
+          (item.details !== undefined && (!item.details || Array.isArray(item.details))))) {
+          rejectCommit("edge evidence does not match the claiming provider contract");
+          return;
+        }
+      }
       const baseCandidate = this.db.prepare(
         `SELECT 1 FROM code_edges
          WHERE workspace_id=? AND source_id=? AND target_id=? AND kind=?
@@ -1442,7 +1492,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       );
       if (sorted.some((edge) => edge.status === "rejected" && !baseCandidate.get(
         this.workspace.id, edge.sourceId, edge.targetId, edge.kind, claim.baseGeneration,
-      ))) return;
+      ))) {
+        rejectCommit("rejected edge has no current base candidate");
+        return;
+      }
       const revision = this.getPrecisionRevision() + 1;
       const affectedNodes = new Set(this.precisionNodeIds(claim.provider));
       this.db.prepare("DELETE FROM precision_edges WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);

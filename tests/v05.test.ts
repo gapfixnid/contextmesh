@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
-import type { Envelope } from "../src/contracts.js";
+import type { CodeEvidence, Envelope } from "../src/contracts.js";
 
 const roots: string[] = [];
 
@@ -387,6 +387,99 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
+  it("atomically rejects precision edges outside the provider language or evidence contract", async () => {
+    const root = workspace();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    writeFileSync(path.join(root, "src", "entry.ts"), "export function TsCaller(): number { return 1; }\n");
+    writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }));
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const nodes = app.database.getStoredGraphPartition("non-python").nodes;
+      const tsCaller = nodes.find((node) => node.language === "typescript" && node.name === "TsCaller");
+      const goCaller = nodes.find((node) => node.language === "go" && node.name === "Caller");
+      const goTarget = nodes.find((node) => node.language === "go" && node.name === "Target");
+      expect(tsCaller).toBeDefined();
+      expect(goCaller).toBeDefined();
+      expect(goTarget).toBeDefined();
+      const revision = app.database.getPrecisionRevision();
+      const claim = (provider: string) => {
+        const acquired = app.database.claimPrecisionProvider({
+          provider,
+          providerVersion: "1",
+          language: "go",
+          capability: "resolved",
+          owner: `${provider}-owner`,
+        });
+        expect(acquired.reason).toBe("acquired");
+        return acquired.claim!;
+      };
+      const evidence = (provider: string, providerVersion = "1"): CodeEvidence[] => [{
+        provider,
+        providerVersion,
+        source: "type_checker",
+        confidence: 1,
+      }];
+      const edge = (sourceId: string, targetId: string, edgeEvidence: CodeEvidence[]) => ({
+        sourceId,
+        targetId,
+        kind: "CALLS" as const,
+        status: "resolved" as const,
+        confidence: 1,
+        resolutionKind: "local" as const,
+        evidence: edgeEvidence,
+      });
+
+      const crossProvider = "go_cross_language_probe";
+      expect(app.database.commitPrecisionOverlay(claim(crossProvider), {
+        edges: [edge(tsCaller!.id, goTarget!.id, evidence(crossProvider))],
+        eligibleEdges: 1,
+        diagnostics: [],
+      })).toBe(false);
+      expect(app.database.getPrecisionRevision()).toBe(revision);
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: crossProvider,
+        status: "failed",
+        lastError: expect.stringMatching(/provider language/i),
+      }));
+
+      const emptyEvidenceProvider = "go_empty_evidence_probe";
+      expect(app.database.commitPrecisionOverlay(claim(emptyEvidenceProvider), {
+        edges: [edge(goCaller!.id, goTarget!.id, [])],
+        eligibleEdges: 1,
+        diagnostics: [],
+      })).toBe(false);
+      expect(app.database.getPrecisionRevision()).toBe(revision);
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: emptyEvidenceProvider,
+        status: "failed",
+        lastError: expect.stringMatching(/evidence/i),
+      }));
+
+      const mismatchProvider = "go_mismatched_evidence_probe";
+      expect(app.database.commitPrecisionOverlay(claim(mismatchProvider), {
+        edges: [edge(goCaller!.id, goTarget!.id, evidence(mismatchProvider, "wrong-version"))],
+        eligibleEdges: 1,
+        diagnostics: [],
+      })).toBe(false);
+      expect(app.database.getPrecisionRevision()).toBe(revision);
+
+      const validProvider = "go_valid_evidence_probe";
+      expect(app.database.commitPrecisionOverlay(claim(validProvider), {
+        edges: [edge(goCaller!.id, goTarget!.id, evidence(validProvider))],
+        eligibleEdges: 1,
+        diagnostics: [],
+      })).toBe(true);
+      expect(app.database.getPrecisionRevision()).toBe(revision + 1);
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
   it("reports the graph snapshot captured by the final read attempt", async () => {
     const root = workspace();
     const app = new ContextMeshApp(root);
@@ -581,6 +674,73 @@ describe("v0.5 precision overlays and core languages", () => {
     } finally { await app.close(); }
   });
 
+  it("requires visible Python bindings for inheritance and calls", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "unimported.py"), [
+      "class UnimportedChild(Base):",
+      "    pass",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "python", "pkg", "bindings.py"), [
+      "from pkg.target import selected",
+      "import pkg.target",
+      "",
+      "def shadowed(selected):",
+      "    return selected()",
+      "",
+      "def dotted():",
+      "    return pkg.target.selected()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const resultId = async (query: string, kind: "class" | "function"): Promise<string> => {
+        const result = await app.searchCode({ query, kinds: [kind], limit: 20 }) as Envelope<{
+          results: Array<{ id: string; name: string; language: string }>;
+        }>;
+        const exact = result.data.results.filter((item) => item.name === query && item.language === "python");
+        expect(exact).toHaveLength(1);
+        return exact[0]!.id;
+      };
+      const baseId = await resultId("Base", "class");
+      const selectedId = await resultId("selected", "function");
+
+      const inheritance = await app.traceCode({
+        symbolId: await resultId("UnimportedChild", "class"),
+        direction: "out",
+        edgeKinds: ["EXTENDS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(inheritance.data.edges).not.toContainEqual(expect.objectContaining({
+        targetId: baseId,
+        status: "resolved",
+      }));
+
+      const shadowed = await app.traceCode({
+        symbolId: await resultId("shadowed", "function"),
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(shadowed.data.edges).not.toContainEqual(expect.objectContaining({
+        targetId: selectedId,
+        status: "resolved",
+      }));
+
+      const dotted = await app.traceCode({
+        symbolId: await resultId("dotted", "function"),
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(dotted.data.edges).toContainEqual(expect.objectContaining({
+        targetId: selectedId,
+        status: "resolved",
+      }));
+    } finally { await app.close(); }
+  });
+
   it("resolves relative aliases and bounded local Python re-exports", async () => {
     const root = workspace();
     writeFileSync(path.join(root, "python", "pkg", "relative.py"), [
@@ -736,6 +896,111 @@ describe("v0.5 precision overlays and core languages", () => {
     } finally {
       if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
       else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("resolves duplicate Go methods by receiver type with honest coverage", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "go", "worker", "receiver.go"), [
+      "package worker",
+      "type A struct{}",
+      "type B struct{}",
+      "func (A) Run() int { return 1 }",
+      "func (B) Run() int { return 2 }",
+      "func CallA(value A) int { return value.Run() }",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const nodes = app.database.getStoredGraphPartition("non-python").nodes.filter((node) => node.language === "go");
+      const caller = nodes.find((node) => node.name === "CallA");
+      const target = nodes.find((node) => node.name === "Run" && /\(A\)\s*Run/.test(node.signature));
+      expect(caller).toBeDefined();
+      expect(target).toBeDefined();
+      const trace = await app.traceCode({
+        symbolId: caller!.id,
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        targetId: target!.id,
+        status: "resolved",
+      }));
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "go_types",
+        status: "ready",
+        eligibleEdges: expect.any(Number),
+        resolvedEdges: expect.any(Number),
+        coverage: 1,
+      }));
+      const state = app.database.getPrecisionProviderStates().find((item) => item.provider === "go_types")!;
+      expect(state.eligibleEdges).toBeGreaterThanOrEqual(1);
+      expect(state.resolvedEdges).toBeGreaterThanOrEqual(1);
+    } finally { await app.close(); }
+  });
+
+  it("analyzes scanner-approved Go test files", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "go", "worker", "worker_test.go"), [
+      "package worker",
+      "func TestCaller() int { return Target() }",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const caller = await app.searchCode({ query: "TestCaller", kinds: ["function"] }) as Envelope<{
+        results: Array<{ id: string }>;
+      }>;
+      const target = await app.searchCode({ query: "Target", kinds: ["function"], limit: 20 }) as Envelope<{
+        results: Array<{ id: string; language: string }>;
+      }>;
+      const goTarget = target.data.results.find((item) => item.language === "go");
+      expect(caller.data.results).toHaveLength(1);
+      expect(goTarget).toBeDefined();
+      const trace = await app.traceCode({
+        symbolId: caller.data.results[0]!.id,
+        direction: "out",
+        edgeKinds: ["CALLS"],
+        depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        targetId: goTarget!.id,
+        status: "resolved",
+      }));
+    } finally { await app.close(); }
+  });
+
+  it("denies Go toolchain downloads and records the local toolchain version", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "go.mod"), "module example.local/contextmesh\n\ngo 1.23\ntoolchain go1.99.0\n");
+    const prior = {
+      GOTOOLCHAIN: process.env.GOTOOLCHAIN,
+      GOPROXY: process.env.GOPROXY,
+      GOSUMDB: process.env.GOSUMDB,
+      GOENV: process.env.GOENV,
+      CONTEXTMESH_GO_TYPES_DISABLE: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+    };
+    process.env.GOTOOLCHAIN = "auto";
+    process.env.GOPROXY = "http://127.0.0.1:9";
+    delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "go_types",
+        providerVersion: expect.stringMatching(/^go\/types-stdlib-v1\+go\d+\.\d+/),
+        status: "ready",
+        lastError: null,
+      }));
+    } finally {
+      for (const [key, value] of Object.entries(prior)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       await app.close();
     }
   });

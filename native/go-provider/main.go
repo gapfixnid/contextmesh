@@ -14,20 +14,24 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
 
 type edge struct {
-	SourceFile string `json:"sourceFile"`
-	SourceName string `json:"sourceName"`
-	TargetFile string `json:"targetFile"`
-	TargetName string `json:"targetName"`
+	SourceFile   string `json:"sourceFile"`
+	SourceName   string `json:"sourceName"`
+	SourceOffset int    `json:"sourceOffset"`
+	TargetFile   string `json:"targetFile"`
+	TargetName   string `json:"targetName"`
+	TargetOffset int    `json:"targetOffset"`
 }
 
 type output struct {
 	Edges       []edge   `json:"edges"`
 	Diagnostics []string `json:"diagnostics"`
+	Toolchain   string   `json:"toolchain"`
 }
 
 type approvedFile struct {
@@ -43,6 +47,12 @@ type providerInput struct {
 type checkedPackage struct {
 	files []*ast.File
 	info  *types.Info
+}
+
+type sourcePackage struct {
+	directory string
+	name      string
+	files     []*ast.File
 }
 
 type workspaceImporter struct {
@@ -204,7 +214,7 @@ func main() {
 		panic(err)
 	}
 	fset := token.NewFileSet()
-	groups := map[string][]*ast.File{}
+	groups := map[string]*sourcePackage{}
 	diagnostics := []string{}
 	if !*filesStdin {
 		fmt.Fprintln(os.Stderr, "scanner-approved file manifest is required")
@@ -222,7 +232,8 @@ func main() {
 			diagnostics = append(diagnostics, entry.Path+": "+matchErr.Error())
 			continue
 		}
-		if !matches || strings.HasSuffix(strings.ToLower(name), "_test.go") {
+		if !matches {
+			diagnostics = append(diagnostics, entry.Path+": excluded by local Go build constraints")
 			continue
 		}
 		content, readErr := os.ReadFile(name)
@@ -235,27 +246,43 @@ func main() {
 			diagnostics = append(diagnostics, relative(root, name)+": "+parseErr.Error())
 		}
 		if file != nil {
-			groups[filepath.Dir(name)] = append(groups[filepath.Dir(name)], file)
+			directory := filepath.Dir(name)
+			packageName := file.Name.Name
+			key := directory + "\x00" + packageName
+			group := groups[key]
+			if group == nil {
+				group = &sourcePackage{directory: directory, name: packageName}
+				groups[key] = group
+			}
+			group.files = append(group.files, file)
 		}
 	}
 
 	edges := []edge{}
-	directories := make([]string, 0, len(groups))
-	for directory := range groups {
-		directories = append(directories, directory)
+	groupKeys := make([]string, 0, len(groups))
+	for key := range groups {
+		groupKeys = append(groupKeys, key)
 	}
-	sort.Strings(directories)
+	sort.Strings(groupKeys)
 	modulePath := readModulePath(root)
 	filesByImportPath := map[string][]*ast.File{}
 	directoryByImportPath := map[string]string{}
-	for _, directory := range directories {
-		files := groups[directory]
+	for _, key := range groupKeys {
+		group := groups[key]
+		files := group.files
 		sort.Slice(files, func(i, j int) bool {
 			return fset.Position(files[i].Pos()).Filename < fset.Position(files[j].Pos()).Filename
 		})
-		importPath := packageImportPath(root, modulePath, directory)
+		baseImportPath := packageImportPath(root, modulePath, group.directory)
+		importPath := baseImportPath
+		if strings.HasSuffix(group.name, "_test") {
+			importPath = baseImportPath + "_test"
+		} else if existing := filesByImportPath[importPath]; existing != nil && existing[0].Name.Name != group.name {
+			diagnostics = append(diagnostics, relative(root, group.directory)+": multiple non-test packages in one directory")
+			importPath = baseImportPath + "__" + group.name
+		}
 		filesByImportPath[importPath] = files
-		directoryByImportPath[importPath] = directory
+		directoryByImportPath[importPath] = group.directory
 	}
 	loader := &workspaceImporter{
 		root: root, fset: fset, filesByImportPath: filesByImportPath,
@@ -282,7 +309,8 @@ func main() {
 				if !ok || function.Body == nil {
 					continue
 				}
-				sourceFile := relative(root, fset.Position(function.Pos()).Filename)
+				sourcePosition := fset.Position(function.Name.Pos())
+				sourceFile := relative(root, sourcePosition.Filename)
 				ast.Inspect(function.Body, func(node ast.Node) bool {
 					call, ok := node.(*ast.CallExpr)
 					if !ok {
@@ -311,19 +339,22 @@ func main() {
 					if relErr != nil || strings.HasPrefix(targetFile, "..") {
 						return true
 					}
-					edges = append(edges, edge{SourceFile: sourceFile, SourceName: function.Name.Name, TargetFile: filepath.ToSlash(targetFile), TargetName: target.Name()})
+					edges = append(edges, edge{
+						SourceFile: sourceFile, SourceName: function.Name.Name, SourceOffset: sourcePosition.Offset,
+						TargetFile: filepath.ToSlash(targetFile), TargetName: target.Name(), TargetOffset: targetPosition.Offset,
+					})
 					return true
 				})
 			}
 		}
 	}
 	sort.Slice(edges, func(i, j int) bool {
-		left := edges[i].SourceFile + "\x00" + edges[i].SourceName + "\x00" + edges[i].TargetFile + "\x00" + edges[i].TargetName
-		right := edges[j].SourceFile + "\x00" + edges[j].SourceName + "\x00" + edges[j].TargetFile + "\x00" + edges[j].TargetName
+		left := fmt.Sprintf("%s\x00%012d\x00%s\x00%012d", edges[i].SourceFile, edges[i].SourceOffset, edges[i].TargetFile, edges[i].TargetOffset)
+		right := fmt.Sprintf("%s\x00%012d\x00%s\x00%012d", edges[j].SourceFile, edges[j].SourceOffset, edges[j].TargetFile, edges[j].TargetOffset)
 		return left < right
 	})
 	sort.Strings(diagnostics)
-	encoded, err := json.Marshal(output{Edges: edges, Diagnostics: diagnostics})
+	encoded, err := json.Marshal(output{Edges: edges, Diagnostics: diagnostics, Toolchain: runtime.Version()})
 	if err != nil {
 		panic(err)
 	}

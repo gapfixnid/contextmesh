@@ -199,6 +199,7 @@ export class GraphWatchCoordinator {
   private sourceRetries = 0;
   private sourceActive = false;
   private sourceRetryTimer: unknown = null;
+  private sourceRetryCompletion: Promise<void> | null = null;
   private batchCompletion: Promise<void> | null = null;
   private completeBatch: (() => void) | null = null;
   private state: WatcherStatus["state"] = "starting";
@@ -239,11 +240,13 @@ export class GraphWatchCoordinator {
   }
 
   private async startSource(): Promise<void> {
+    if (this.closed) return;
     this.state = "starting";
     this.sourceActive = false;
     await this.source.start(
       this.rootPath,
       (event) => {
+        if (this.closed) return;
         this.sourceActive = true;
         this.sourceRetries = 0;
         this.state = "watching";
@@ -251,6 +254,7 @@ export class GraphWatchCoordinator {
       },
       (error) => this.handleSourceError(error),
     );
+    if (this.closed) return;
     this.sourceActive = true;
     this.sourceRetries = 0;
     this.state = "watching";
@@ -351,11 +355,25 @@ export class GraphWatchCoordinator {
     this.fail(diagnostic);
     this.sourceRetryTimer = this.clock.setTimeout(() => {
       this.sourceRetryTimer = null;
-      void this.source.close()
-        .then(() => this.startSource())
-        .then(() => this.runBatch())
-        .catch((next) => this.handleSourceError(next instanceof Error ? next : new Error(String(next))));
+      const retry = this.retrySource();
+      this.sourceRetryCompletion = retry;
+      const clearRetry = () => {
+        if (this.sourceRetryCompletion === retry) this.sourceRetryCompletion = null;
+      };
+      void retry.then(clearRetry, clearRetry);
     }, Math.min(1_000, 50 * 2 ** (this.sourceRetries - 1)));
+  }
+
+  private async retrySource(): Promise<void> {
+    try {
+      await this.source.close();
+      if (this.closed) return;
+      await this.startSource();
+      if (this.closed) return;
+      await this.runBatch();
+    } catch (next) {
+      if (!this.closed) this.handleSourceError(next instanceof Error ? next : new Error(String(next)));
+    }
   }
 
   async close(): Promise<void> {
@@ -369,7 +387,9 @@ export class GraphWatchCoordinator {
       this.clock.clearTimeout(this.sourceRetryTimer);
       this.sourceRetryTimer = null;
     }
+    const sourceRetryCompletion = this.sourceRetryCompletion;
     await this.source.close();
+    await sourceRetryCompletion;
     await this.batchCompletion;
     this.state = "closed";
   }

@@ -20,10 +20,17 @@ function canonical(value: unknown): string {
 describe("v0.5 resolved-edge quality gate", () => {
   it("scores immutable gold positives, false positives, ambiguous cases, and unresolved cases", () => {
     const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json");
+    const semanticFixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v1.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
       immutable: boolean;
       provenance?: { origin?: string; mutationPolicy?: string };
       cases: Array<{ language: string; category: string; split?: string; expectedCallEdges?: unknown[] }>;
+    };
+    const semanticFixture = JSON.parse(readFileSync(semanticFixturePath, "utf8")) as {
+      id: string;
+      immutable: boolean;
+      cases: Array<{ language: string; edgeKind: string; expectedEdges: unknown[] }>;
+      providerExpectations: Array<{ provider: string }>;
     };
     expect(fixture.immutable).toBe(true);
     expect(fixture.provenance).toMatchObject({ origin: expect.any(String), mutationPolicy: expect.any(String) });
@@ -36,6 +43,13 @@ describe("v0.5 resolved-edge quality gate", () => {
       }
       expect(languageCases.every((item) => Array.isArray(item.expectedCallEdges))).toBe(true);
     }
+    expect(semanticFixture).toMatchObject({
+      id: "contextmesh-v05-semantic-conformance-v1",
+      immutable: true,
+    });
+    expect(new Set(semanticFixture.cases.map((item) => item.edgeKind))).toEqual(new Set(["CALLS", "EXTENDS"]));
+    expect(new Set(semanticFixture.cases.map((item) => item.language))).toEqual(new Set(["python", "go"]));
+    expect(semanticFixture.providerExpectations.map((item) => item.provider)).toContain("go_types");
 
     const outputRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-evaluation-test-"));
     const output = path.join(outputRoot, "artifact.json");
@@ -53,6 +67,7 @@ describe("v0.5 resolved-edge quality gate", () => {
         schemaVersion: number;
         source: { contract: string; treeDigest: string; files: number; headCommit: string; dirty: boolean };
         fixture: { digest: string; splitsByLanguage: Record<string, Record<string, number>> };
+        semanticFixture: { id: string; digest: string; caseCount: number };
         languageResults: Array<{
           language: string;
           goldPositive: number;
@@ -65,16 +80,30 @@ describe("v0.5 resolved-edge quality gate", () => {
           recall: number;
         }>;
         caseResults: Array<{ category: string; split: string; actualStatuses: string[]; unexpectedPaths: unknown[]; missingPaths: unknown[]; pathPassed: boolean; passed: boolean }>;
-        providerAbsence: Array<{ language: string; preservesBase: boolean; providerState: string }>;
+        semanticCaseResults: Array<{ language: string; edgeKind: string; passed: boolean; unexpectedEdges: unknown[]; missingEdges: unknown[] }>;
+        providerAbsence: Array<{
+          language: string;
+          preservesBase: boolean;
+          providerState: string;
+          expectedBaseDigest: string;
+          actualBaseDigest: string;
+          exactBaseGraph: boolean;
+        }>;
+        determinism: { runs: number; identical: boolean; signatures: string[] };
         checks: Record<string, boolean>;
         passed: boolean;
       };
-      expect(artifact.schemaVersion).toBe(3);
+      expect(artifact.schemaVersion).toBe(4);
       expect(artifact.source).toMatchObject({
         contract: expect.any(String), treeDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
         files: expect.any(Number), headCommit: expect.stringMatching(/^[0-9a-f]{40}$/), dirty: expect.any(Boolean),
       });
       expect(artifact.fixture.digest).toBe(createHash("sha256").update(canonical(fixture)).digest("hex"));
+      expect(artifact.semanticFixture).toMatchObject({
+        id: semanticFixture.id,
+        digest: createHash("sha256").update(canonical(semanticFixture)).digest("hex"),
+        caseCount: semanticFixture.cases.length,
+      });
       expect(artifact.languageResults).toHaveLength(3);
       for (const result of artifact.languageResults) {
         expect(result).toMatchObject({
@@ -96,12 +125,19 @@ describe("v0.5 resolved-edge quality gate", () => {
       expect(artifact.caseResults.every((item) => item.passed)).toBe(true);
       expect(artifact.caseResults.every((item) => item.pathPassed && item.unexpectedPaths.length === 0 && item.missingPaths.length === 0)).toBe(true);
       expect(new Set(artifact.caseResults.map((item) => item.split))).toEqual(new Set(["development", "holdout"]));
+      expect(artifact.semanticCaseResults).toHaveLength(semanticFixture.cases.length);
+      expect(artifact.semanticCaseResults.every((item) => item.passed && item.unexpectedEdges.length === 0 && item.missingEdges.length === 0)).toBe(true);
       expect(artifact.providerAbsence).toHaveLength(3);
-      expect(artifact.providerAbsence.every((item) => item.preservesBase && item.providerState === "not_configured")).toBe(true);
+      expect(artifact.providerAbsence.every((item) => item.preservesBase
+        && item.providerState === "not_configured"
+        && item.exactBaseGraph
+        && item.expectedBaseDigest === item.actualBaseDigest)).toBe(true);
+      expect(artifact.determinism).toMatchObject({ runs: 20, identical: true });
+      expect(new Set(artifact.determinism.signatures).size).toBe(1);
       expect(Object.values(artifact.checks).every(Boolean)).toBe(true);
       expect(artifact.passed).toBe(true);
     } finally {
       rmSync(outputRoot, { recursive: true, force: true, maxRetries: 3 });
     }
-  });
+  }, 120_000);
 });

@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "id": "contextmesh-v05-semantic-conformance-v1",
+  "immutable": true,
+  "description": "Pinned semantic conformance cases beyond simple call-name matching, including Python binding visibility and Go receiver/test/build behavior.",
+  "provenance": {
+    "origin": "ContextMesh v0.5 product-design acceptance criteria and independent release review findings",
+    "authoredAgainst": "v0.5 provider contracts for Python resolver and Go go/types overlay",
+    "frozenAt": "2026-07-20",
+    "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold."
+  },
+  "files": [
+    {
+      "path": "python/pkg/base.py",
+      "content": "class ImportedBase:\n    pass\n\nclass UnimportedBase:\n    pass\n"
+    },
+    {
+      "path": "python/pkg/inheritance.py",
+      "content": "from pkg.base import ImportedBase\n\nclass ImportedChild(ImportedBase):\n    pass\n"
+    },
+    {
+      "path": "python/pkg/unimported.py",
+      "content": "class UnimportedChild(UnimportedBase):\n    pass\n"
+    },
+    {
+      "path": "python/pkg/bindings.py",
+      "content": "from pkg.target import py_target\nimport pkg.target\n\ndef shadowed(py_target):\n    return py_target()\n\ndef dotted():\n    return pkg.target.py_target()\n"
+    },
+    {
+      "path": "go/receiver/receiver.go",
+      "content": "package receiver\ntype A struct{}\ntype B struct{}\nfunc (A) Run() int { return 1 }\nfunc (B) Run() int { return 2 }\nfunc CallA(value A) int { return value.Run() }\n"
+    },
+    {
+      "path": "go/receiver/receiver_test.go",
+      "content": "package receiver\nfunc TestCaller() int { return CallA(A{}) }\n"
+    },
+    {
+      "path": "go/receiver/excluded.go",
+      "content": "//go:build contextmesh_never\n\npackage receiver\nfunc ExcludedByBuildConstraint() int { return 0 }\n"
+    }
+  ],
+  "cases": [
+    {
+      "id": "python-imported-inheritance-resolved",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/inheritance.py#ImportedChild",
+      "edgeKind": "EXTENDS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/base.py#ImportedBase",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "python-unimported-inheritance-not-resolved",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/unimported.py#UnimportedChild",
+      "edgeKind": "EXTENDS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/base.py#UnimportedBase",
+          "status": "candidate"
+        }
+      ]
+    },
+    {
+      "id": "python-parameter-shadow-rejected",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/bindings.py#shadowed",
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/target.py#py_target",
+          "status": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "python-qualified-module-call-resolved",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/bindings.py#dotted",
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/target.py#py_target",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "go-receiver-dispatch-resolved",
+      "language": "go",
+      "sourceQualifiedName": "go/receiver/receiver.go#CallA",
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "go/receiver/receiver.go#Run",
+          "targetSignatureIncludes": "func (A) Run",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "go-test-file-participates-in-precision",
+      "language": "go",
+      "sourceQualifiedName": "go/receiver/receiver_test.go#TestCaller",
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "go/receiver/receiver.go#CallA",
+          "status": "resolved"
+        }
+      ]
+    }
+  ],
+  "providerExpectations": [
+    {
+      "provider": "contextmesh_python_resolver",
+      "statuses": ["ready"]
+    },
+    {
+      "provider": "go_types",
+      "statuses": ["partial"],
+      "providerVersionPattern": "^go/types-stdlib-v1\\+go[0-9]+\\.[0-9]+",
+      "lastErrorIncludes": ["excluded by local Go build constraints"]
+    }
+  ]
+}

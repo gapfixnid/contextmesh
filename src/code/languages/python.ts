@@ -280,7 +280,7 @@ class PythonSyntaxProvider implements SyntaxProvider {
             const sourceId = base.ownerStartByte === null ? entry.moduleId : declarationIdsByPosition.get(`${entry.file.id}:${base.ownerStartByte}`) ?? entry.moduleId;
             const matches = declarationsByName.get(base.rawName) ?? [];
             const target = matches.length === 1 ? matches[0] : undefined;
-            if (target) addEdge(sourceId, target, "EXTENDS", 0.9, "resolved", base.span);
+            if (target) addEdge(sourceId, target, "EXTENDS", 0.65, "candidate", base.span);
             else addUnresolved(entry.file, sourceId, "EXTENDS", base.rawName, base.span, 0.5);
       }
       for (const callable of entry.facts.calls) {
@@ -400,6 +400,41 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
     const evidence = (confidence: number, details: Record<string, unknown>) => [{ provider: this.id, providerVersion: this.version, source: "resolver" as const, confidence, details }];
     const overlays = new Map<string, PrecisionOverlayBatch["edges"][number]>();
     const key = (edge: Pick<PrecisionOverlayBatch["edges"][number], "sourceId" | "targetId" | "kind">) => `${edge.sourceId}\0${edge.targetId}\0${edge.kind}`;
+    const parameterNames = (signature: string): Set<string> => {
+      const raw = signature.match(/^(?:async\s+)?def\s+\w+\s*\(([^)]*)\)/)?.[1] ?? "";
+      return new Set(raw.split(",").map((item) => item.trim())
+        .map((item) => item.replace(/^\*{1,2}/, "").split(/[=:]/, 1)[0]?.trim() ?? "")
+        .filter((item) => /^\w+$/.test(item)));
+    };
+    const isLocallyShadowed = (
+      file: SyntaxGraphBatch["files"][number],
+      owner: CodeNodeRecord,
+      name: string,
+      callByte: number,
+    ): boolean => {
+      if (owner.kind !== "function" && owner.kind !== "method") return false;
+      if (parameterNames(owner.signature).has(name)) return true;
+      const scopePrefix = Buffer.from(file.content, "utf8").subarray(owner.startByte, callByte).toString("utf8");
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|\\n)\\s*${escaped}\\s*(?::[^=\\n]+)?=`, "m").test(scopePrefix);
+    };
+    const resolveQualifiedImport = (
+      aliases: Map<string, ImportBinding>,
+      qualifier: string,
+      name: string,
+    ): CodeNodeRecord[] => {
+      const [head, ...tail] = qualifier.split(".");
+      const imported = head ? aliases.get(head) : undefined;
+      if (!imported) return [];
+      if (imported.symbol) return tail.length === 0
+        ? resolveModuleSymbol(imported.module, imported.symbol)
+        : [];
+      const suffix = tail.join(".");
+      const targetModule = suffix && imported.module !== suffix && !imported.module.endsWith(`.${suffix}`)
+        ? `${imported.module}.${suffix}`
+        : imported.module;
+      return resolveModuleSymbol(targetModule, name);
+    };
     let eligibleEdges = 0;
 
     for (const file of batch.files.filter((item) => item.language === "python")) {
@@ -407,20 +442,30 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
       if (!module) continue;
       const aliases = aliasesByFile.get(file.id) ?? new Map<string, ImportBinding>();
       const masked = pythonMask(file.content);
-      for (const match of masked.matchAll(/\b(?:(\w+)\.)?(\w+)\s*\(/g)) {
-        if (match.index === undefined || !match[2] || ["if", "for", "while", "def", "class", "return", "with", "lambda", "print", "super"].includes(match[2])) continue;
+      for (const match of masked.matchAll(/\b((?:\w+\.)*\w+)\s*\(/g)) {
+        if (match.index === undefined || !match[1]) continue;
+        const calleeParts = match[1].split(".");
+        const name = calleeParts.at(-1)!;
+        if (["if", "for", "while", "def", "class", "return", "with", "lambda", "print", "super"].includes(name)) continue;
         const prefix = masked.slice(Math.max(0, match.index - 12), match.index);
         if (/\b(?:def|class)\s*$/.test(prefix)) continue;
         eligibleEdges += 1;
         const byte = Buffer.byteLength(file.content.slice(0, match.index), "utf8");
         const owner = (nodesByFile.get(file.id) ?? []).filter((node) => (node.kind === "function" || node.kind === "method") && node.startByte <= byte && node.endByte >= byte)
           .sort((a, b) => (a.endByte - a.startByte) - (b.endByte - b.startByte))[0] ?? module;
-        const qualifier = match[1] ?? null;
-        const name = match[2];
+        const qualifier = calleeParts.length > 1 ? calleeParts.slice(0, -1).join(".") : null;
+        if (!qualifier && isLocallyShadowed(file, owner, name, byte)) {
+          for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === owner.id && edge.status === "candidate" && nodesById.get(edge.targetId)?.name === name)) {
+            const rejected = { sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind, status: "rejected" as const,
+              confidence: 0.99, resolutionKind: candidate.resolutionKind,
+              evidence: evidence(0.99, { reason: "local_binding_shadows_import", rawName: name }) };
+            overlays.set(key(rejected), rejected);
+          }
+          continue;
+        }
         let targets: CodeNodeRecord[] = [];
-        if (qualifier && aliases.has(qualifier)) {
-          const imported = aliases.get(qualifier)!;
-          targets = resolveModuleSymbol(imported.module, imported.symbol ?? name);
+        if (qualifier) {
+          targets = resolveQualifiedImport(aliases, qualifier, name);
         } else if (!qualifier && aliases.has(name)) {
           const imported = aliases.get(name)!;
           targets = resolveModuleSymbol(imported.module, imported.symbol ?? name);
@@ -448,9 +493,15 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
           eligibleEdges += 1;
           const parts = rawBase.split(".");
           const name = parts.at(-1)!;
-          const imported = parts.length > 1 ? aliases.get(parts[0]!) : aliases.get(name);
-          const targets = imported ? resolveModuleSymbol(imported.module, imported.symbol ?? name)
-            : pythonNodes.filter((node) => (node.kind === "class" || node.kind === "interface") && node.name === name);
+          const qualifier = parts.length > 1 ? parts.slice(0, -1).join(".") : null;
+          const imported = qualifier ? resolveQualifiedImport(aliases, qualifier, name)
+            : aliases.has(name)
+              ? resolveModuleSymbol(aliases.get(name)!.module, aliases.get(name)!.symbol ?? name)
+              : [];
+          const local = (nodesByFile.get(file.id) ?? []).filter((node) =>
+            (node.kind === "class" || node.kind === "interface") && node.name === name &&
+            containerByNodeId.get(node.id) === module.id && node.startByte < owner.startByte);
+          const targets = imported.length > 0 ? imported : local;
           const uniqueTargets = [...new Map(targets.map((target) => [target.id, target])).values()];
           if (uniqueTargets.length !== 1 || !uniqueTargets[0]) continue;
           const resolved = { sourceId: owner.id, targetId: uniqueTargets[0].id, kind: "EXTENDS" as const, status: "resolved" as const,
