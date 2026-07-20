@@ -847,6 +847,54 @@ describe("v0.5 precision overlays and core languages", () => {
     } finally { await app.close(); }
   });
 
+  it("resolves self-dispatched methods and an imported function shadowed only by the owner method name", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "method_bindings.py"), [
+      "from pkg.target import selected",
+      "",
+      "class Loader:",
+      "    def dispatch(self):",
+      "        self.fast()",
+      "        return self.explained()",
+      "",
+      "    def fast(self):",
+      "        return 1",
+      "",
+      "    def explained(self):",
+      "        return 2",
+      "",
+      "class Serializer:",
+      "    def selected(self):",
+      "        return selected()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("python");
+      const node = (qualifiedName: string) => graph.nodes.find((item) => item.qualifiedName === qualifiedName);
+      const dispatch = node("python/pkg/method_bindings.py#Loader.dispatch");
+      const fast = node("python/pkg/method_bindings.py#Loader.fast");
+      const explained = node("python/pkg/method_bindings.py#Loader.explained");
+      const serializer = node("python/pkg/method_bindings.py#Serializer.selected");
+      const imported = node("python/pkg/target.py#selected");
+      expect(dispatch).toBeDefined();
+      expect(fast).toBeDefined();
+      expect(explained).toBeDefined();
+      expect(serializer).toBeDefined();
+      expect(imported).toBeDefined();
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: dispatch!.id, targetId: fast!.id, kind: "CALLS", status: "resolved",
+      }));
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: dispatch!.id, targetId: explained!.id, kind: "CALLS", status: "resolved",
+      }));
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: serializer!.id, targetId: imported!.id, kind: "CALLS", status: "resolved",
+      }));
+    } finally { await app.close(); }
+  });
+
   it("prefers a nested Python binding over an imported symbol with the same name", async () => {
     const root = workspace();
     writeFileSync(path.join(root, "python", "pkg", "nested_binding.py"), [

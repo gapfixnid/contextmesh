@@ -18,9 +18,9 @@ The evaluator reports macro-gated and micro diagnostic Recall, MRR, nDCG, contex
 
 ## v0.5.1 external-source holdout
 
-`v051-external-holdout-v1.json` pins byte-identical source slices and licenses from three public release commits: Nx 23.1.0 (large TypeScript monorepo), Flask 3.1.3 (Python `src` layout), and Kubernetes client-go v0.36.2 (Go generated code). Minimal project-discovery files and one external Go interface stub are separately identified as harness files. Every upstream and harness byte has a SHA-256 digest, and changing a repository, file, case, threshold, or expected path requires a new fixture identity.
+`v051-external-holdout-v2.json` pins byte-identical source slices and licenses from three public release commits: Nx 23.1.0 (large TypeScript monorepo), Flask 3.1.3 (Python `src` layout), and Kubernetes client-go v0.36.2 (Go generated code). Minimal project-discovery files and one external Go interface stub are separately identified as harness files. Every upstream and harness byte has a SHA-256 digest, and changing a repository, file, case, threshold, or expected path requires a new fixture identity. Version 2 corrects two Flask labels from unresolved to their statically determined same-class and explicit-import targets; version 1 is retained only in Git history as rejected review evidence.
 
-The 22 gold cases use exact source and target start lines as well as qualified names, so repeated generated Go method names cannot match the wrong declaration. Each Tier 1 language includes positive and explicit unresolved cases. This is an external-source, offline-replayable holdout for the selected call paths; it does not claim complete provider coverage across the full upstream repositories or independent third-party annotation.
+The 23 gold cases use exact source and target declaration start lines as well as qualified names, so repeated generated Go method names cannot match the wrong declaration. They do not claim complete byte-span or call-site-span validation. Each Tier 1 language includes positive and explicit unresolved cases, including a Python function containing both a statically bound receiver call and a genuinely dynamic loader call. This is an external-source, offline-replayable holdout for the selected call paths; it does not claim complete provider coverage across the full upstream repositories or independent third-party annotation.
 
 Run and verify the source-bound artifact with:
 
@@ -29,4 +29,4 @@ npm run evaluate:v051-holdout -- --output artifacts/v051-external-holdout.json
 npm run verify:v051-holdout
 ```
 
-The release gate requires at least 0.90 precision, 0.80 recall, complete case classification, exact paths, healthy or explicitly partial Tier 1 providers, and one identical graph fingerprint across 20 full reindexes. Provider-reported whole-corpus coverage remains visible in the artifact and is not relabeled as holdout recall.
+The release gate requires at least 0.90 precision, 0.80 recall, complete case classification, exact declaration-line paths, healthy or explicitly partial Tier 1 providers, and one identical comprehensive graph/case/provider fingerprint across 20 fresh Node processes with independent applications, databases, and materialized workspaces. Provider-reported whole-corpus coverage remains visible in the artifact and is not relabeled as holdout recall.

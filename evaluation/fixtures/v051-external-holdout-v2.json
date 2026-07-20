@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "id": "contextmesh-v051-external-holdout-v1",
+  "schemaVersion": 2,
+  "id": "contextmesh-v051-external-holdout-v2",
   "immutable": true,
   "description": "Offline-replayable external-source holdout built from byte-identical files at pinned public release commits. Gold paths are derived from upstream source semantics and pinned by exact source and target spans; runtime output is not embedded as gold. This fixture measures only the selected cases, not whole-repository provider coverage.",
   "frozenAt": "2026-07-20",
@@ -329,27 +329,59 @@
       ]
     },
     {
-      "id": "flask-method-dispatch-unresolved",
+      "id": "flask-method-dispatch",
       "repositoryId": "flask",
       "language": "python",
       "sourceQualifiedName": "flask/src/flask/templating.py#DispatchingJinjaLoader.get_source",
       "sourceStartLine": 61,
-      "expectedCallEdges": [],
-      "expectedUnresolved": {
-        "rawName": "self._get_source_explained",
-        "minimumCandidates": 0
-      }
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_explained",
+          "targetStartLine": 68,
+          "status": "resolved"
+        },
+        {
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_fast",
+          "targetStartLine": 92,
+          "status": "resolved"
+        }
+      ]
     },
     {
-      "id": "flask-import-alias-ambiguous",
+      "id": "flask-import-binding",
       "repositoryId": "flask",
       "language": "python",
       "sourceQualifiedName": "flask/src/flask/json/tag.py#TaggedJSONSerializer.dumps",
       "sourceStartLine": 321,
-      "expectedCallEdges": [],
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/json/__init__.py#dumps",
+          "targetStartLine": 13,
+          "status": "resolved"
+        },
+        {
+          "target": "flask/src/flask/json/tag.py#TaggedJSONSerializer.tag",
+          "targetStartLine": 289,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "flask-dynamic-loader-dispatch",
+      "repositoryId": "flask",
+      "language": "python",
+      "sourceQualifiedName": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_fast",
+      "sourceStartLine": 92,
+      "expectedCallEdges": [
+        {
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._iter_loaders",
+          "targetStartLine": 102,
+          "status": "resolved"
+        }
+      ],
       "expectedUnresolved": {
-        "rawName": "dumps",
-        "minimumCandidates": 2
+        "rawName": "loader.get_source",
+        "minimumCandidates": 0
       }
     },
     {

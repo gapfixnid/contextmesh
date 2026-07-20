@@ -22,11 +22,31 @@ function walk(root: string, current = root): string[] {
 const project = process.cwd();
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" }).trim();
 if (dirty) throw new Error("Source ZIP verification requires a clean worktree");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
-const sourceEvidence = v04SourceEvidence(project);
-if (sourceEvidence.headCommit !== sourceCommit || sourceEvidence.dirty) {
+const archiveCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+const currentEvidence = v04SourceEvidence(project);
+if (currentEvidence.headCommit !== archiveCommit || currentEvidence.dirty) {
   throw new Error("Source ZIP evidence must identify the clean current HEAD");
 }
+const releaseEvidence = ["artifacts/v04-performance.json", "artifacts/v05-quality.json", "artifacts/v051-external-holdout.json"]
+  .map((file) => JSON.parse(readFileSync(path.join(project, file), "utf8")) as {
+    source: typeof currentEvidence;
+  })
+  .map((artifact) => artifact.source);
+const sourceEvidence = releaseEvidence[0]!;
+if (!releaseEvidence.every((evidence) =>
+  evidence.headCommit === sourceEvidence.headCommit &&
+  evidence.treeDigest === sourceEvidence.treeDigest &&
+  evidence.files === sourceEvidence.files &&
+  evidence.dirty === false) ||
+  currentEvidence.treeDigest !== sourceEvidence.treeDigest || currentEvidence.files !== sourceEvidence.files) {
+  throw new Error("Release artifacts must identify one exact non-artifact source commit and the current source tree");
+}
+const sourceCommit = sourceEvidence.headCommit;
+execFileSync("git", ["merge-base", "--is-ancestor", sourceCommit, archiveCommit], { cwd: project, stdio: "inherit" });
+execFileSync("git", [
+  "diff", "--quiet", sourceCommit, archiveCommit, "--", ".",
+  ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
+], { cwd: project, stdio: "inherit" });
 const temporary = mkdtempSync(path.join(os.tmpdir(), "contextmesh-source-zip-"));
 if (
   path.dirname(path.resolve(temporary)) !== path.resolve(os.tmpdir()) ||
@@ -56,6 +76,7 @@ try {
     [
       "archive",
       "--format=zip",
+      `--add-virtual-file=ARCHIVE_COMMIT:${archiveCommit}`,
       `--add-virtual-file=SOURCE_COMMIT:${sourceCommit}`,
       `--add-virtual-file=SOURCE_EVIDENCE.json:${stableStringify(sourceEvidence)}`,
       `--output=${archive}`,

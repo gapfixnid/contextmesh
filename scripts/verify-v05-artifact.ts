@@ -110,6 +110,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   const archiveEvidence = JSON.parse(readFileSync(sourceEvidencePath, "utf8")) as V04SourceEvidence;
   requireCondition(archiveCommit === archiveEvidence.headCommit && archiveEvidence.dirty === false, "archive commit evidence is invalid");
   requireCondition(
+    artifact.source.headCommit === archiveCommit &&
     archiveEvidence.contract === artifact.source.contract &&
     archiveEvidence.treeDigest === artifact.source.treeDigest &&
     archiveEvidence.files === artifact.source.files,

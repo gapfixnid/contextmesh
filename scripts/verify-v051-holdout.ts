@@ -11,8 +11,8 @@ import {
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
-const FIXTURE_ID = "contextmesh-v051-external-holdout-v1";
-const FIXTURE_DIGEST = "78c85d7c75871725521d38413506fc90902e38dc43cbd059c56f83c7d747b31c";
+const FIXTURE_ID = "contextmesh-v051-external-holdout-v2";
+const FIXTURE_DIGEST = "435356e534b94c41138775d682ceeca4f00e0496a5a0aa11fa3139737ce14046";
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo"];
 const REQUIRED_REPOSITORIES = ["kubernetes/client-go", "nrwl/nx", "pallets/flask"];
 const REQUIRED_LANGUAGES = ["go", "python", "typescript"];
@@ -71,7 +71,7 @@ interface Artifact {
     passed: boolean;
   }>;
   providerStates: Array<{ provider: string; status: string; coverage: number }>;
-  determinism: { runs: number; identical: boolean; signatures: string[] };
+  determinism: { scope: string; runs: number; identical: boolean; signatures: string[] };
   checks: Record<string, boolean>;
   passed: boolean;
 }
@@ -148,6 +148,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   ) as V04SourceEvidence;
   requireCondition(sourceCommit === archiveEvidence.headCommit, "archive source commit mismatch");
   requireCondition(
+    artifact.source.headCommit === sourceCommit &&
     archiveEvidence.contract === artifact.source.contract &&
     archiveEvidence.treeDigest === artifact.source.treeDigest &&
     archiveEvidence.files === artifact.source.files &&
@@ -156,7 +157,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   );
 }
 
-const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v1.json");
+const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");
 const corpusRoot = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
   id: string;
@@ -184,7 +185,7 @@ const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
   }>;
 };
 requireCondition(
-  fixture.id === FIXTURE_ID && fixture.schemaVersion === 1 && fixture.immutable === true,
+  fixture.id === FIXTURE_ID && fixture.schemaVersion === 2 && fixture.immutable === true,
   "fixture identity mismatch",
 );
 requireCondition(canonicalDigest(fixture) === FIXTURE_DIGEST, "fixture digest mismatch");
@@ -277,6 +278,10 @@ requireCondition(
   "provider coverage is invalid",
 );
 requireCondition(artifact.determinism.runs === 20 && artifact.determinism.signatures.length === 20, "20 runs required");
+requireCondition(
+  artifact.determinism.scope === "20 fresh Node processes with independent application, database, and materialized workspace instances",
+  "determinism scope mismatch",
+);
 requireCondition(
   artifact.determinism.identical && new Set(artifact.determinism.signatures).size === 1 &&
   artifact.determinism.signatures.every((value) => /^[0-9a-f]{64}$/.test(value)),

@@ -517,7 +517,12 @@ class CoreSyntaxProvider implements SyntaxProvider {
           edges.set(key, { workspaceId: input.workspace.id, sourceId: owner, targetId: target, kind: "CALLS", confidence: 0.65, resolutionKind: "heuristic", generation: input.generation, metadata: { rawName: name }, status: "candidate", evidence: referenceEvidence });
         } else {
           unresolved.push({ workspaceId: input.workspace.id, fileId: file.id, sourceNodeId: owner, kind: "CALLS", rawName: name, qualifier: null,
-            line: reference.line, column: reference.column, candidates: targets, generation: input.generation, confidence: 0.4,
+            line: reference.line, column: reference.column, candidates: [...targets].sort((left, right) => {
+              const leftNode = nodes.get(left);
+              const rightNode = nodes.get(right);
+              return (leftNode?.qualifiedName ?? left).localeCompare(rightNode?.qualifiedName ?? right) ||
+                (leftNode?.startByte ?? 0) - (rightNode?.startByte ?? 0) || left.localeCompare(right);
+            }), generation: input.generation, confidence: 0.4,
             evidence: evidence(0.4, { startByte: reference.startByte, endByte: reference.endByte, line: reference.line, column: reference.column }) });
         }
       }

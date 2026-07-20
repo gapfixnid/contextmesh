@@ -193,7 +193,12 @@ class PythonSyntaxProvider implements SyntaxProvider {
       const item: UnresolvedReferenceRecord = {
         workspaceId: input.workspace.id, fileId: file.id, sourceNodeId, kind, rawName: clampText(rawName, 200),
         qualifier: null, line: node.startLine, column: node.startColumn,
-        candidates: [...new Set(candidates)].sort((left, right) => left.localeCompare(right)),
+        candidates: [...new Set(candidates)].sort((left, right) => {
+          const leftNode = nodes.get(left);
+          const rightNode = nodes.get(right);
+          return (leftNode?.qualifiedName ?? left).localeCompare(rightNode?.qualifiedName ?? right) ||
+            (leftNode?.startByte ?? 0) - (rightNode?.startByte ?? 0) || left.localeCompare(right);
+        }),
         generation: input.generation, confidence, evidence: evidence("syntax", confidence, node, "tree_sitter_python", "0.25.0"),
       };
       unresolved.set(`${file.id}\0${sourceNodeId}\0${kind}\0${rawName}\0${item.line}\0${item.column}`, item);
@@ -436,7 +441,6 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
         new RegExp(`\\b(?:async\\s+)?for\\s+${escaped}\\s+in\\b`, "m"),
         new RegExp(`\\bwith\\b[^\\n]*\\bas\\s+${escaped}\\b`, "m"),
         new RegExp(`\\bexcept\\b[^\\n]*\\bas\\s+${escaped}\\b`, "m"),
-        new RegExp(`(?:^|\\n)\\s*(?:async\\s+)?(?:def|class)\\s+${escaped}\\b`, "m"),
         new RegExp(`\\bdel\\s+${escaped}\\b`, "m"),
       ];
       if (bindingPatterns.some((pattern) => pattern.test(scope))) return true;
@@ -474,6 +478,19 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
         ? `${imported.module}.${suffix}`
         : imported.module;
       return resolveModuleSymbol(targetModule, name);
+    };
+    const resolveReceiverMethod = (
+      owner: CodeNodeRecord,
+      qualifier: string,
+      name: string,
+    ): CodeNodeRecord[] => {
+      if ((qualifier !== "self" && qualifier !== "cls") || owner.kind !== "method") return [];
+      if (!parameterNames(owner.signature).has(qualifier)) return [];
+      const classId = containerByNodeId.get(owner.id);
+      const classNode = classId ? nodesById.get(classId) : undefined;
+      if (!classNode || classNode.kind !== "class" || !owner.fileId) return [];
+      return (nodesByFile.get(owner.fileId) ?? []).filter((node) =>
+        node.name === name && node.kind === "method" && containerByNodeId.get(node.id) === classNode.id);
     };
     let eligibleEdges = 0;
 
@@ -517,7 +534,8 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
         }
         let targets: CodeNodeRecord[] = [];
         if (qualifier) {
-          targets = resolveQualifiedImport(aliases, qualifier, name);
+          targets = resolveReceiverMethod(owner, qualifier, name);
+          if (targets.length === 0) targets = resolveQualifiedImport(aliases, qualifier, name);
         } else if (!qualifier && aliases.has(name)) {
           const imported = aliases.get(name)!;
           targets = resolveModuleSymbol(imported.module, imported.symbol ?? name);

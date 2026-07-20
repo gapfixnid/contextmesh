@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { ContextMeshApp } from "../src/app.js";
 import type { CodeEdgeRecord, CodeNodeRecord, UnresolvedReferenceRecord } from "../src/contracts.js";
@@ -45,7 +46,7 @@ interface FixtureCase {
 }
 
 interface ExternalFixture {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   immutable: true;
   description: string;
@@ -89,9 +90,9 @@ interface CaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v1.json");
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");
 const CORPUS_ROOT = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
-const PINNED_FIXTURE_DIGEST = "78c85d7c75871725521d38413506fc90902e38dc43cbd059c56f83c7d747b31c";
+const PINNED_FIXTURE_DIGEST = "435356e534b94c41138775d682ceeca4f00e0496a5a0aa11fa3139737ce14046";
 const LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo"];
 
@@ -132,8 +133,8 @@ function sourceEvidence(): V04SourceEvidence {
 
 function loadFixture(): ExternalFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as ExternalFixture;
-  requireCondition(fixture.schemaVersion === 1, "schema version");
-  requireCondition(fixture.id === "contextmesh-v051-external-holdout-v1", "fixture id");
+  requireCondition(fixture.schemaVersion === 2, "schema version");
+  requireCondition(fixture.id === "contextmesh-v051-external-holdout-v2", "fixture id");
   requireCondition(fixture.immutable === true, "fixture must be immutable");
   requireCondition(digest(fixture) === PINNED_FIXTURE_DIGEST, "fixture digest mismatch");
   requireCondition(fixture.repositories.length === 3, "three repositories are required");
@@ -288,25 +289,64 @@ function languageResults(results: CaseResult[]) {
   });
 }
 
-function graphFingerprint(graph: StoredGraphPartition): string {
+function graphFingerprint(
+  graph: StoredGraphPartition,
+  cases: CaseResult[],
+  providers: ReturnType<typeof providerStateSnapshot>,
+  root: string,
+): string {
   const byId = new Map(graph.nodes.map((node) => [node.id, {
     language: node.language ?? null,
+    ecosystem: node.ecosystem ?? null,
     kind: node.kind,
+    nativeKind: node.nativeKind ?? null,
+    name: node.name,
     qualifiedName: node.qualifiedName,
-    startLine: node.startLine,
     signature: node.signature,
+    doc: node.doc,
+    isExported: node.isExported,
+    startByte: node.startByte,
+    endByte: node.endByte,
+    startLine: node.startLine,
+    startColumn: node.startColumn,
+    endLine: node.endLine,
+    endColumn: node.endColumn,
+    contentHash: node.contentHash,
+    metadata: node.metadata,
     analysisLevel: node.analysisLevel ?? null,
   }]));
+  const normalizedRoot = root.replaceAll("\\", "/");
+  const normalizeValue = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      const node = byId.get(value);
+      if (node) return node;
+      let normalized = value.replace(/ws_[0-9a-f-]{36}/gi, "<workspace>");
+      for (const variant of [root, normalizedRoot, root.toLowerCase(), normalizedRoot.toLowerCase()]) {
+        normalized = normalized.split(variant).join("<fixture>");
+      }
+      return normalized;
+    }
+    if (Array.isArray(value)) return value.map(normalizeValue);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== "workspaceId" && key !== "generation")
+        .map(([key, item]) => [key, normalizeValue(item)]));
+    }
+    return value;
+  };
   const normalized = {
-    nodes: [...byId.values()].sort((left, right) => canonical(left).localeCompare(canonical(right))),
+    nodes: [...byId.values()].map(normalizeValue)
+      .sort((left, right) => canonical(left).localeCompare(canonical(right))),
     edges: graph.edges.map((edge) => ({
       source: byId.get(edge.sourceId) ?? edge.sourceId,
       target: byId.get(edge.targetId) ?? edge.targetId,
       kind: edge.kind,
       status: edge.status ?? "resolved",
       confidence: edge.confidence,
-      evidence: edge.evidence ?? [],
-    })).sort((left, right) => canonical(left).localeCompare(canonical(right))),
+      resolutionKind: edge.resolutionKind,
+      metadata: normalizeValue(edge.metadata),
+      evidence: normalizeValue(edge.evidence ?? []),
+    })).map(normalizeValue).sort((left, right) => canonical(left).localeCompare(canonical(right))),
     unresolved: graph.unresolvedReferences.map((reference) => ({
       source: reference.sourceNodeId ? byId.get(reference.sourceNodeId) ?? reference.sourceNodeId : null,
       kind: reference.kind,
@@ -315,33 +355,17 @@ function graphFingerprint(graph: StoredGraphPartition): string {
       line: reference.line,
       column: reference.column,
       candidates: reference.candidates.map((id) => byId.get(id) ?? id),
-    })).sort((left, right) => canonical(left).localeCompare(canonical(right))),
+      confidence: reference.confidence ?? null,
+      evidence: normalizeValue(reference.evidence ?? []),
+    })).map(normalizeValue).sort((left, right) => canonical(left).localeCompare(canonical(right))),
+    cases: normalizeValue(cases),
+    providers: normalizeValue(providers),
   };
   return digest(normalized);
 }
 
-function outputPath(): string | null {
-  const index = process.argv.indexOf("--output");
-  return index >= 0 && process.argv[index + 1] ? path.resolve(process.argv[index + 1]!) : null;
-}
-
-const fixture = loadFixture();
-const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-external-"));
-let app: ContextMeshApp | null = null;
-try {
-  materializeCorpus(fixtureRoot, fixture);
-  app = new ContextMeshApp(fixtureRoot);
-  await app.indexWorkspace({ mode: "full" });
-  const graph = currentGraph(app);
-  const caseResults = scoreCases(fixture, graph.nodes, graph.edges, graph.unresolvedReferences);
-  const perLanguage = languageResults(caseResults);
-  const signatures = [graphFingerprint(graph)];
-  for (let run = 1; run < 20; run += 1) {
-    await app.indexWorkspace({ mode: "full" });
-    signatures.push(graphFingerprint(currentGraph(app)));
-  }
-  const profiles = [...new Set(fixture.repositories.flatMap((item) => item.profiles))].sort();
-  const providerStates = app.database.getPrecisionProviderStates().map((state) => ({
+function providerStateSnapshot(app: ContextMeshApp, root: string) {
+  return app.database.getPrecisionProviderStates().map((state) => ({
     language: state.language,
     provider: state.provider,
     providerVersion: state.providerVersion,
@@ -350,87 +374,139 @@ try {
     resolvedEdges: state.resolvedEdges,
     rejectedEdges: state.rejectedEdges,
     coverage: state.coverage,
-    lastError: state.lastError?.split(fixtureRoot).join("<fixture>") ?? null,
-  }));
-  const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
-  const checks = {
-    immutableFixturePinned: digest(fixture) === PINNED_FIXTURE_DIGEST,
-    externalRepositoryCount: fixture.repositories.length === 3,
-    pinnedCommitsAndLicenses: fixture.repositories.every((item) =>
-      /^[0-9a-f]{40}$/.test(item.commit) && ["MIT", "BSD-3-Clause", "Apache-2.0"].includes(item.license)),
-    repositoryProfilesCovered: canonical(profiles) === canonical(REQUIRED_PROFILES),
-    exactUpstreamBytesPinned: fixture.repositories.flatMap((item) => item.files)
-      .every((file) => fileDigest(path.join(CORPUS_ROOT, file.corpusPath)) === file.sha256),
-    harnessBytesPinned: fixture.harness.files
-      .every((file) => fileDigest(path.join(CORPUS_ROOT, file.path)) === file.sha256),
-    languageCaseMinimums: LANGUAGES.every((language) =>
-      fixture.cases.filter((item) => item.language === language).length >= 6),
-    precisionThreshold: perLanguage.every((item) => item.precision >= fixture.thresholds.precision),
-    recallThreshold: perLanguage.every((item) => item.recall >= fixture.thresholds.recall),
-    classificationCoverageThreshold: perLanguage.every((item) =>
-      item.classificationCoverage >= fixture.thresholds.classificationCoverage),
-    exactGoldPaths: caseResults.every((item) => item.pathPassed),
-    explicitUnresolvedObserved: caseResults.filter((item) => item.expectedUnresolved)
-      .every((item) => item.unresolvedObserved === true),
-    generatedGoEvidence: caseResults.filter((item) => item.id.includes("generated"))
-      .every((item) => item.passed),
-    twentyRunDeterminism: signatures.length === 20 && new Set(signatures).size === 1,
-    providersHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
-      providerStates.some((state) => state.provider === provider && ["ready", "partial"].includes(state.status))),
-  };
-  const artifact = {
-    schemaVersion: 1,
-    release: "v0.5.1",
-    source: sourceEvidence(),
-    fixture: {
-      id: fixture.id,
-      schemaVersion: fixture.schemaVersion,
-      immutable: fixture.immutable,
-      digest: digest(fixture),
-      repositoryCount: fixture.repositories.length,
-      fileCount: fixture.repositories.reduce((sum, item) => sum + item.files.length, 0),
-      caseCount: fixture.cases.length,
-      profiles,
-      thresholds: fixture.thresholds,
-      repositories: fixture.repositories.map((item) => ({
-        id: item.id,
-        repository: item.repository,
-        tag: item.tag,
-        commit: item.commit,
-        license: item.license,
-        fileCount: item.files.length,
-      })),
-    },
-    runner: {
-      node: process.version,
-      platform: `${process.platform}-${process.arch}`,
-      go: goVersion.status === 0 ? goVersion.stdout.trim() : "unavailable",
-    },
-    generation: app.database.getWorkspace().currentGeneration,
-    precisionRevision: app.database.getPrecisionRevision(),
-    languageResults: perLanguage,
-    caseResults,
-    providerStates,
-    determinism: {
-      runs: signatures.length,
-      identical: new Set(signatures).size === 1,
-      signatures,
-    },
-    checks,
-    passed: Object.values(checks).every(Boolean) && caseResults.every((item) => item.passed),
-  };
-  const text = `${JSON.stringify(JSON.parse(stableStringify(artifact)), null, 2)}\n`;
-  const target = outputPath();
-  if (target) {
-    mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, text, "utf8");
-  }
-  process.stdout.write(text);
-  if (!artifact.passed) {
-    throw new Error(`v0.5.1 external holdout failed: ${Object.entries(checks)
-      .filter(([, passed]) => !passed).map(([name]) => name).join(", ")}`);
-  }
-} finally {
-  await app?.close();
-  rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
+    lastError: state.lastError?.split(root).join("<fixture>") ?? null,
+  })).sort((left, right) => left.provider.localeCompare(right.provider));
 }
+
+function outputPath(): string | null {
+  const index = process.argv.indexOf("--output");
+  return index >= 0 && process.argv[index + 1] ? path.resolve(process.argv[index + 1]!) : null;
+}
+
+async function runDeterminismChild(): Promise<void> {
+  const fixture = loadFixture();
+  const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-determinism-"));
+  const app = new ContextMeshApp(root);
+  try {
+    materializeCorpus(root, fixture);
+    await app.indexWorkspace({ mode: "full" });
+    const graph = currentGraph(app);
+    const cases = scoreCases(fixture, graph.nodes, graph.edges, graph.unresolvedReferences);
+    const providers = providerStateSnapshot(app, root);
+    process.stdout.write(`${JSON.stringify({ signature: graphFingerprint(graph, cases, providers, root) })}\n`);
+  } finally {
+    await app.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
+async function runEvaluation(): Promise<void> {
+  const fixture = loadFixture();
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-external-"));
+  let app: ContextMeshApp | null = null;
+  try {
+    materializeCorpus(fixtureRoot, fixture);
+    app = new ContextMeshApp(fixtureRoot);
+    await app.indexWorkspace({ mode: "full" });
+    const graph = currentGraph(app);
+    const caseResults = scoreCases(fixture, graph.nodes, graph.edges, graph.unresolvedReferences);
+    const perLanguage = languageResults(caseResults);
+    const providerStates = providerStateSnapshot(app, fixtureRoot);
+    const scriptPath = fileURLToPath(import.meta.url);
+    const signatures: string[] = [];
+    for (let run = 0; run < 20; run += 1) {
+      const output = execFileSync(
+        process.execPath,
+        ["--import", "tsx", scriptPath, "--determinism-child"],
+        { encoding: "utf8", maxBuffer: 1024 * 1024, env: process.env },
+      ).trim();
+      signatures.push((JSON.parse(output) as { signature: string }).signature);
+    }
+    const profiles = [...new Set(fixture.repositories.flatMap((item) => item.profiles))].sort();
+    const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
+    const checks = {
+      immutableFixturePinned: digest(fixture) === PINNED_FIXTURE_DIGEST,
+      externalRepositoryCount: fixture.repositories.length === 3,
+      pinnedCommitsAndLicenses: fixture.repositories.every((item) =>
+        /^[0-9a-f]{40}$/.test(item.commit) && ["MIT", "BSD-3-Clause", "Apache-2.0"].includes(item.license)),
+      repositoryProfilesCovered: canonical(profiles) === canonical(REQUIRED_PROFILES),
+      exactUpstreamBytesPinned: fixture.repositories.flatMap((item) => item.files)
+        .every((file) => fileDigest(path.join(CORPUS_ROOT, file.corpusPath)) === file.sha256),
+      harnessBytesPinned: fixture.harness.files
+        .every((file) => fileDigest(path.join(CORPUS_ROOT, file.path)) === file.sha256),
+      languageCaseMinimums: LANGUAGES.every((language) =>
+        fixture.cases.filter((item) => item.language === language).length >= 6),
+      precisionThreshold: perLanguage.every((item) => item.precision >= fixture.thresholds.precision),
+      recallThreshold: perLanguage.every((item) => item.recall >= fixture.thresholds.recall),
+      classificationCoverageThreshold: perLanguage.every((item) =>
+        item.classificationCoverage >= fixture.thresholds.classificationCoverage),
+      exactGoldPaths: caseResults.every((item) => item.pathPassed),
+      explicitUnresolvedObserved: caseResults.filter((item) => item.expectedUnresolved)
+        .every((item) => item.unresolvedObserved === true),
+      generatedGoEvidence: caseResults.filter((item) => item.id.includes("generated"))
+        .every((item) => item.passed),
+      twentyRunDeterminism: signatures.length === 20 && new Set(signatures).size === 1,
+      providersHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
+        providerStates.some((state) => state.provider === provider && ["ready", "partial"].includes(state.status))),
+    };
+    const artifact = {
+      schemaVersion: 1,
+      release: "v0.5.1",
+      source: sourceEvidence(),
+      fixture: {
+        id: fixture.id,
+        schemaVersion: fixture.schemaVersion,
+        immutable: fixture.immutable,
+        digest: digest(fixture),
+        repositoryCount: fixture.repositories.length,
+        fileCount: fixture.repositories.reduce((sum, item) => sum + item.files.length, 0),
+        caseCount: fixture.cases.length,
+        profiles,
+        thresholds: fixture.thresholds,
+        repositories: fixture.repositories.map((item) => ({
+          id: item.id,
+          repository: item.repository,
+          tag: item.tag,
+          commit: item.commit,
+          license: item.license,
+          fileCount: item.files.length,
+        })),
+      },
+      runner: {
+        node: process.version,
+        platform: `${process.platform}-${process.arch}`,
+        go: goVersion.status === 0 ? goVersion.stdout.trim() : "unavailable",
+      },
+      generation: app.database.getWorkspace().currentGeneration,
+      precisionRevision: app.database.getPrecisionRevision(),
+      languageResults: perLanguage,
+      caseResults,
+      providerStates,
+      determinism: {
+        scope: "20 fresh Node processes with independent application, database, and materialized workspace instances",
+        runs: signatures.length,
+        identical: new Set(signatures).size === 1,
+        signatures,
+      },
+      checks,
+      passed: Object.values(checks).every(Boolean) && caseResults.every((item) => item.passed),
+    };
+    const text = `${JSON.stringify(JSON.parse(stableStringify(artifact)), null, 2)}\n`;
+    const target = outputPath();
+    if (target) {
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, text, "utf8");
+    }
+    process.stdout.write(text);
+    if (!artifact.passed) {
+      throw new Error(`v0.5.1 external holdout failed: ${Object.entries(checks)
+        .filter(([, passed]) => !passed).map(([name]) => name).join(", ")}`);
+    }
+  } finally {
+    await app?.close();
+    rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
+if (process.argv.includes("--determinism-child")) await runDeterminismChild();
+else await runEvaluation();

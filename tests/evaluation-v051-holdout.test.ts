@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -30,7 +31,7 @@ interface ExternalFixture {
   }>;
 }
 
-const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v1.json");
+const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");
 const corpusRoot = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
 const hasGo = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true }).status === 0;
 
@@ -39,8 +40,8 @@ describe("v0.5.1 external holdout release contract", () => {
     expect(existsSync(fixturePath)).toBe(true);
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ExternalFixture;
     expect(fixture).toMatchObject({
-      schemaVersion: 1,
-      id: "contextmesh-v051-external-holdout-v1",
+      schemaVersion: 2,
+      id: "contextmesh-v051-external-holdout-v2",
       immutable: true,
       thresholds: { precision: 0.9, recall: 0.8, classificationCoverage: 1 },
     });
@@ -90,7 +91,7 @@ describe("v0.5.1 external holdout release contract", () => {
       release: string;
       fixture: { repositoryCount: number; caseCount: number; profiles: string[] };
       languageResults: Array<{ language: string; precision: number; recall: number; classificationCoverage: number }>;
-      determinism: { runs: number; identical: boolean; signatures: string[] };
+      determinism: { scope: string; runs: number; identical: boolean; signatures: string[] };
       passed: boolean;
     };
     expect(artifact.release).toBe("v0.5.1");
@@ -99,8 +100,39 @@ describe("v0.5.1 external holdout release contract", () => {
     expect(new Set(artifact.fixture.profiles)).toEqual(new Set(["complex-src-layout", "generated-code", "large-monorepo"]));
     expect(artifact.languageResults).toHaveLength(3);
     expect(artifact.languageResults.every((item) => item.precision >= 0.9 && item.recall >= 0.8 && item.classificationCoverage === 1)).toBe(true);
-    expect(artifact.determinism).toMatchObject({ runs: 20, identical: true });
+    expect(artifact.determinism).toMatchObject({
+      scope: "20 fresh Node processes with independent application, database, and materialized workspace instances",
+      runs: 20,
+      identical: true,
+    });
     expect(new Set(artifact.determinism.signatures).size).toBe(1);
     expect(artifact.passed).toBe(true);
   }, 300_000);
+
+  it("rejects archive evidence that names a different source commit than the artifact", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-archive-contract-"));
+    try {
+      const fixtureDirectory = path.join(root, "evaluation", "fixtures");
+      mkdirSync(fixtureDirectory, { recursive: true });
+      cpSync(fixturePath, path.join(fixtureDirectory, path.basename(fixturePath)));
+      cpSync(corpusRoot, path.join(fixtureDirectory, path.basename(corpusRoot)), { recursive: true });
+      const artifactPath = path.join(root, "artifact.json");
+      cpSync(path.join(process.cwd(), "artifacts", "v051-external-holdout.json"), artifactPath);
+      const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as { source: Record<string, unknown> };
+      const mismatchedCommit = "a".repeat(40);
+      writeFileSync(path.join(root, "SOURCE_COMMIT"), mismatchedCommit, "utf8");
+      writeFileSync(path.join(root, "SOURCE_EVIDENCE.json"), JSON.stringify({
+        ...artifact.source,
+        headCommit: mismatchedCommit,
+      }), "utf8");
+      const tsxCli = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+      const run = spawnSync(process.execPath, [tsxCli, path.join(process.cwd(), "scripts", "verify-v051-holdout.ts"), artifactPath], {
+        cwd: root, env: process.env, encoding: "utf8", timeout: 60_000,
+      });
+      expect(run.status).not.toBe(0);
+      expect(`${run.stdout}\n${run.stderr}`).toMatch(/archive source evidence mismatch/);
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
 });
