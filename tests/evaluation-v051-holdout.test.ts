@@ -7,6 +7,14 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { stableStringify, v04CommitSourceManifest } from "../scripts/v04-artifact-contract.js";
 
+function sourceManifest(commit: string): Array<{ path: string; sha256: string }> {
+  const embedded = path.join(process.cwd(), "SOURCE_MANIFEST.json");
+  if (existsSync(embedded)) {
+    return JSON.parse(readFileSync(embedded, "utf8")) as Array<{ path: string; sha256: string }>;
+  }
+  return v04CommitSourceManifest(commit);
+}
+
 interface ExternalFixture {
   schemaVersion: number;
   id: string;
@@ -143,7 +151,7 @@ describe("v0.5.1 external holdout release contract", () => {
       const artifact = JSON.parse(
         readFileSync(path.join(process.cwd(), "artifacts", "v051-external-holdout.json"), "utf8"),
       ) as { source: { headCommit: string } & Record<string, unknown> };
-      const manifest = v04CommitSourceManifest(artifact.source.headCommit);
+      const manifest = sourceManifest(artifact.source.headCommit);
       for (const item of manifest) {
         const target = path.join(root, item.path);
         mkdirSync(path.dirname(target), { recursive: true });
