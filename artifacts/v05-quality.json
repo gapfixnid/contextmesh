@@ -560,26 +560,26 @@
     "identical": true,
     "runs": 20,
     "signatures": [
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41",
-      "012e8935ed2f9763ad68c5ac7db22808332687660c0bfb78ddb2277aeda87e41"
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
+      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb"
     ]
   },
   "fixture": {
@@ -697,9 +697,9 @@
       "providerState": "not_configured"
     },
     {
-      "actualBaseDigest": "b8c0d51cd2f2f07bc6ba70628d4bddfa3b39a251c4733cd38f0d621cad25a436",
+      "actualBaseDigest": "6efdf3a2be449db551a1b720d6157eb57543f53f299af6254ec390a406c9b44f",
       "exactBaseGraph": true,
-      "expectedBaseDigest": "b8c0d51cd2f2f07bc6ba70628d4bddfa3b39a251c4733cd38f0d621cad25a436",
+      "expectedBaseDigest": "6efdf3a2be449db551a1b720d6157eb57543f53f299af6254ec390a406c9b44f",
       "language": "python",
       "preservesBase": true,
       "provider": "contextmesh_python_resolver",
@@ -753,15 +753,15 @@
     {
       "baseGeneration": 20,
       "capability": "resolved",
-      "coverage": 0.4166666666666667,
-      "eligibleEdges": 12,
+      "coverage": 0.5333333333333333,
+      "eligibleEdges": 15,
       "language": "python",
       "lastError": null,
       "precisionRevision": 58,
       "provider": "contextmesh_python_resolver",
       "providerVersion": "0.5.0",
       "rejectedEdges": 3,
-      "resolvedEdges": 5,
+      "resolvedEdges": 8,
       "status": "ready"
     },
     {
@@ -893,6 +893,72 @@
       "actualEdges": [
         {
           "status": "resolved",
+          "targetQualifiedName": "python/pkg/nested_binding.py#nested_binding.nested_selected",
+          "targetSignature": "def nested_selected()"
+        }
+      ],
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/nested_binding.py#nested_binding.nested_selected"
+        }
+      ],
+      "id": "python-nested-binding-precedes-import",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/nested_binding.py#nested_binding",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/submodule_target.py#qualified_target",
+          "targetSignature": "def qualified_target()"
+        }
+      ],
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/submodule_target.py#qualified_target"
+        }
+      ],
+      "id": "python-from-package-submodule-call-resolved",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/submodule_binding.py#qualified_submodule_call",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/submodule_target.py#QualifiedBase",
+          "targetSignature": "class QualifiedBase"
+        }
+      ],
+      "edgeKind": "EXTENDS",
+      "expectedEdges": [
+        {
+          "status": "resolved",
+          "targetQualifiedName": "python/pkg/submodule_target.py#QualifiedBase"
+        }
+      ],
+      "id": "python-from-package-submodule-inheritance-resolved",
+      "language": "python",
+      "missingEdges": [],
+      "passed": true,
+      "sourceQualifiedName": "python/pkg/submodule_binding.py#QualifiedChild",
+      "unexpectedEdges": []
+    },
+    {
+      "actualEdges": [
+        {
+          "status": "resolved",
           "targetQualifiedName": "go/receiver/receiver.go#Run",
           "targetSignature": "func (A) Run() int"
         }
@@ -936,9 +1002,9 @@
     }
   ],
   "semanticFixture": {
-    "caseCount": 6,
-    "digest": "db830a4a5644045a5f6a0b1ced3391377fe3e6cf164dc9458f7b7052dd6a169c",
-    "id": "contextmesh-v05-semantic-conformance-v1",
+    "caseCount": 9,
+    "digest": "f048e67fdfbb6ef5db104089aafdc2fcd4ca8ac62679aaf01483366b42ddbb75",
+    "id": "contextmesh-v05-semantic-conformance-v2",
     "immutable": true,
     "provenance": {
       "authoredAgainst": "v0.5 provider contracts for Python resolver and Go go/types overlay",
@@ -946,15 +1012,15 @@
       "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold.",
       "origin": "ContextMesh v0.5 product-design acceptance criteria and independent release review findings"
     },
-    "schemaVersion": 1
+    "schemaVersion": 2
   },
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
     "files": 136,
-    "headCommit": "175b236e6658dba00cab851bc3c3b11b59e4ad9d",
-    "headTreeDigest": "c27163e2b31ff1dbb31e55cb0b7fd80234505e9a0a0ecaea7a0f48a0e42169ee",
-    "treeDigest": "c27163e2b31ff1dbb31e55cb0b7fd80234505e9a0a0ecaea7a0f48a0e42169ee"
+    "headCommit": "b1ead7c090666a18badbf9b93fe0e2f0e4cc6bdd",
+    "headTreeDigest": "d269dcc99512cec9665a6d21d730d821ad40f083aa2c3ae8012b5b947239b549",
+    "treeDigest": "d269dcc99512cec9665a6d21d730d821ad40f083aa2c3ae8012b5b947239b549"
   },
   "statusCoverage": [
     "candidate",
