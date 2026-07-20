@@ -50,14 +50,17 @@ describe("v0.4 performance artifact verifier", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v04-source-contract-"));
     roots.push(root);
     mkdirSync(path.join(root, "artifacts"), { recursive: true });
+    mkdirSync(path.join(root, "evaluation", "artifacts"), { recursive: true });
     writeFileSync(path.join(root, "source.ts"), "export const source = true;\n", "utf8");
     writeFileSync(path.join(root, "artifacts", "v05-quality.json"), "{\"platform\":\"windows\"}\n", "utf8");
+    writeFileSync(path.join(root, "evaluation", "artifacts", "mixed-language-v1.json"), "{\"run\":1}\n", "utf8");
     expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["add", "source.ts"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["-c", "user.name=ContextMesh Test", "-c", "user.email=contextmesh@example.invalid", "commit", "-m", "fixture"], { cwd: root }).status).toBe(0);
 
     const before = v04SourceEvidence(root);
     writeFileSync(path.join(root, "artifacts", "v05-quality.json"), "{\"platform\":\"linux\"}\n", "utf8");
+    writeFileSync(path.join(root, "evaluation", "artifacts", "mixed-language-v1.json"), "{\"run\":2}\n", "utf8");
     const after = v04SourceEvidence(root);
 
     expect(after).toEqual(before);

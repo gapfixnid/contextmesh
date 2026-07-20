@@ -48,6 +48,10 @@ export function stableStringify(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
+function isGeneratedArtifactPath(relativePath: string): boolean {
+  return relativePath.startsWith("artifacts/") || relativePath.startsWith("evaluation/artifacts/");
+}
+
 function normalizedBufferDigest(source: Buffer): string {
   const normalized = source.includes(0)
     ? source
@@ -75,7 +79,7 @@ export function v04CommitSourceEvidence(commit: string, root = process.cwd()): {
     .split("\0")
     .filter(Boolean)
     .map((item) => item.replaceAll("\\", "/"))
-    .filter((item) => !item.startsWith("artifacts/"))
+    .filter((item) => !isGeneratedArtifactPath(item))
     .sort((left, right) => left.localeCompare(right));
   return manifestEvidence(files.map((file) => ({
     path: file,
@@ -97,7 +101,7 @@ export function v04SourceEvidence(root = process.cwd()): V04SourceEvidence {
     .split("\0")
     .filter(Boolean)
     .map((item) => item.replaceAll("\\", "/"))
-    .filter((item) => !item.startsWith("artifacts/") && existsSync(path.join(root, item)))
+    .filter((item) => !isGeneratedArtifactPath(item) && existsSync(path.join(root, item)))
     .sort((left, right) => left.localeCompare(right));
   const manifest = files.map((file) => ({
     path: file,
