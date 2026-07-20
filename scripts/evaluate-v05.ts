@@ -55,7 +55,7 @@ interface CaseResult {
 }
 
 interface SemanticFixture {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   immutable: true;
   description: string;
@@ -100,8 +100,8 @@ interface SemanticCaseResult {
 
 const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json");
 const PINNED_FIXTURE_DIGEST = "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823";
-const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v1.json");
-const PINNED_SEMANTIC_FIXTURE_DIGEST = "db830a4a5644045a5f6a0b1ced3391377fe3e6cf164dc9458f7b7052dd6a169c";
+const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v2.json");
+const PINNED_SEMANTIC_FIXTURE_DIGEST = "f048e67fdfbb6ef5db104089aafdc2fcd4ca8ac62679aaf01483366b42ddbb75";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
 
 function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
@@ -183,8 +183,8 @@ function loadFixture(): QualityFixture {
 function loadSemanticFixture(): SemanticFixture {
   const fixture = JSON.parse(readFileSync(SEMANTIC_FIXTURE_PATH, "utf8")) as SemanticFixture;
   if (
-    fixture.schemaVersion !== 1 ||
-    fixture.id !== "contextmesh-v05-semantic-conformance-v1" ||
+    fixture.schemaVersion !== 2 ||
+    fixture.id !== "contextmesh-v05-semantic-conformance-v2" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||
@@ -556,9 +556,7 @@ try {
       const absentIndex = await absentApp.indexWorkspace({ mode: "full" });
       const absentGraph = absentApp.database.getStoredGraphPartition(specification.partition);
       const state = absentApp.database.getPrecisionProviderStates().find((item) => item.provider === specification.provider);
-      const capability = absentApp.code.indexer.coordinator.capabilities(root)
-        .find((item) => item.language === (specification.language === "typescript" ? "typescript/javascript" : specification.language));
-      const providerState = state?.status ?? (capability?.precisionProvider === null ? "not_configured" : "missing");
+      const providerState = state?.status ?? "missing";
       const expectedBaseDigest = graphFingerprint(syntax, specification.language);
       const actualBaseDigest = graphFingerprint(absentGraph, specification.language);
       const exactBaseGraph = expectedBaseDigest === actualBaseDigest;

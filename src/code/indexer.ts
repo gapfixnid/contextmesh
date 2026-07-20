@@ -677,6 +677,7 @@ export class CodeIndexer {
           }
           const pythonAdapter = this.coordinator.adapter("python");
           const pythonProvider = pythonAdapter?.createSyntaxProvider(project.pythonProject);
+          const pythonPrecisionProvider = pythonAdapter?.createOverlayPrecisionProvider?.(project.pythonProject);
           const pythonGraph = pythonProvider
             ? await pythonProvider.extract({ workspace, project: project.pythonProject, files: pythonFiles, generation: handle.generation, mode })
             : { files: [], nodes: [], edges: [], unresolvedReferences: [], diagnostics: [] };
@@ -727,17 +728,23 @@ export class CodeIndexer {
               }] : [],
             }] : []),
             ...(pythonFiles.length > 0 ? [{
-              language: "python", ecosystem: "pypi", syntaxProvider: "contextmesh_graph_kernel", precisionProvider: "contextmesh_python_resolver",
-              analysisLevel: "resolved" as const, files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: 1,
+              language: "python", ecosystem: "pypi", syntaxProvider: "contextmesh_graph_kernel",
+              precisionProvider: pythonPrecisionProvider?.id ?? null,
+              analysisLevel: pythonPrecisionProvider ? "resolved" as const : "syntax" as const,
+              files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: pythonPrecisionProvider ? 1 : 0,
               filesReparsed: pythonGraph.providerMetrics?.filesParsed ?? pythonFiles.length,
               kernelRssBytes: pythonGraph.providerMetrics?.kernelRssBytes ?? 0,
               configHash: project.pythonProject.configHash,
               providerVersions: {
                 ...PYTHON_PROVIDER_VERSIONS,
                 runtime: pythonGraph.providerMetrics?.providerVersion?.split("/")[0] ?? PYTHON_PROVIDER_VERSIONS.runtime,
-              }, status: "ready" as const,
-              coverage: 1, diagnostics: [
+              }, status: pythonPrecisionProvider ? "ready" as const : "not_configured" as const,
+              coverage: pythonPrecisionProvider ? 1 : 0, diagnostics: [
                 { code: "GRAPH_KERNEL_MODE", severity: "info" as const, message: pythonGraph.providerMetrics?.mode ?? "unknown" },
+                ...(!pythonPrecisionProvider ? [{
+                  code: "PYTHON_PRECISION_DISABLED", severity: "info" as const,
+                  message: "Python resolved precision disabled by policy",
+                }] : []),
                 ...project.pythonProject.diagnostics.map((message) => ({
                   code: "PYTHON_PROJECT_DIAGNOSTIC", severity: "warning" as const, message,
                 })),
@@ -822,7 +829,20 @@ export class CodeIndexer {
           } finally {
             preparedSemantic?.stopHeartbeat();
           }
-          if (pythonFiles.length > 0) await this.runPrecisionOverlay("python", project.pythonProject, pythonGraph, handle.generation);
+          if (pythonFiles.length > 0) {
+            if (pythonPrecisionProvider) {
+              await this.runPrecisionOverlay("python", project.pythonProject, pythonGraph, handle.generation);
+            } else {
+              this.database.registerPrecisionProvider({
+                language: "python",
+                provider: "contextmesh_python_resolver",
+                providerVersion: "0.5.0",
+                capability: "resolved",
+                status: "not_configured",
+                lastError: "Python resolved precision disabled by policy",
+              });
+            }
+          }
           if (tsPrecisionError && tsPrecisionProvider) {
             this.database.registerPrecisionProvider({
               language: "typescript/javascript",
@@ -939,7 +959,7 @@ export class CodeIndexer {
       const files = project.files.filter((file) => file.language === language);
       if (files.length === 0) continue;
       const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
-      if (state?.providerVersion === provider.version && state.baseGeneration === generation && (state.status === "ready" || state.status === "partial" || state.status === "not_configured")) continue;
+      if (state?.providerVersion === provider.version && state.baseGeneration === generation && (state.status === "ready" || state.status === "partial")) continue;
       const graph = await this.coordinator.adapter(language)!.createSyntaxProvider(languageProject)
         .extract({ workspace, project: languageProject, files, generation, mode: "incremental" });
       await this.runPrecisionOverlay(language, languageProject, graph, generation);

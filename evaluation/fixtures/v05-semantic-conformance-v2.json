@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "id": "contextmesh-v05-semantic-conformance-v1",
+  "schemaVersion": 2,
+  "id": "contextmesh-v05-semantic-conformance-v2",
   "immutable": true,
   "description": "Pinned semantic conformance cases beyond simple call-name matching, including Python binding visibility and Go receiver/test/build behavior.",
   "provenance": {
@@ -25,6 +25,22 @@
     {
       "path": "python/pkg/bindings.py",
       "content": "from pkg.target import py_target\nimport pkg.target\n\ndef shadowed(py_target):\n    return py_target()\n\ndef dotted():\n    return pkg.target.py_target()\n"
+    },
+    {
+      "path": "python/pkg/nested_target.py",
+      "content": "def nested_selected():\n    return 1\n"
+    },
+    {
+      "path": "python/pkg/nested_binding.py",
+      "content": "from pkg.nested_target import nested_selected\n\ndef nested_binding():\n    def nested_selected():\n        return 2\n    return nested_selected()\n"
+    },
+    {
+      "path": "python/pkg/submodule_target.py",
+      "content": "class QualifiedBase:\n    pass\n\ndef qualified_target():\n    return 1\n"
+    },
+    {
+      "path": "python/pkg/submodule_binding.py",
+      "content": "from pkg import submodule_target\n\nclass QualifiedChild(submodule_target.QualifiedBase):\n    pass\n\ndef qualified_submodule_call():\n    return submodule_target.qualified_target()\n"
     },
     {
       "path": "go/receiver/receiver.go",
@@ -84,6 +100,42 @@
       "expectedEdges": [
         {
           "targetQualifiedName": "python/pkg/target.py#py_target",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "python-nested-binding-precedes-import",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/nested_binding.py#nested_binding",
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/nested_binding.py#nested_binding.nested_selected",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "python-from-package-submodule-call-resolved",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/submodule_binding.py#qualified_submodule_call",
+      "edgeKind": "CALLS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/submodule_target.py#qualified_target",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "python-from-package-submodule-inheritance-resolved",
+      "language": "python",
+      "sourceQualifiedName": "python/pkg/submodule_binding.py#QualifiedChild",
+      "edgeKind": "EXTENDS",
+      "expectedEdges": [
+        {
+          "targetQualifiedName": "python/pkg/submodule_target.py#QualifiedBase",
           "status": "resolved"
         }
       ]

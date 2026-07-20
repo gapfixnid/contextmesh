@@ -33,6 +33,94 @@ function workspace(): string {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true, maxRetries: 3 }); });
 
 describe("v0.5 precision overlays and core languages", () => {
+  it("reports disabled Python precision as unavailable without claiming resolved coverage", async () => {
+    const root = workspace();
+    const priorDisable = process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE;
+    process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{
+        adapterStats: Array<{
+          language: string;
+          precisionProvider: string | null;
+          analysisLevel: string;
+          precisionInvocations: number;
+          status: string;
+          coverage: number;
+        }>;
+      }>;
+      expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "python",
+        precisionProvider: null,
+        analysisLevel: "syntax",
+        precisionInvocations: 0,
+        status: "not_configured",
+        coverage: 0,
+      }));
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        language: "python",
+        provider: "contextmesh_python_resolver",
+        status: "not_configured",
+        lastError: expect.stringMatching(/disabled/i),
+      }));
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE;
+      else process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("reprobes a previously unavailable precision provider on a no-op generation", async () => {
+    const root = workspace();
+    const app = new ContextMeshApp(root);
+    const adapter = app.code.indexer.coordinator.adapter("go")!;
+    const mutableAdapter = adapter as {
+      createOverlayPrecisionProvider: NonNullable<typeof adapter.createOverlayPrecisionProvider>;
+    };
+    const originalProvider = mutableAdapter.createOverlayPrecisionProvider;
+    let available = false;
+    let probes = 0;
+    mutableAdapter.createOverlayPrecisionProvider = () => ({
+      id: "recovery_fixture",
+      version: "1",
+      capability: "resolved",
+      available: async () => {
+        probes += 1;
+        return available ? { available: true } : { available: false, diagnostic: "temporarily unavailable" };
+      },
+      analyze: async (_batch, baseGeneration) => ({
+        language: "go",
+        provider: "recovery_fixture",
+        providerVersion: "1",
+        capability: "resolved",
+        baseGeneration,
+        edges: [],
+        eligibleEdges: 0,
+        diagnostics: [],
+      }),
+    });
+    try {
+      const first = await app.indexWorkspace({ mode: "full" });
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "recovery_fixture",
+        status: "not_configured",
+      }));
+      available = true;
+      const noOp = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
+      expect(noOp.data.noOp).toBe(true);
+      expect(noOp.generation).toBe(first.generation);
+      expect(probes).toBe(2);
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "recovery_fixture",
+        status: "ready",
+        baseGeneration: first.generation,
+      }));
+    } finally {
+      mutableAdapter.createOverlayPrecisionProvider = originalProvider;
+      await app.close();
+    }
+  });
+
   it("indexes Go, Rust, Java, and C# syntax without configured precision providers", async () => {
     const root = workspace();
     const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
@@ -737,6 +825,68 @@ describe("v0.5 precision overlays and core languages", () => {
       expect(dotted.data.edges).toContainEqual(expect.objectContaining({
         targetId: selectedId,
         status: "resolved",
+      }));
+    } finally { await app.close(); }
+  });
+
+  it("prefers a nested Python binding over an imported symbol with the same name", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "nested_binding.py"), [
+      "from pkg.target import selected",
+      "",
+      "def shadowed_by_nested():",
+      "    def selected():",
+      "        return 2",
+      "    return selected()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("python");
+      const caller = graph.nodes.find((node) => node.qualifiedName === "python/pkg/nested_binding.py#shadowed_by_nested");
+      const nested = graph.nodes.find((node) => node.qualifiedName === "python/pkg/nested_binding.py#shadowed_by_nested.selected");
+      const imported = graph.nodes.find((node) => node.qualifiedName === "python/pkg/target.py#selected");
+      expect(caller).toBeDefined();
+      expect(nested).toBeDefined();
+      expect(imported).toBeDefined();
+      const resolved = graph.edges.filter((edge) => edge.sourceId === caller!.id && edge.kind === "CALLS" && edge.status === "resolved");
+      expect(resolved).toContainEqual(expect.objectContaining({ targetId: nested!.id }));
+      expect(resolved).not.toContainEqual(expect.objectContaining({ targetId: imported!.id }));
+    } finally { await app.close(); }
+  });
+
+  it("resolves qualified Python calls and inheritance through a from-package submodule import", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "__init__.py"), "");
+    writeFileSync(path.join(root, "python", "pkg", "submodule_binding.py"), [
+      "from pkg import target",
+      "",
+      "class ViaSubmoduleBase(target.Base):",
+      "    pass",
+      "",
+      "def via_submodule():",
+      "    return target.selected()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("python");
+      const node = (qualifiedName: string) => graph.nodes.find((item) => item.qualifiedName === qualifiedName);
+      const caller = node("python/pkg/submodule_binding.py#via_submodule");
+      const child = node("python/pkg/submodule_binding.py#ViaSubmoduleBase");
+      const selected = node("python/pkg/target.py#selected");
+      const base = node("python/pkg/target.py#Base");
+      expect(caller).toBeDefined();
+      expect(child).toBeDefined();
+      expect(selected).toBeDefined();
+      expect(base).toBeDefined();
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: caller!.id, targetId: selected!.id, kind: "CALLS", status: "resolved",
+      }));
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: child!.id, targetId: base!.id, kind: "EXTENDS", status: "resolved",
       }));
     } finally { await app.close(); }
   });

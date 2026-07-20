@@ -410,13 +410,49 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
       file: SyntaxGraphBatch["files"][number],
       owner: CodeNodeRecord,
       name: string,
-      callByte: number,
     ): boolean => {
       if (owner.kind !== "function" && owner.kind !== "method") return false;
       if (parameterNames(owner.signature).has(name)) return true;
-      const scopePrefix = Buffer.from(file.content, "utf8").subarray(owner.startByte, callByte).toString("utf8");
       const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(`(?:^|\\n)\\s*${escaped}\\s*(?::[^=\\n]+)?=`, "m").test(scopePrefix);
+      const content = Buffer.from(file.content, "utf8");
+      const directScope = Buffer.from(content.subarray(owner.startByte, owner.endByte));
+      for (const child of (nodesByFile.get(file.id) ?? []).filter((node) =>
+        containerByNodeId.get(node.id) === owner.id &&
+        (node.kind === "function" || node.kind === "method" || node.kind === "class"))) {
+        const start = Math.max(0, child.startByte - owner.startByte);
+        const end = Math.min(directScope.length, child.endByte - owner.startByte);
+        for (let index = start; index < end; index += 1) {
+          if (directScope[index] !== 10 && directScope[index] !== 13) directScope[index] = 32;
+        }
+      }
+      const scope = directScope.toString("utf8");
+      const globals = new Set([...scope.matchAll(/^\s*global\s+([^#\r\n]+)/gm)]
+        .flatMap((match) => (match[1] ?? "").split(",").map((item) => item.trim())));
+      if (globals.has(name)) return false;
+      if ((nodesByFile.get(file.id) ?? []).some((node) =>
+        node.name === name && containerByNodeId.get(node.id) === owner.id)) return true;
+      const bindingPatterns = [
+        new RegExp(`(?:^|\\n)\\s*${escaped}\\s*(?::[^=\\n]+)?(?:[+\\-*/%@&|^]?=|:=)`, "m"),
+        new RegExp(`\\b(?:async\\s+)?for\\s+${escaped}\\s+in\\b`, "m"),
+        new RegExp(`\\bwith\\b[^\\n]*\\bas\\s+${escaped}\\b`, "m"),
+        new RegExp(`\\bexcept\\b[^\\n]*\\bas\\s+${escaped}\\b`, "m"),
+        new RegExp(`(?:^|\\n)\\s*(?:async\\s+)?(?:def|class)\\s+${escaped}\\b`, "m"),
+        new RegExp(`\\bdel\\s+${escaped}\\b`, "m"),
+      ];
+      if (bindingPatterns.some((pattern) => pattern.test(scope))) return true;
+      for (const match of scope.matchAll(/^\s*import\s+([^#\r\n]+)/gm)) {
+        if ((match[1] ?? "").split(",").some((item) => {
+          const imported = item.trim().match(/^([\w.]+)(?:\s+as\s+(\w+))?/);
+          return imported ? (imported[2] ?? imported[1]!.split(".")[0]) === name : false;
+        })) return true;
+      }
+      for (const match of scope.matchAll(/^\s*from\s+[.\w]+\s+import\s+([^#\r\n]+)/gm)) {
+        if ((match[1] ?? "").split(",").some((item) => {
+          const imported = item.trim().match(/^(\w+)(?:\s+as\s+(\w+))?/);
+          return imported ? (imported[2] ?? imported[1]) === name : false;
+        })) return true;
+      }
+      return false;
     };
     const resolveQualifiedImport = (
       aliases: Map<string, ImportBinding>,
@@ -426,9 +462,13 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
       const [head, ...tail] = qualifier.split(".");
       const imported = head ? aliases.get(head) : undefined;
       if (!imported) return [];
-      if (imported.symbol) return tail.length === 0
-        ? resolveModuleSymbol(imported.module, imported.symbol)
-        : [];
+      if (imported.symbol) {
+        const importedSubmodule = `${imported.module}.${imported.symbol}`;
+        if (modulesByName.has(importedSubmodule)) {
+          return resolveModuleSymbol([importedSubmodule, ...tail].join("."), name);
+        }
+        return tail.length === 0 ? resolveModuleSymbol(imported.module, imported.symbol) : [];
+      }
       const suffix = tail.join(".");
       const targetModule = suffix && imported.module !== suffix && !imported.module.endsWith(`.${suffix}`)
         ? `${imported.module}.${suffix}`
@@ -454,7 +494,19 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
         const owner = (nodesByFile.get(file.id) ?? []).filter((node) => (node.kind === "function" || node.kind === "method") && node.startByte <= byte && node.endByte >= byte)
           .sort((a, b) => (a.endByte - a.startByte) - (b.endByte - b.startByte))[0] ?? module;
         const qualifier = calleeParts.length > 1 ? calleeParts.slice(0, -1).join(".") : null;
-        if (!qualifier && isLocallyShadowed(file, owner, name, byte)) {
+        const nestedTargets = !qualifier && (owner.kind === "function" || owner.kind === "method")
+          ? (nodesByFile.get(file.id) ?? []).filter((node) =>
+            node.name === name && containerByNodeId.get(node.id) === owner.id && node.startByte <= byte)
+          : [];
+        if (nestedTargets.length === 1 && nestedTargets[0]) {
+          const target = nestedTargets[0];
+          const resolved = { sourceId: owner.id, targetId: target.id, kind: "CALLS" as const, status: "resolved" as const,
+            confidence: 0.95, resolutionKind: "local" as const,
+            evidence: evidence(0.95, { rawName: name, binding: "nested_local" }) };
+          overlays.set(key(resolved), resolved);
+          continue;
+        }
+        if (!qualifier && isLocallyShadowed(file, owner, name)) {
           for (const candidate of batch.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === owner.id && edge.status === "candidate" && nodesById.get(edge.targetId)?.name === name)) {
             const rejected = { sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind, status: "rejected" as const,
               confidence: 0.99, resolutionKind: candidate.resolutionKind,

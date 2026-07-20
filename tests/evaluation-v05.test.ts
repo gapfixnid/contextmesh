@@ -20,7 +20,7 @@ function canonical(value: unknown): string {
 describe("v0.5 resolved-edge quality gate", () => {
   it("scores immutable gold positives, false positives, ambiguous cases, and unresolved cases", () => {
     const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json");
-    const semanticFixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v1.json");
+    const semanticFixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v2.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
       immutable: boolean;
       provenance?: { origin?: string; mutationPolicy?: string };
@@ -44,7 +44,7 @@ describe("v0.5 resolved-edge quality gate", () => {
       expect(languageCases.every((item) => Array.isArray(item.expectedCallEdges))).toBe(true);
     }
     expect(semanticFixture).toMatchObject({
-      id: "contextmesh-v05-semantic-conformance-v1",
+      id: "contextmesh-v05-semantic-conformance-v2",
       immutable: true,
     });
     expect(new Set(semanticFixture.cases.map((item) => item.edgeKind))).toEqual(new Set(["CALLS", "EXTENDS"]));
