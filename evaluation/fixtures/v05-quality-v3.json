@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "id": "contextmesh-v05-tier1-resolved-edge-v2",
+  "schemaVersion": 3,
+  "id": "contextmesh-v05-tier1-resolved-edge-v3",
   "immutable": true,
   "description": "Pinned Tier 1 resolved-edge gold with independent development and holdout splits for TypeScript, Python, and Go.",
   "provenance": {
@@ -64,7 +64,11 @@
     },
     {
       "path": "python/pkg/caller.py",
-      "content": "from pkg.target import py_target as selected\nfrom pkg.target import py_holdout_target as holdout_selected\n\ndef py_positive():\n    return selected()\n\ndef py_negative():\n    return py_missing()\n\ndef py_ambiguous_caller():\n    return py_ambiguous()\n\ndef py_holdout_positive():\n    return holdout_selected()\n\ndef py_holdout_negative():\n    return py_holdout_missing()\n\ndef py_holdout_ambiguous_caller():\n    return py_holdout_ambiguous()\n"
+      "content": "from pkg.target import py_target as selected\n\ndef py_positive():\n    return selected()\n\ndef py_negative():\n    return py_missing()\n\ndef py_ambiguous_caller():\n    return py_ambiguous()\n\ndef py_holdout_negative():\n    return py_holdout_missing()\n\ndef py_holdout_ambiguous_caller():\n    return py_holdout_ambiguous()\n"
+    },
+    {
+      "path": "python/pkg/holdout.py",
+      "content": "from pkg.target import (\n    py_holdout_target,\n)\n\ndef py_holdout_positive():\n    return py_holdout_target()\n"
     },
     {
       "path": "python/pkg/scope.py",
@@ -156,6 +160,7 @@
       "split": "development",
       "category": "positive",
       "sourceQualifiedName": "python/pkg/caller.py#py_positive",
+      "syntaxForm": "single-line-from-import-alias",
       "expectedResolvedTargets": ["python/pkg/target.py#py_target"],
       "expectedCallEdges": [
         { "target": "python/pkg/distractor.py#selected", "status": "rejected" },
@@ -196,10 +201,10 @@
       "language": "python",
       "split": "holdout",
       "category": "positive",
-      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_positive",
+      "sourceQualifiedName": "python/pkg/holdout.py#py_holdout_positive",
+      "syntaxForm": "parenthesized-from-import",
       "expectedResolvedTargets": ["python/pkg/target.py#py_holdout_target"],
       "expectedCallEdges": [
-        { "target": "python/pkg/distractor.py#holdout_selected", "status": "rejected" },
         { "target": "python/pkg/target.py#py_holdout_target", "status": "resolved" }
       ]
     },

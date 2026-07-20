@@ -117,9 +117,9 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   );
 }
 
-const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json"), "utf8")) as Record<string, unknown>;
+const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v3.json"), "utf8")) as Record<string, unknown>;
 const semanticFixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v2.json"), "utf8")) as Record<string, unknown>;
-requireCondition(artifact.fixture.id === "contextmesh-v05-tier1-resolved-edge-v2" && artifact.fixture.schemaVersion === 2 && artifact.fixture.immutable, "primary fixture identity mismatch");
+requireCondition(artifact.fixture.id === "contextmesh-v05-tier1-resolved-edge-v3" && artifact.fixture.schemaVersion === 3 && artifact.fixture.immutable, "primary fixture identity mismatch");
 requireCondition(artifact.semanticFixture.id === "contextmesh-v05-semantic-conformance-v2" && artifact.semanticFixture.schemaVersion === 2 && artifact.semanticFixture.immutable, "semantic fixture identity mismatch");
 requireCondition(artifact.fixture.digest === canonicalDigest(fixture), "primary fixture digest mismatch");
 requireCondition(artifact.semanticFixture.digest === canonicalDigest(semanticFixture), "semantic fixture digest mismatch");

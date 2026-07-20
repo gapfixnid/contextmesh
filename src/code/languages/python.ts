@@ -347,9 +347,9 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
       const module = moduleByFile.get(file.id);
       if (!module) continue;
       const aliases = new Map<string, ImportBinding>();
-      for (const match of file.content.matchAll(/^from\s+([.\w]+)\s+import\s+([^#\r\n]+)/gm)) {
-        const importedModule = absoluteImportModule(file, module, match[1] ?? "");
-        for (const part of (match[2] ?? "").split(",")) {
+      for (const imported of pythonFromImports(file.content)) {
+        const importedModule = absoluteImportModule(file, module, imported.module);
+        for (const part of imported.names.split(",")) {
           const item = part.trim().match(/^([\w]+)(?:\s+as\s+([\w]+))?/);
           if (item?.[1]) aliases.set(item[2] ?? item[1], { module: importedModule, symbol: item[1] });
         }
@@ -446,8 +446,8 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
           return imported ? (imported[2] ?? imported[1]!.split(".")[0]) === name : false;
         })) return true;
       }
-      for (const match of scope.matchAll(/^\s*from\s+[.\w]+\s+import\s+([^#\r\n]+)/gm)) {
-        if ((match[1] ?? "").split(",").some((item) => {
+      for (const imported of pythonFromImports(scope)) {
+        if (imported.names.split(",").some((item) => {
           const imported = item.trim().match(/^(\w+)(?:\s+as\s+(\w+))?/);
           return imported ? (imported[2] ?? imported[1]) === name : false;
         })) return true;
@@ -481,7 +481,7 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
       const module = moduleByFile.get(file.id);
       if (!module) continue;
       const aliases = aliasesByFile.get(file.id) ?? new Map<string, ImportBinding>();
-      const masked = pythonMask(file.content);
+      const masked = maskPythonImportStatements(pythonMask(file.content));
       for (const match of masked.matchAll(/\b((?:\w+\.)*\w+)\s*\(/g)) {
         if (match.index === undefined || !match[1]) continue;
         const calleeParts = match[1].split(".");
@@ -577,4 +577,19 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   createOverlayPrecisionProvider(): OverlayPrecisionProvider | undefined {
     return process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE === "1" ? undefined : new PythonResolvedProvider();
   }
+}
+
+function pythonFromImports(source: string): Array<{ module: string; names: string }> {
+  return [...source.matchAll(/^\s*from\s+([.\w]+)\s+import\s+(?:\(([\s\S]*?)\)|([^#\r\n]+))/gm)]
+    .map((match) => ({
+      module: match[1] ?? "",
+      names: (match[2] ?? match[3] ?? "").replace(/#[^\r\n]*/g, " "),
+    }));
+}
+
+function maskPythonImportStatements(source: string): string {
+  const mask = (value: string): string => value.replace(/[^\r\n]/g, " ");
+  return source
+    .replace(/^\s*from\s+[.\w]+\s+import\s+(?:\([\s\S]*?\)|[^#\r\n]*)/gm, mask)
+    .replace(/^\s*import\s+[^#\r\n]*/gm, mask);
 }

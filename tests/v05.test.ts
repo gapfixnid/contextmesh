@@ -891,6 +891,39 @@ describe("v0.5 precision overlays and core languages", () => {
     } finally { await app.close(); }
   });
 
+  it("resolves parenthesized Python from-imports without counting the import as a call", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "parenthesized.py"), [
+      "from pkg.target import (",
+      "    selected,",
+      ")",
+      "",
+      "def invoke_parenthesized():",
+      "    return selected()",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("python");
+      const caller = graph.nodes.find((node) => node.qualifiedName === "python/pkg/parenthesized.py#invoke_parenthesized");
+      const target = graph.nodes.find((node) => node.qualifiedName === "python/pkg/target.py#selected");
+      expect(caller).toBeDefined();
+      expect(target).toBeDefined();
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: caller!.id,
+        targetId: target!.id,
+        kind: "CALLS",
+        status: "resolved",
+        evidence: expect.arrayContaining([expect.objectContaining({ provider: "contextmesh_python_resolver" })]),
+      }));
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "contextmesh_python_resolver",
+        eligibleEdges: 3,
+      }));
+    } finally { await app.close(); }
+  });
+
   it("resolves relative aliases and bounded local Python re-exports", async () => {
     const root = workspace();
     writeFileSync(path.join(root, "python", "pkg", "relative.py"), [

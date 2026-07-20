@@ -13,7 +13,7 @@ type CaseCategory = "positive" | "negative" | "ambiguous";
 type CaseSplit = "development" | "holdout";
 
 interface QualityFixture {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
   immutable: true;
   description: string;
@@ -26,6 +26,7 @@ interface QualityFixture {
     split: CaseSplit;
     category: CaseCategory;
     sourceQualifiedName: string;
+    syntaxForm?: string;
     expectedResolvedTargets: string[];
     expectedCallEdges: Array<{ target: string; status: "candidate" | "rejected" | "resolved" }>;
     expectedUnresolved?: { rawName: string; minimumCandidates: number };
@@ -98,8 +99,8 @@ interface SemanticCaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v2.json");
-const PINNED_FIXTURE_DIGEST = "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823";
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v3.json");
+const PINNED_FIXTURE_DIGEST = "56fc33d85e682973802df32da6620fa2166662cb3391560836bd06fb6dc6e5ca";
 const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v2.json");
 const PINNED_SEMANTIC_FIXTURE_DIGEST = "f048e67fdfbb6ef5db104089aafdc2fcd4ca8ac62679aaf01483366b42ddbb75";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
@@ -150,8 +151,8 @@ function digest(value: unknown): string {
 function loadFixture(): QualityFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as QualityFixture;
   if (
-    fixture.schemaVersion !== 2 ||
-    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v2" ||
+    fixture.schemaVersion !== 3 ||
+    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v3" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||
@@ -176,6 +177,17 @@ function loadFixture(): QualityFixture {
         throw new Error(`V05_FIXTURE_INVALID: ${language}/${split} must contain positive, negative, and ambiguous cases`);
       }
     }
+  }
+  const pythonPositiveCases = fixture.cases.filter((item) => item.language === "python" && item.category === "positive");
+  const pythonPositiveForms = new Set(pythonPositiveCases.map((item) => item.syntaxForm));
+  if (!pythonPositiveForms.has("single-line-from-import-alias") || !pythonPositiveForms.has("parenthesized-from-import")) {
+    throw new Error("V05_FIXTURE_INVALID: Python positive splits must cover distinct single-line alias and parenthesized import forms");
+  }
+  const parenthesized = pythonPositiveCases.find((item) => item.syntaxForm === "parenthesized-from-import");
+  const parenthesizedPath = parenthesized?.sourceQualifiedName.split("#", 1)[0];
+  const parenthesizedSource = fixture.files.find((item) => item.path === parenthesizedPath)?.content ?? "";
+  if (!/^from\s+[.\w]+\s+import\s*\([\s\S]*?\)/m.test(parenthesizedSource)) {
+    throw new Error("V05_FIXTURE_INVALID: parenthesized Python positive must contain a real parenthesized from-import");
   }
   return fixture;
 }
