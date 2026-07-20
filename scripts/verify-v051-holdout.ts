@@ -88,6 +88,10 @@ function fileDigest(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 
+function normalizedEdges(edges: Array<{ target: string; targetStartLine: number; status: string }>): string {
+  return stableStringify([...edges].sort((left, right) => stableStringify(left).localeCompare(stableStringify(right))));
+}
+
 function requireFiniteNumbers(value: unknown, keyPath = "artifact"): void {
   if (typeof value === "number") {
     requireCondition(Number.isFinite(value), `${keyPath} must be finite`);
@@ -251,7 +255,7 @@ requireCondition(artifact.caseResults.every((item) =>
       item.sourceQualifiedName === expected!.sourceQualifiedName &&
       item.sourceStartLine === expected!.sourceStartLine &&
       stableStringify(item.expectedCallEdges) === stableStringify(expected!.expectedCallEdges) &&
-      stableStringify(item.actualCallEdges) === stableStringify(expected!.expectedCallEdges) &&
+      normalizedEdges(item.actualCallEdges) === normalizedEdges(expected!.expectedCallEdges) &&
       stableStringify(item.expectedUnresolved) === stableStringify(expected!.expectedUnresolved ?? null);
   })() &&
   Number.isSafeInteger(item.sourceStartLine) && item.sourceStartLine > 0 &&
