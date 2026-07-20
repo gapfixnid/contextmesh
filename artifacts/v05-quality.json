@@ -3,10 +3,10 @@
   "release": "v0.5",
   "source": {
     "contract": "git-source-snapshot-lf-v3",
-    "treeDigest": "96bb66b2478b5a1af2c1cd9cf668f5fc3fac603cc039139715f1ace6b73c9beb",
+    "treeDigest": "b061e62ae6a8bca9e784ddb4dc26489c4825b442ce72c6ab3937bb731f7186d0",
     "files": 134,
-    "headCommit": "f578c6ba0084e3f577901ab89ac540849f9fcbe2",
-    "headTreeDigest": "96bb66b2478b5a1af2c1cd9cf668f5fc3fac603cc039139715f1ace6b73c9beb",
+    "headCommit": "bf0eff157015ea2c19c89efa953dca4be2ff2cad",
+    "headTreeDigest": "b061e62ae6a8bca9e784ddb4dc26489c4825b442ce72c6ab3937bb731f7186d0",
     "dirty": false
   },
   "fixture": {
