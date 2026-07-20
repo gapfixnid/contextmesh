@@ -287,10 +287,6 @@
     {
       "actualEdges": [
         {
-          "status": "rejected",
-          "target": "python/pkg/distractor.py#holdout_selected"
-        },
-        {
           "status": "resolved",
           "target": "python/pkg/target.py#py_holdout_target"
         }
@@ -299,15 +295,10 @@
         "python/pkg/target.py#py_holdout_target"
       ],
       "actualStatuses": [
-        "rejected",
         "resolved"
       ],
       "category": "positive",
       "expectedCallEdges": [
-        {
-          "status": "rejected",
-          "target": "python/pkg/distractor.py#holdout_selected"
-        },
         {
           "status": "resolved",
           "target": "python/pkg/target.py#py_holdout_target"
@@ -323,7 +314,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "python/pkg/caller.py#py_holdout_positive",
+      "sourceQualifiedName": "python/pkg/holdout.py#py_holdout_positive",
       "split": "holdout",
       "truePositive": 1,
       "unexpectedPaths": [],
@@ -560,26 +551,26 @@
     "identical": true,
     "runs": 20,
     "signatures": [
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb",
-      "d65bdaa43c8fec59f00899355dbb371155aedb2e8c3e018bc922b1f81b3965fb"
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6",
+      "dfc05ecb28b97f34ef59afa36d9b3c4e77b03a05be82c89250013eee5df187b6"
     ]
   },
   "fixture": {
@@ -601,8 +592,8 @@
         "positive"
       ]
     },
-    "digest": "01022b01e3eb1cb869dfa2e063dfe6e964c151b90df689768f33f218b75a5823",
-    "id": "contextmesh-v05-tier1-resolved-edge-v2",
+    "digest": "56fc33d85e682973802df32da6620fa2166662cb3391560836bd06fb6dc6e5ca",
+    "id": "contextmesh-v05-tier1-resolved-edge-v3",
     "immutable": true,
     "provenance": {
       "authoredAgainst": "language behavior and product contracts; no runtime output is embedded as gold",
@@ -610,7 +601,7 @@
       "mutationPolicy": "Any case, source, split, or expected-path change requires a new fixture id, schema version, and pinned SHA-256",
       "origin": "ContextMesh v0.5 product-design acceptance criteria plus published TypeScript, Python, and Go name-resolution semantics"
     },
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "splitsByLanguage": {
       "go": {
         "development": 3,
@@ -697,9 +688,9 @@
       "providerState": "not_configured"
     },
     {
-      "actualBaseDigest": "6efdf3a2be449db551a1b720d6157eb57543f53f299af6254ec390a406c9b44f",
+      "actualBaseDigest": "1090d8aed4207f4b441c4825a63b53bc9a475a3aca00edb355d8b8d740db0ddf",
       "exactBaseGraph": true,
-      "expectedBaseDigest": "6efdf3a2be449db551a1b720d6157eb57543f53f299af6254ec390a406c9b44f",
+      "expectedBaseDigest": "1090d8aed4207f4b441c4825a63b53bc9a475a3aca00edb355d8b8d740db0ddf",
       "language": "python",
       "preservesBase": true,
       "provider": "contextmesh_python_resolver",
@@ -760,7 +751,7 @@
       "precisionRevision": 58,
       "provider": "contextmesh_python_resolver",
       "providerVersion": "0.5.0",
-      "rejectedEdges": 3,
+      "rejectedEdges": 2,
       "resolvedEdges": 8,
       "status": "ready"
     },
@@ -1018,9 +1009,9 @@
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
     "files": 136,
-    "headCommit": "b1ead7c090666a18badbf9b93fe0e2f0e4cc6bdd",
-    "headTreeDigest": "d269dcc99512cec9665a6d21d730d821ad40f083aa2c3ae8012b5b947239b549",
-    "treeDigest": "d269dcc99512cec9665a6d21d730d821ad40f083aa2c3ae8012b5b947239b549"
+    "headCommit": "34e69f74f76638b93f592cc3bd60abbce4e2ba54",
+    "headTreeDigest": "fc530d3676c5cad72f68e92222ae77d43c40d39e02ce87ea30430639dc8b2cd3",
+    "treeDigest": "fc530d3676c5cad72f68e92222ae77d43c40d39e02ce87ea30430639dc8b2cd3"
   },
   "statusCoverage": [
     "candidate",
