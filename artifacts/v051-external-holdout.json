@@ -1,0 +1,847 @@
+{
+  "caseResults": [
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#absolutePath",
+          "targetStartLine": 20
+        },
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#defaultCacheDirectory",
+          "targetStartLine": 60
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#absolutePath",
+          "targetStartLine": 20
+        },
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#defaultCacheDirectory",
+          "targetStartLine": 60
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-cache-directory-branches",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#cacheDirectory",
+      "sourceStartLine": 28,
+      "truePositive": 2,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#pickCacheDirectory",
+          "targetStartLine": 40
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#pickCacheDirectory",
+          "targetStartLine": 40
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-default-cache",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#defaultCacheDirectory",
+      "sourceStartLine": 60,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#pickCacheDirectory",
+          "targetStartLine": 40
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#pickCacheDirectory",
+          "targetStartLine": 40
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-default-workspace-data",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#defaultWorkspaceDataDirectory",
+      "sourceStartLine": 64,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#cacheDirectoryForWorkspace",
+          "targetStartLine": 75
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#cacheDirectoryForWorkspace",
+          "targetStartLine": 75
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-shared-cache",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#sharedCacheDirectory",
+      "sourceStartLine": 79,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#absolutePath",
+          "targetStartLine": 20
+        },
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#defaultWorkspaceDataDirectory",
+          "targetStartLine": 64
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#absolutePath",
+          "targetStartLine": 20
+        },
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/cache-directory.ts#defaultWorkspaceDataDirectory",
+          "targetStartLine": 64
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-workspace-data",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#workspaceDataDirectoryForWorkspace",
+      "sourceStartLine": 94,
+      "truePositive": 2,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/code-frames.ts#getMarkerLines",
+          "targetStartLine": 32
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "nx/packages/nx/src/utils/code-frames.ts#getMarkerLines",
+          "targetStartLine": 32
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-code-frame",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/code-frames.ts#codeFrameColumns",
+      "sourceStartLine": 99,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [],
+      "classificationPassed": true,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "minimumCandidates": 0,
+        "rawName": "readJsonFile"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "nx-missing-local-import",
+      "language": "typescript",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "nx",
+      "sourceQualifiedName": "nx/packages/nx/src/utils/cache-directory.ts#readCacheDirectoryProperty",
+      "sourceStartLine": 8,
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedObserved": true
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_render",
+          "targetStartLine": 127
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_render",
+          "targetStartLine": 127
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-render-template",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#render_template",
+      "sourceStartLine": 139,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_render",
+          "targetStartLine": 127
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_render",
+          "targetStartLine": 127
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-render-template-string",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#render_template_string",
+      "sourceStartLine": 154,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_stream",
+          "targetStartLine": 166
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_stream",
+          "targetStartLine": 166
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-stream-template",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#stream_template",
+      "sourceStartLine": 189,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_stream",
+          "targetStartLine": 166
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_stream",
+          "targetStartLine": 166
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-stream-template-string",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#stream_template_string",
+      "sourceStartLine": 208,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_stream.generate",
+          "targetStartLine": 174
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#_stream.generate",
+          "targetStartLine": 174
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-nested-generator",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#_stream",
+      "sourceStartLine": 166,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [],
+      "classificationPassed": true,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "minimumCandidates": 0,
+        "rawName": "self._get_source_explained"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-method-dispatch-unresolved",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#DispatchingJinjaLoader.get_source",
+      "sourceStartLine": 61,
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedObserved": true
+    },
+    {
+      "actualCallEdges": [],
+      "classificationPassed": true,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "minimumCandidates": 2,
+        "rawName": "dumps"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-import-alias-ambiguous",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/json/tag.py#TaggedJSONSerializer.dumps",
+      "sourceStartLine": 321,
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedObserved": true
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#FlattenContent",
+          "targetStartLine": 147
+        },
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#MakeAbs",
+          "targetStartLine": 179
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#MakeAbs",
+          "targetStartLine": 179
+        },
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#FlattenContent",
+          "targetStartLine": 147
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-flatten-config",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#FlattenConfig",
+      "sourceStartLine": 115,
+      "truePositive": 2,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#ResolvePath",
+          "targetStartLine": 167
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#ResolvePath",
+          "targetStartLine": 167
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-flatten-content",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#FlattenContent",
+      "sourceStartLine": 147,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+          "targetStartLine": 198
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+          "targetStartLine": 198
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-redact-entry",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#RedactSecrets",
+      "sourceStartLine": 194,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+          "targetStartLine": 198
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+          "targetStartLine": 198
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-redact-recursion",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#redactSecrets",
+      "sourceStartLine": 198,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopyInto",
+          "targetStartLine": 29
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopyInto",
+          "targetStartLine": 29
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-generated-deep-copy",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopy",
+      "sourceStartLine": 35,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopy",
+          "targetStartLine": 230
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopy",
+          "targetStartLine": 230
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-generated-object-copy",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/zz_generated.deepcopy.go#DeepCopyObject",
+      "sourceStartLine": 240,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [],
+      "classificationPassed": true,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "minimumCandidates": 0,
+        "rawName": "IsAbs"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-stdlib-path-unresolved",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#MakeAbs",
+      "sourceStartLine": 179,
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedObserved": true
+    },
+    {
+      "actualCallEdges": [],
+      "classificationPassed": true,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "minimumCandidates": 0,
+        "rawName": "IsAbs"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "client-go-resolve-path-unresolved",
+      "language": "go",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "client-go",
+      "sourceQualifiedName": "client-go/tools/clientcmd/api/helpers.go#ResolvePath",
+      "sourceStartLine": 167,
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedObserved": true
+    }
+  ],
+  "checks": {
+    "classificationCoverageThreshold": true,
+    "exactGoldPaths": true,
+    "exactUpstreamBytesPinned": true,
+    "explicitUnresolvedObserved": true,
+    "externalRepositoryCount": true,
+    "generatedGoEvidence": true,
+    "harnessBytesPinned": true,
+    "immutableFixturePinned": true,
+    "languageCaseMinimums": true,
+    "pinnedCommitsAndLicenses": true,
+    "precisionThreshold": true,
+    "providersHealthy": true,
+    "recallThreshold": true,
+    "repositoryProfilesCovered": true,
+    "twentyRunDeterminism": true
+  },
+  "determinism": {
+    "identical": true,
+    "runs": 20,
+    "signatures": [
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708",
+      "dd825cad0b1b5cecd67f7f2dd57c8a72beaf9b063fddbe37adb36a202deb9708"
+    ]
+  },
+  "fixture": {
+    "caseCount": 22,
+    "digest": "78c85d7c75871725521d38413506fc90902e38dc43cbd059c56f83c7d747b31c",
+    "fileCount": 15,
+    "id": "contextmesh-v051-external-holdout-v1",
+    "immutable": true,
+    "profiles": [
+      "complex-src-layout",
+      "generated-code",
+      "large-monorepo"
+    ],
+    "repositories": [
+      {
+        "commit": "a5b10cd10f98dc9b41aee2a491d2bf5b686de929",
+        "fileCount": 5,
+        "id": "nx",
+        "license": "MIT",
+        "repository": "nrwl/nx",
+        "tag": "23.1.0"
+      },
+      {
+        "commit": "22d924701a6ae2e4cd01e9a15bbaf3946094af65",
+        "fileCount": 6,
+        "id": "flask",
+        "license": "BSD-3-Clause",
+        "repository": "pallets/flask",
+        "tag": "3.1.3"
+      },
+      {
+        "commit": "877f5359348b5df85619f2aa379abc5bd74bca2d",
+        "fileCount": 4,
+        "id": "client-go",
+        "license": "Apache-2.0",
+        "repository": "kubernetes/client-go",
+        "tag": "v0.36.2"
+      }
+    ],
+    "repositoryCount": 3,
+    "schemaVersion": 1,
+    "thresholds": {
+      "classificationCoverage": 1,
+      "precision": 0.9,
+      "recall": 0.8
+    }
+  },
+  "generation": 20,
+  "languageResults": [
+    {
+      "cases": 7,
+      "classificationCoverage": 1,
+      "classifiedCases": 7,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "language": "typescript",
+      "precision": 1,
+      "recall": 1,
+      "truePositive": 8
+    },
+    {
+      "cases": 7,
+      "classificationCoverage": 1,
+      "classifiedCases": 7,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "language": "python",
+      "precision": 1,
+      "recall": 1,
+      "truePositive": 5
+    },
+    {
+      "cases": 8,
+      "classificationCoverage": 1,
+      "classifiedCases": 8,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "language": "go",
+      "precision": 1,
+      "recall": 1,
+      "truePositive": 7
+    }
+  ],
+  "passed": true,
+  "precisionRevision": 60,
+  "providerStates": [
+    {
+      "coverage": 0.31645569620253167,
+      "eligibleEdges": 79,
+      "language": "go",
+      "lastError": null,
+      "provider": "go_types",
+      "providerVersion": "go/types-stdlib-v2+go1.23.12",
+      "rejectedEdges": 0,
+      "resolvedEdges": 25,
+      "status": "ready"
+    },
+    {
+      "coverage": 0.09848484848484848,
+      "eligibleEdges": 132,
+      "language": "python",
+      "lastError": null,
+      "provider": "contextmesh_python_resolver",
+      "providerVersion": "0.5.0",
+      "rejectedEdges": 0,
+      "resolvedEdges": 13,
+      "status": "ready"
+    },
+    {
+      "coverage": 1,
+      "eligibleEdges": 13,
+      "language": "typescript/javascript",
+      "lastError": null,
+      "provider": "typescript_type_checker",
+      "providerVersion": "5.9.3",
+      "rejectedEdges": 0,
+      "resolvedEdges": 13,
+      "status": "ready"
+    }
+  ],
+  "release": "v0.5.1",
+  "runner": {
+    "go": "go version go1.23.12 windows/amd64",
+    "node": "v24.18.0",
+    "platform": "win32-x64"
+  },
+  "schemaVersion": 1,
+  "source": {
+    "contract": "git-source-snapshot-lf-v3",
+    "dirty": false,
+    "files": 160,
+    "headCommit": "11eb46984dc3ab5be768846fe76f812a51ac4053",
+    "headTreeDigest": "1a8c43c39e4136a404ebeed86700c9a498c2a56716503982defef0e3086d6d6d",
+    "treeDigest": "1a8c43c39e4136a404ebeed86700c9a498c2a56716503982defef0e3086d6d6d"
+  }
+}
