@@ -384,16 +384,35 @@
       "unresolvedObserved": null
     },
     {
-      "actualCallEdges": [],
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_explained",
+          "targetStartLine": 68
+        },
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_fast",
+          "targetStartLine": 92
+        }
+      ],
       "classificationPassed": true,
-      "expectedCallEdges": [],
-      "expectedUnresolved": {
-        "minimumCandidates": 0,
-        "rawName": "self._get_source_explained"
-      },
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_explained",
+          "targetStartLine": 68
+        },
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_fast",
+          "targetStartLine": 92
+        }
+      ],
+      "expectedUnresolved": null,
       "falseNegative": 0,
       "falsePositive": 0,
-      "id": "flask-method-dispatch-unresolved",
+      "id": "flask-method-dispatch",
       "language": "python",
       "missingPaths": [],
       "passed": true,
@@ -401,21 +420,40 @@
       "repositoryId": "flask",
       "sourceQualifiedName": "flask/src/flask/templating.py#DispatchingJinjaLoader.get_source",
       "sourceStartLine": 61,
-      "truePositive": 0,
+      "truePositive": 2,
       "unexpectedPaths": [],
-      "unresolvedObserved": true
+      "unresolvedObserved": null
     },
     {
-      "actualCallEdges": [],
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/json/__init__.py#dumps",
+          "targetStartLine": 13
+        },
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/json/tag.py#TaggedJSONSerializer.tag",
+          "targetStartLine": 289
+        }
+      ],
       "classificationPassed": true,
-      "expectedCallEdges": [],
-      "expectedUnresolved": {
-        "minimumCandidates": 2,
-        "rawName": "dumps"
-      },
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/json/__init__.py#dumps",
+          "targetStartLine": 13
+        },
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/json/tag.py#TaggedJSONSerializer.tag",
+          "targetStartLine": 289
+        }
+      ],
+      "expectedUnresolved": null,
       "falseNegative": 0,
       "falsePositive": 0,
-      "id": "flask-import-alias-ambiguous",
+      "id": "flask-import-binding",
       "language": "python",
       "missingPaths": [],
       "passed": true,
@@ -423,7 +461,41 @@
       "repositoryId": "flask",
       "sourceQualifiedName": "flask/src/flask/json/tag.py#TaggedJSONSerializer.dumps",
       "sourceStartLine": 321,
-      "truePositive": 0,
+      "truePositive": 2,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._iter_loaders",
+          "targetStartLine": 102
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "flask/src/flask/templating.py#DispatchingJinjaLoader._iter_loaders",
+          "targetStartLine": 102
+        }
+      ],
+      "expectedUnresolved": {
+        "minimumCandidates": 0,
+        "rawName": "loader.get_source"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "flask-dynamic-loader-dispatch",
+      "language": "python",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "flask",
+      "sourceQualifiedName": "flask/src/flask/templating.py#DispatchingJinjaLoader._get_source_fast",
+      "sourceStartLine": 92,
+      "truePositive": 1,
       "unexpectedPaths": [],
       "unresolvedObserved": true
     },
@@ -688,34 +760,35 @@
   "determinism": {
     "identical": true,
     "runs": 20,
+    "scope": "20 fresh Node processes with independent application, database, and materialized workspace instances",
     "signatures": [
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1",
-      "1d6b73a6f4c453c396076343cbf570e74b7251aca3272c17d9ff3e704108fcd1"
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
+      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa"
     ]
   },
   "fixture": {
-    "caseCount": 22,
-    "digest": "78c85d7c75871725521d38413506fc90902e38dc43cbd059c56f83c7d747b31c",
+    "caseCount": 23,
+    "digest": "435356e534b94c41138775d682ceeca4f00e0496a5a0aa11fa3139737ce14046",
     "fileCount": 15,
-    "id": "contextmesh-v051-external-holdout-v1",
+    "id": "contextmesh-v051-external-holdout-v2",
     "immutable": true,
     "profiles": [
       "complex-src-layout",
@@ -749,14 +822,14 @@
       }
     ],
     "repositoryCount": 3,
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "thresholds": {
       "classificationCoverage": 1,
       "precision": 0.9,
       "recall": 0.8
     }
   },
-  "generation": 20,
+  "generation": 1,
   "languageResults": [
     {
       "cases": 7,
@@ -770,15 +843,15 @@
       "truePositive": 8
     },
     {
-      "cases": 7,
+      "cases": 8,
       "classificationCoverage": 1,
-      "classifiedCases": 7,
+      "classifiedCases": 8,
       "falseNegative": 0,
       "falsePositive": 0,
       "language": "python",
       "precision": 1,
       "recall": 1,
-      "truePositive": 5
+      "truePositive": 10
     },
     {
       "cases": 8,
@@ -793,8 +866,19 @@
     }
   ],
   "passed": true,
-  "precisionRevision": 60,
+  "precisionRevision": 3,
   "providerStates": [
+    {
+      "coverage": 0.1893939393939394,
+      "eligibleEdges": 132,
+      "language": "python",
+      "lastError": null,
+      "provider": "contextmesh_python_resolver",
+      "providerVersion": "0.5.0",
+      "rejectedEdges": 0,
+      "resolvedEdges": 25,
+      "status": "ready"
+    },
     {
       "coverage": 0.31645569620253167,
       "eligibleEdges": 79,
@@ -804,17 +888,6 @@
       "providerVersion": "go/types-stdlib-v2+go1.23.12",
       "rejectedEdges": 0,
       "resolvedEdges": 25,
-      "status": "ready"
-    },
-    {
-      "coverage": 0.09848484848484848,
-      "eligibleEdges": 132,
-      "language": "python",
-      "lastError": null,
-      "provider": "contextmesh_python_resolver",
-      "providerVersion": "0.5.0",
-      "rejectedEdges": 0,
-      "resolvedEdges": 13,
       "status": "ready"
     },
     {
@@ -840,8 +913,8 @@
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
     "files": 160,
-    "headCommit": "602f1390fd09e084a07efb8757cc9d770f2695dc",
-    "headTreeDigest": "5707d12a41506c38394f3496429865178f88806aa9c826071a4f41b531d15c8c",
-    "treeDigest": "5707d12a41506c38394f3496429865178f88806aa9c826071a4f41b531d15c8c"
+    "headCommit": "eada065278c83d87e5fc22de31c897dce5ba9863",
+    "headTreeDigest": "3e320ac474dc3d547b1ad369a7d6a6c695d29d25c4ba9104e365f918bac5f865",
+    "treeDigest": "3e320ac474dc3d547b1ad369a7d6a6c695d29d25c4ba9104e365f918bac5f865"
   }
 }
