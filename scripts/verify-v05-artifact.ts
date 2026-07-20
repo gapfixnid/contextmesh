@@ -8,6 +8,7 @@ import {
   V04_SOURCE_CONTRACT,
   v04CommitSourceEvidence,
   v04SourceEvidence,
+  verifyV04ArchiveSourceManifest,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
@@ -116,6 +117,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     archiveEvidence.files === artifact.source.files,
     "archive source tree does not match artifact source",
   );
+  verifyV04ArchiveSourceManifest(artifact.source);
 }
 
 const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v4.json"), "utf8")) as Record<string, unknown>;

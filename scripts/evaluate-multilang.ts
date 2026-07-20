@@ -11,7 +11,7 @@ import type { EvaluationScore, EvaluationStrategy, EvaluationTask, EvaluationTra
 import { PYTHON_PROVIDER_VERSIONS } from "../src/code/languages/python.js";
 import { crossesAdapterFamily } from "../src/code/languages/family.js";
 import { sha256 } from "../src/utils.js";
-import { v04SourceEvidence } from "./v04-artifact-contract.js";
+import { v04CanonicalSourceEvidence } from "./v04-artifact-contract.js";
 
 interface Fixture { id: string; k: number; tokenBudget: number; files: Record<string, string>; tasks: EvaluationTask[] }
 
@@ -241,7 +241,7 @@ try {
     staleEvidence: strategyScores.every((item) => item.score.staleEvidence === 0),
     tokenBudget: orderedTraces.every((trace) => trace.estimatedTokens <= fixture.tokenBudget),
   };
-  const source = v04SourceEvidence();
+  const source = v04CanonicalSourceEvidence();
   if (source.dirty) throw new Error("Multilanguage evaluation requires a clean non-artifact source tree");
   const deterministic = { fixture: fixture.id, k: fixture.k, tokenBudget: fixture.tokenBudget, strategies: strategyScores, traces: orderedTraces };
   const artifact = {

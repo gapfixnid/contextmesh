@@ -8,6 +8,7 @@ import {
   V04_SOURCE_CONTRACT,
   v04CommitSourceEvidence,
   v04SourceEvidence,
+  verifyV04ArchiveSourceManifest,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
@@ -155,6 +156,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     archiveEvidence.dirty === false,
     "archive source evidence mismatch",
   );
+  verifyV04ArchiveSourceManifest(artifact.source);
 }
 
 const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");

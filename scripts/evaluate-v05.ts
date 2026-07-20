@@ -6,7 +6,7 @@ import path from "node:path";
 import { ContextMeshApp } from "../src/app.js";
 import type { CodeEdgeKind, CodeEdgeRecord, CodeNodeRecord, ExtractedGraph, UnresolvedReferenceRecord } from "../src/contracts.js";
 import type { StoredGraphPartition } from "../src/storage/database.js";
-import { stableStringify, V04_SOURCE_CONTRACT, v04SourceEvidence, type V04SourceEvidence } from "./v04-artifact-contract.js";
+import { stableStringify, V04_SOURCE_CONTRACT, v04CanonicalSourceEvidence, type V04SourceEvidence } from "./v04-artifact-contract.js";
 
 type Tier1Language = "typescript" | "python" | "go";
 type CaseCategory = "positive" | "negative" | "ambiguous";
@@ -106,7 +106,7 @@ const PINNED_SEMANTIC_FIXTURE_DIGEST = "61e3f30443a15f3fa128e304db09cdc5c2714431
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
 
 function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
-  if (existsSync(path.join(root, ".git"))) return v04SourceEvidence(root);
+  if (existsSync(path.join(root, ".git"))) return v04CanonicalSourceEvidence(root);
   const sourceCommitPath = path.join(root, "SOURCE_COMMIT");
   const sourceEvidencePath = path.join(root, "SOURCE_EVIDENCE.json");
   if (!existsSync(sourceCommitPath) || !existsSync(sourceEvidencePath)) {

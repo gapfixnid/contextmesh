@@ -10,6 +10,7 @@ import {
   validateFixedHardwareIdentity,
   v04CommitSourceEvidence,
   v04SourceEvidence,
+  verifyV04ArchiveSourceManifest,
 } from "./v04-artifact-contract.js";
 
 function requireCondition(condition: unknown, message: string): asserts condition {
@@ -125,6 +126,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     archiveEvidence.files === artifact.source.files,
     "archive source tree does not match artifact source",
   );
+  verifyV04ArchiveSourceManifest(artifact.source);
 }
 requireCondition(/^[0-9a-f]{64}$/.test(artifact.fixtureDigest), "fixture digest missing");
 requireCondition(artifact.runner.contract === V04_ARTIFACT_CONTRACT, "runner contract mismatch");

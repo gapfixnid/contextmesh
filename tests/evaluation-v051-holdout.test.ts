@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
+import { stableStringify, v04CommitSourceManifest } from "../scripts/v04-artifact-contract.js";
 
 interface ExternalFixture {
   schemaVersion: number;
@@ -131,6 +132,36 @@ describe("v0.5.1 external holdout release contract", () => {
       });
       expect(run.status).not.toBe(0);
       expect(`${run.stdout}\n${run.stderr}`).toMatch(/archive source evidence mismatch/);
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
+
+  it("rehashes archive source files instead of trusting embedded evidence", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-archive-tamper-"));
+    try {
+      const artifact = JSON.parse(
+        readFileSync(path.join(process.cwd(), "artifacts", "v051-external-holdout.json"), "utf8"),
+      ) as { source: { headCommit: string } & Record<string, unknown> };
+      const manifest = v04CommitSourceManifest(artifact.source.headCommit);
+      for (const item of manifest) {
+        const target = path.join(root, item.path);
+        mkdirSync(path.dirname(target), { recursive: true });
+        cpSync(path.join(process.cwd(), item.path), target);
+      }
+      const artifactPath = path.join(root, "artifacts", "v051-external-holdout.json");
+      mkdirSync(path.dirname(artifactPath), { recursive: true });
+      cpSync(path.join(process.cwd(), "artifacts", "v051-external-holdout.json"), artifactPath);
+      writeFileSync(path.join(root, "SOURCE_COMMIT"), artifact.source.headCommit, "utf8");
+      writeFileSync(path.join(root, "SOURCE_EVIDENCE.json"), JSON.stringify(artifact.source), "utf8");
+      writeFileSync(path.join(root, "SOURCE_MANIFEST.json"), `${stableStringify(manifest)}\n`, "utf8");
+      appendFileSync(path.join(root, "README.md"), "\narchive tamper\n", "utf8");
+      const tsxCli = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+      const run = spawnSync(process.execPath, [tsxCli, path.join(process.cwd(), "scripts", "verify-v051-holdout.ts"), artifactPath], {
+        cwd: root, env: process.env, encoding: "utf8", timeout: 60_000,
+      });
+      expect(run.status).not.toBe(0);
+      expect(`${run.stdout}\n${run.stderr}`).toMatch(/archive source file does not match manifest/);
     } finally {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
     }

@@ -1,8 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stableStringify, v04SourceEvidence } from "./v04-artifact-contract.js";
+import {
+  stableStringify,
+  v04CommitSourceManifest,
+  v04SourceEvidence,
+  verifyV04ArchiveSourceManifest,
+} from "./v04-artifact-contract.js";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -62,6 +67,8 @@ const npmCli = [
 if (!npmCli) throw new Error("Unable to resolve the npm CLI entry point");
 const archive = path.join(temporary, "contextmesh-source.zip");
 const extracted = path.join(temporary, "extracted");
+const sourceManifestPath = path.join(temporary, "SOURCE_MANIFEST.json");
+writeFileSync(sourceManifestPath, `${stableStringify(v04CommitSourceManifest(sourceCommit, project))}\n`, "utf8");
 const modelPath = argument("--model-path");
 const forbidden = [
   /(?:^|\/)\.env(?:\.|$)/i,
@@ -79,6 +86,7 @@ try {
       `--add-virtual-file=ARCHIVE_COMMIT:${archiveCommit}`,
       `--add-virtual-file=SOURCE_COMMIT:${sourceCommit}`,
       `--add-virtual-file=SOURCE_EVIDENCE.json:${stableStringify(sourceEvidence)}`,
+      `--add-file=${sourceManifestPath}`,
       `--output=${archive}`,
       "HEAD",
     ],
@@ -91,9 +99,18 @@ try {
     execFileSync("unzip", ["-q", archive, "-d", extracted], { stdio: "inherit" });
   }
   const files = walk(extracted);
+  const expectedFiles = execFileSync("git", ["ls-tree", "-rz", "--name-only", archiveCommit], {
+    cwd: project, encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+  }).split("\0").filter(Boolean).map((file) => file.replaceAll("\\", "/"))
+    .concat(["ARCHIVE_COMMIT", "SOURCE_COMMIT", "SOURCE_EVIDENCE.json", "SOURCE_MANIFEST.json"])
+    .sort((left, right) => left.localeCompare(right));
+  if (stableStringify([...files].sort((left, right) => left.localeCompare(right))) !== stableStringify(expectedFiles)) {
+    throw new Error("Source ZIP file list differs from the exact archive commit");
+  }
   if (readFileSync(path.join(extracted, "SOURCE_COMMIT"), "utf8") !== sourceCommit) {
     throw new Error("Source ZIP commit provenance does not match HEAD");
   }
+  verifyV04ArchiveSourceManifest(sourceEvidence, extracted);
   const leaked = files.filter((file) => forbidden.some((pattern) => pattern.test(file)));
   if (leaked.length > 0) throw new Error(`Source ZIP contains forbidden files: ${leaked.join(", ")}`);
   execFileSync(process.execPath, [npmCli, "ci"], { cwd: extracted, stdio: "inherit" });

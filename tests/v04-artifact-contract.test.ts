@@ -1,11 +1,11 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { v04SourceEvidence } from "../scripts/v04-artifact-contract.js";
+import { v04CanonicalSourceEvidence, v04SourceEvidence } from "../scripts/v04-artifact-contract.js";
 
 const roots: string[] = [];
 
@@ -46,6 +46,27 @@ afterEach(() => {
 });
 
 describe("v0.4 performance artifact verifier", () => {
+  it("canonicalizes artifact-only descendants to the exact non-artifact source commit", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-source-commit-contract-"));
+    roots.push(root);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+    git("init", "-b", "main");
+    git("config", "user.email", "contextmesh-test@example.invalid");
+    git("config", "user.name", "ContextMesh Test");
+    writeFileSync(path.join(root, "README.md"), "source one\n", "utf8");
+    git("add", "README.md");
+    git("commit", "-m", "source");
+    const sourceCommit = git("rev-parse", "HEAD");
+    mkdirSync(path.join(root, "artifacts"));
+    writeFileSync(path.join(root, "artifacts", "evidence.json"), "{}\n", "utf8");
+    git("add", "artifacts/evidence.json");
+    git("commit", "-m", "artifact");
+    expect(v04CanonicalSourceEvidence(root)).toMatchObject({ headCommit: sourceCommit, dirty: false });
+    writeFileSync(path.join(root, "README.md"), "source two\n", "utf8");
+    git("add", "README.md");
+    git("commit", "-m", "source two");
+    expect(v04CanonicalSourceEvidence(root)).toMatchObject({ headCommit: git("rev-parse", "HEAD"), dirty: false });
+  });
   it("accepts the checked artifact across generated-artifact-only commits", () => {
     const npmCli = process.env.npm_execpath;
     if (!npmCli) throw new Error("npm_execpath is required for the artifact verifier contract test");

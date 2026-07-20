@@ -19,7 +19,7 @@ import type { StoredGraphPartition } from "../src/storage/database.js";
 import {
   stableStringify,
   V04_SOURCE_CONTRACT,
-  v04SourceEvidence,
+  v04CanonicalSourceEvidence,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
@@ -120,7 +120,7 @@ function requireCondition(condition: unknown, message: string): asserts conditio
 }
 
 function sourceEvidence(): V04SourceEvidence {
-  if (existsSync(path.join(process.cwd(), ".git"))) return v04SourceEvidence();
+  if (existsSync(path.join(process.cwd(), ".git"))) return v04CanonicalSourceEvidence();
   const sourceCommit = readFileSync(path.join(process.cwd(), "SOURCE_COMMIT"), "utf8").trim();
   const evidence = JSON.parse(
     readFileSync(path.join(process.cwd(), "SOURCE_EVIDENCE.json"), "utf8"),

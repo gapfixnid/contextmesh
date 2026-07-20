@@ -26,6 +26,11 @@ export interface V04SourceEvidence {
   dirty: boolean;
 }
 
+export interface V04SourceManifestEntry {
+  path: string;
+  sha256: string;
+}
+
 export interface V04HardwareIdentity {
   hardwareProfile: string;
   os: string;
@@ -70,7 +75,7 @@ function manifestEvidence(manifest: Array<{ path: string; sha256: string }>): { 
   };
 }
 
-export function v04CommitSourceEvidence(commit: string, root = process.cwd()): { treeDigest: string; files: number } {
+export function v04CommitSourceManifest(commit: string, root = process.cwd()): V04SourceManifestEntry[] {
   const files = execFileSync(
     "git",
     ["ls-tree", "-rz", "--name-only", commit],
@@ -81,14 +86,18 @@ export function v04CommitSourceEvidence(commit: string, root = process.cwd()): {
     .map((item) => item.replaceAll("\\", "/"))
     .filter((item) => !isGeneratedArtifactPath(item))
     .sort((left, right) => left.localeCompare(right));
-  return manifestEvidence(files.map((file) => ({
+  return files.map((file) => ({
     path: file,
     sha256: normalizedBufferDigest(execFileSync("git", ["show", `${commit}:${file}`], {
       cwd: root,
       encoding: "buffer",
       maxBuffer: 64 * 1024 * 1024,
     })),
-  })));
+  }));
+}
+
+export function v04CommitSourceEvidence(commit: string, root = process.cwd()): { treeDigest: string; files: number } {
+  return manifestEvidence(v04CommitSourceManifest(commit, root));
 }
 
 export function v04SourceEvidence(root = process.cwd()): V04SourceEvidence {
@@ -116,6 +125,57 @@ export function v04SourceEvidence(root = process.cwd()): V04SourceEvidence {
     headTreeDigest: head.treeDigest,
     dirty: working.treeDigest !== head.treeDigest || working.files !== head.files,
   };
+}
+
+export function v04CanonicalSourceEvidence(root = process.cwd()): V04SourceEvidence {
+  const current = v04SourceEvidence(root);
+  if (current.dirty) return current;
+  let sourceCommit = current.headCommit;
+  const commits = execFileSync("git", ["rev-list", "--first-parent", "HEAD"], {
+    cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+  }).split(/\r?\n/).filter(Boolean);
+  for (const commit of commits.slice(1)) {
+    const evidence = v04CommitSourceEvidence(commit, root);
+    if (evidence.treeDigest !== current.treeDigest || evidence.files !== current.files) break;
+    sourceCommit = commit;
+  }
+  return {
+    ...current,
+    headCommit: sourceCommit,
+    headTreeDigest: current.treeDigest,
+  };
+}
+
+export function verifyV04ArchiveSourceManifest(
+  expected: Pick<V04SourceEvidence, "treeDigest" | "files">,
+  root = process.cwd(),
+): void {
+  const manifestPath = path.join(root, "SOURCE_MANIFEST.json");
+  if (!existsSync(manifestPath)) throw new Error("archive source manifest is missing");
+  const source = readFileSync(manifestPath, "utf8");
+  const manifest = JSON.parse(source) as V04SourceManifestEntry[];
+  if (source.replaceAll("\r\n", "\n") !== `${stableStringify(manifest)}\n`) {
+    throw new Error("archive source manifest is not canonical");
+  }
+  const normalizedPaths = manifest.map((item) => item.path.replaceAll("\\", "/"));
+  if (new Set(normalizedPaths).size !== manifest.length ||
+    normalizedPaths.some((item, index) => item !== manifest[index]!.path || path.isAbsolute(item) ||
+      item.split("/").includes("..") || isGeneratedArtifactPath(item)) ||
+    [...normalizedPaths].sort((left, right) => left.localeCompare(right))
+      .some((item, index) => item !== normalizedPaths[index])) {
+    throw new Error("archive source manifest paths are invalid");
+  }
+  for (const item of manifest) {
+    const absolute = path.resolve(root, item.path);
+    if (!absolute.startsWith(path.resolve(root) + path.sep) || !existsSync(absolute) ||
+      !/^[0-9a-f]{64}$/.test(item.sha256) || normalizedDigest(absolute) !== item.sha256) {
+      throw new Error(`archive source file does not match manifest: ${item.path}`);
+    }
+  }
+  const actual = manifestEvidence(manifest);
+  if (actual.treeDigest !== expected.treeDigest || actual.files !== expected.files) {
+    throw new Error("archive source manifest does not match expected evidence");
+  }
 }
 
 export function expectedNativeRuntime(root = process.cwd()): string {

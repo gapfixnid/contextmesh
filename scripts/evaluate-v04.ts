@@ -15,7 +15,7 @@ import {
   V04_ARTIFACT_CONTRACT,
   V04_FIXED_HARDWARE,
   validateFixedHardwareIdentity,
-  v04SourceEvidence,
+  v04CanonicalSourceEvidence,
 } from "./v04-artifact-contract.js";
 
 const sizes = { small: 6, medium: 30, large: 90 } as const;
@@ -421,7 +421,7 @@ async function runEvaluation(): Promise<void> {
         && !typeScriptDecision.treeSitterBenchmarkOnly.hasError,
     };
     const sourceOverrideIndex = process.argv.indexOf("--source-commit");
-    const source = v04SourceEvidence();
+    const source = v04CanonicalSourceEvidence();
     const sourceCommit = sourceOverrideIndex >= 0 && process.argv[sourceOverrideIndex + 1]
       ? process.argv[sourceOverrideIndex + 1]!
       : source.headCommit;
