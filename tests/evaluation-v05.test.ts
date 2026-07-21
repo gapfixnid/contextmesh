@@ -129,7 +129,7 @@ describe("v0.5 resolved-edge quality gate", () => {
           actualBaseDigest: string;
           exactBaseGraph: boolean;
         }>;
-        providerStates: Array<{ language: string; provider: string; status: string }>;
+        providerStates: Array<{ language: string; provider: string; status: string; lastError: string | null }>;
         determinism: { runs: number; identical: boolean; signatures: string[] };
         checks: Record<string, boolean>;
         passed: boolean;
@@ -179,7 +179,8 @@ describe("v0.5 resolved-edge quality gate", () => {
         && item.exactBaseGraph
         && item.expectedBaseDigest === item.actualBaseDigest)).toBe(true);
       expect(artifact.providerStates).toContainEqual(expect.objectContaining({
-        language: "rust", provider: "rust_analyzer", status: "ready",
+        language: "rust", provider: "rust_analyzer", status: "partial",
+        lastError: expect.stringContaining("rust_missing"),
       }));
       expect(artifact.determinism).toMatchObject({ runs: 20, identical: true });
       expect(new Set(artifact.determinism.signatures).size).toBe(1);

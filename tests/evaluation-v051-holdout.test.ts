@@ -109,7 +109,7 @@ describe("v0.5.1 external holdout release contract", () => {
       runner: { rustAnalyzer: string; rustc: string };
       fixture: { repositoryCount: number; caseCount: number; profiles: string[] };
       languageResults: Array<{ language: string; precision: number; recall: number; classificationCoverage: number }>;
-      providerStates: Array<{ language: string; provider: string; status: string }>;
+      providerStates: Array<{ language: string; provider: string; status: string; lastError: string | null }>;
       determinism: { scope: string; runs: number; identical: boolean; signatures: string[] };
       passed: boolean;
     };
@@ -122,7 +122,8 @@ describe("v0.5.1 external holdout release contract", () => {
     expect(artifact.languageResults).toHaveLength(4);
     expect(artifact.languageResults.every((item) => item.precision >= 0.9 && item.recall >= 0.8 && item.classificationCoverage === 1)).toBe(true);
     expect(artifact.providerStates).toContainEqual(expect.objectContaining({
-      language: "rust", provider: "rust_analyzer", status: "ready",
+      language: "rust", provider: "rust_analyzer", status: "partial",
+      lastError: expect.stringContaining("call_me"),
     }));
     expect(artifact.determinism).toMatchObject({
       scope: "20 fresh Node processes with independent application, database, and materialized workspace instances",

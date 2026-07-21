@@ -3,13 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import { probeRustAnalyzerRuntime } from "../src/code/languages/rust-precision.js";
 import type { CodeEvidence, Envelope } from "../src/contracts.js";
 
 const roots: string[] = [];
+let priorRustAnalyzerDisable: string | undefined;
 
 function workspace(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-"));
@@ -31,7 +32,16 @@ function workspace(): string {
   return root;
 }
 
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true, maxRetries: 3 }); });
+beforeEach(() => {
+  priorRustAnalyzerDisable = process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+  process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE = "1";
+});
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  if (priorRustAnalyzerDisable === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+  else process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE = priorRustAnalyzerDisable;
+});
 
 describe("v0.5 precision overlays and core languages", () => {
   it("reports disabled Python precision as unavailable without claiming resolved coverage", async () => {
@@ -1299,6 +1309,7 @@ describe("v0.5 precision overlays and core languages", () => {
   it("probes a configured rust-analyzer instead of reporting it permanently unavailable", async () => {
     const root = workspace();
     const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
     process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
     const app = new ContextMeshApp(root);
     try {
@@ -1357,6 +1368,7 @@ describe("v0.5 precision overlays and core languages", () => {
     const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
     const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
     const priorGoDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
     process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
     process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
     process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
