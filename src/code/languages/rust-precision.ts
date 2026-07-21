@@ -8,6 +8,8 @@ import type { OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor
 const PROBE_TIMEOUT_MS = 5_000;
 const LSP_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024;
+const WORKSPACE_READY_RETRY_ATTEMPTS = 40;
+const WORKSPACE_READY_RETRY_DELAY_MS = 250;
 
 interface CommandSpec { executable: string; args: string[] }
 
@@ -324,8 +326,10 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
             position: { line: query.line, character: query.character },
           });
           let locations = definitionLocations(response);
-          for (let attempt = 0; !workspaceReady && locations.length === 0 && attempt < 10; attempt += 1) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 250));
+          for (let attempt = 0;
+            !workspaceReady && locations.length === 0 && attempt < WORKSPACE_READY_RETRY_ATTEMPTS;
+            attempt += 1) {
+            await new Promise<void>((resolve) => setTimeout(resolve, WORKSPACE_READY_RETRY_DELAY_MS));
             response = await client.request("textDocument/definition", {
               textDocument: { uri: pathToFileURL(query.file.absolutePath).href },
               position: { line: query.line, character: query.character },
