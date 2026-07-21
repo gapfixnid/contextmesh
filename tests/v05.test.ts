@@ -1340,6 +1340,26 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
+  it("accepts the official seven-character rust-analyzer commit identity", async () => {
+    const root = workspace();
+    const server = path.join(root, "rust-analyzer-version.mjs");
+    writeFileSync(server, "console.log('rust-analyzer 1.85.0 (4d91de4 2025-02-17)');\n");
+    const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
+    try {
+      await expect(probeRustAnalyzerRuntime()).resolves.toEqual({
+        version: "rust-analyzer 1.85.0 (4d91de4 2025-02-17)",
+      });
+    } finally {
+      if (priorCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorCommand;
+      if (priorArgs === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorArgs;
+    }
+  });
+
   it("waits for a quiescent Rust workspace before committing a resolved LSP call", async () => {
     const root = workspace();
     const server = path.join(root, "fake-rust-analyzer.mjs");

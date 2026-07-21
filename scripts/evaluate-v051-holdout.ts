@@ -429,7 +429,7 @@ async function runEvaluation(): Promise<void> {
   const rustAnalyzerRuntime = await probeRustAnalyzerRuntime();
   const rustcVersion = spawnSync("rustc", ["--version"], { encoding: "utf8", windowsHide: true });
   const rustcIdentity = rustcVersion.status === 0 ? rustcVersion.stdout.trim() : "unavailable";
-  const analyzerIdentity = rustAnalyzerRuntime.version.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) /);
+  const analyzerIdentity = rustAnalyzerRuntime.version.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{7,}) /);
   const compilerIdentity = rustcIdentity.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) /);
   const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-external-"));
   let app: ContextMeshApp | null = null;

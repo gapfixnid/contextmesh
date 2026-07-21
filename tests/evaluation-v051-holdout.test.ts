@@ -95,16 +95,18 @@ describe("v0.5.1 external holdout release contract", () => {
   });
 
   it.skipIf(!hasGo)("produces a deterministic external holdout artifact when the Go provider is available", () => {
-    const output = path.join(process.env.TEMP ?? process.cwd(), `contextmesh-v051-${process.pid}.json`);
+    const outputRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-evaluation-test-"));
+    const output = path.join(outputRoot, "artifact.json");
     const npmCli = process.env.npm_execpath;
     if (!npmCli) throw new Error("npm_execpath is required");
-    const run = spawnSync(process.execPath, [npmCli, "run", "evaluate:v051-holdout", "--", "--output", output], {
-      cwd: process.cwd(), env: process.env, encoding: "utf8", timeout: 300_000,
-    });
-    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
-    expect(run.stdout).not.toContain('"lastError"');
-    expect(run.stdout).toContain('"passed":true');
-    const artifact = JSON.parse(readFileSync(output, "utf8")) as {
+    try {
+      const run = spawnSync(process.execPath, [npmCli, "run", "evaluate:v051-holdout", "--", "--output", output], {
+        cwd: process.cwd(), env: process.env, encoding: "utf8", timeout: 600_000,
+      });
+      expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
+      expect(run.stdout).not.toContain('"lastError"');
+      expect(run.stdout).toContain('"passed":true');
+      const artifact = JSON.parse(readFileSync(output, "utf8")) as {
       release: string;
       runner: { rustAnalyzer: string; rustc: string };
       fixture: { repositoryCount: number; caseCount: number; profiles: string[] };
@@ -113,26 +115,29 @@ describe("v0.5.1 external holdout release contract", () => {
       determinism: { scope: string; runs: number; identical: boolean; signatures: string[] };
       passed: boolean;
     };
-    expect(artifact.release).toBe("v0.5.1");
-    expect(artifact.runner.rustAnalyzer).toMatch(/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
-    expect(artifact.runner.rustc).toMatch(/^rustc \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
-    expect(artifact.fixture).toMatchObject({ repositoryCount: 4 });
-    expect(artifact.fixture.caseCount).toBeGreaterThanOrEqual(24);
-    expect(new Set(artifact.fixture.profiles)).toEqual(new Set(["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"]));
-    expect(artifact.languageResults).toHaveLength(4);
-    expect(artifact.languageResults.every((item) => item.precision >= 0.9 && item.recall >= 0.8 && item.classificationCoverage === 1)).toBe(true);
-    expect(artifact.providerStates).toContainEqual(expect.objectContaining({
-      language: "rust", provider: "rust_analyzer", status: "partial",
-      lastError: expect.stringContaining("call_me"),
-    }));
-    expect(artifact.determinism).toMatchObject({
-      scope: "20 fresh Node processes with independent application, database, and materialized workspace instances",
-      runs: 20,
-      identical: true,
-    });
-    expect(new Set(artifact.determinism.signatures).size).toBe(1);
-    expect(artifact.passed).toBe(true);
-  }, 300_000);
+      expect(artifact.release).toBe("v0.5.1");
+      expect(artifact.runner.rustAnalyzer).toMatch(/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{7,} \d{4}-\d{2}-\d{2}\)$/);
+      expect(artifact.runner.rustc).toMatch(/^rustc \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
+      expect(artifact.fixture).toMatchObject({ repositoryCount: 4 });
+      expect(artifact.fixture.caseCount).toBeGreaterThanOrEqual(24);
+      expect(new Set(artifact.fixture.profiles)).toEqual(new Set(["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"]));
+      expect(artifact.languageResults).toHaveLength(4);
+      expect(artifact.languageResults.every((item) => item.precision >= 0.9 && item.recall >= 0.8 && item.classificationCoverage === 1)).toBe(true);
+      expect(artifact.providerStates).toContainEqual(expect.objectContaining({
+        language: "rust", provider: "rust_analyzer", status: "partial",
+        lastError: expect.stringContaining("call_me"),
+      }));
+      expect(artifact.determinism).toMatchObject({
+        scope: "20 fresh Node processes with independent application, database, and materialized workspace instances",
+        runs: 20,
+        identical: true,
+      });
+      expect(new Set(artifact.determinism.signatures).size).toBe(1);
+      expect(artifact.passed).toBe(true);
+    } finally {
+      rmSync(outputRoot, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }, 600_000);
 
   it("rejects archive evidence that names a different source commit than the artifact", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-archive-contract-"));

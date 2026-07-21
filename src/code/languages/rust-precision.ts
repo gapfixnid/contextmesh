@@ -54,7 +54,7 @@ export async function probeRustAnalyzerRuntime(): Promise<{ version: string }> {
   if (result.code !== 0) {
     throw new Error(`RUST_ANALYZER_UNAVAILABLE: ${version || `probe exited ${result.code}`}`);
   }
-  if (!/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/.test(version)) {
+  if (!/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{7,} \d{4}-\d{2}-\d{2}\)$/.test(version)) {
     throw new Error(`RUST_ANALYZER_IDENTITY_INVALID: ${version || "empty version"}`);
   }
   return { version };

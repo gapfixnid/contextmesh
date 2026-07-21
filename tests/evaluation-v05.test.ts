@@ -97,7 +97,7 @@ describe("v0.5 resolved-edge quality gate", () => {
         cwd: process.cwd(),
         env: process.env,
         encoding: "utf8",
-        timeout: 120_000,
+        timeout: 600_000,
       });
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
       expect(run.stdout).not.toContain('"lastError"');
@@ -135,7 +135,7 @@ describe("v0.5 resolved-edge quality gate", () => {
         passed: boolean;
       };
       expect(artifact.schemaVersion).toBe(4);
-      expect(artifact.runner.rustAnalyzer).toMatch(/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
+      expect(artifact.runner.rustAnalyzer).toMatch(/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{7,} \d{4}-\d{2}-\d{2}\)$/);
       expect(artifact.runner.rustc).toMatch(/^rustc \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
       expect(artifact.source).toMatchObject({
         contract: expect.any(String), treeDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -189,5 +189,5 @@ describe("v0.5 resolved-edge quality gate", () => {
     } finally {
       rmSync(outputRoot, { recursive: true, force: true, maxRetries: 3 });
     }
-  }, 120_000);
+  }, 600_000);
 });

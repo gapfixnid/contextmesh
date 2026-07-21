@@ -232,7 +232,7 @@ for (const file of fixture.harness.files) {
 requireCondition(/^v\d+\.\d+\.\d+$/.test(artifact.runner.node), "Node runtime identity missing");
 requireCondition(Boolean(artifact.runner.platform), "platform identity missing");
 requireCondition(/^go version go1\.23(?:\.\d+)?\s/.test(artifact.runner.go), "Go 1.23 runtime identity missing");
-const rustAnalyzerIdentity = artifact.runner.rustAnalyzer.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
+const rustAnalyzerIdentity = artifact.runner.rustAnalyzer.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{7,}) \d{4}-\d{2}-\d{2}\)$/);
 const rustcIdentity = artifact.runner.rustc.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
 requireCondition(Boolean(rustAnalyzerIdentity && rustcIdentity && rustAnalyzerIdentity[1] === rustcIdentity[1]
   && rustcIdentity[2]!.startsWith(rustAnalyzerIdentity[2]!)), "rust-analyzer provenance does not match the pinned Rust toolchain");
