@@ -738,6 +738,183 @@
       "truePositive": 0,
       "unexpectedPaths": [],
       "unresolvedObserved": true
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions1.rs#call_me",
+          "targetStartLine": 2
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions1.rs#call_me",
+          "targetStartLine": 2
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "rustlings-functions1-main",
+      "language": "rust",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "rustlings",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions1.rs#main",
+      "sourceStartLine": 6,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions3.rs#call_me",
+          "targetStartLine": 1
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions3.rs#call_me",
+          "targetStartLine": 1
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "rustlings-functions3-main",
+      "language": "rust",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "rustlings",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions3.rs#main",
+      "sourceStartLine": 7,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions4.rs#is_even",
+          "targetStartLine": 1
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions4.rs#is_even",
+          "targetStartLine": 1
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "rustlings-sale-price-branch",
+      "language": "rust",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "rustlings",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions4.rs#sale_price",
+      "sourceStartLine": 6,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions2.rs#call_me",
+          "targetStartLine": 3
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions2.rs#call_me",
+          "targetStartLine": 3
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "rustlings-functions2-main",
+      "language": "rust",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "rustlings",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions2.rs#main",
+      "sourceStartLine": 9,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions5.rs#square",
+          "targetStartLine": 1
+        }
+      ],
+      "classificationPassed": true,
+      "expectedCallEdges": [
+        {
+          "status": "resolved",
+          "target": "rustlings/solutions/02_functions/functions5.rs#square",
+          "targetStartLine": 1
+        }
+      ],
+      "expectedUnresolved": null,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "rustlings-functions5-main",
+      "language": "rust",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "rustlings",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions5.rs#main",
+      "sourceStartLine": 6,
+      "truePositive": 1,
+      "unexpectedPaths": [],
+      "unresolvedObserved": null
+    },
+    {
+      "actualCallEdges": [],
+      "classificationPassed": true,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "minimumCandidates": 2,
+        "rawName": "call_me"
+      },
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "id": "rustlings-exercise-missing-function",
+      "language": "rust",
+      "missingPaths": [],
+      "passed": true,
+      "pathPassed": true,
+      "repositoryId": "rustlings",
+      "sourceQualifiedName": "rustlings/exercises/02_functions/functions1.rs#main",
+      "sourceStartLine": 3,
+      "truePositive": 0,
+      "unexpectedPaths": [],
+      "unresolvedObserved": true
     }
   ],
   "checks": {
@@ -762,38 +939,39 @@
     "runs": 20,
     "scope": "20 fresh Node processes with independent application, database, and materialized workspace instances",
     "signatures": [
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa",
-      "fc5fc47b73e7d4229c99aea6d906475b8666e86b8d3402b9e0fced88af5e25aa"
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59",
+      "218ea0ae8901c7ff5ec4c4c6a4835ed3e3b820561d63018a5542d9f9c4cb5e59"
     ]
   },
   "fixture": {
-    "caseCount": 23,
-    "digest": "435356e534b94c41138775d682ceeca4f00e0496a5a0aa11fa3139737ce14046",
-    "fileCount": 15,
-    "id": "contextmesh-v051-external-holdout-v2",
+    "caseCount": 29,
+    "digest": "e48573c4d8789ea8690cbb7d472cf41f7702a8b6d1c913f040b4ae46f8774ef4",
+    "fileCount": 22,
+    "id": "contextmesh-v051-external-holdout-v3",
     "immutable": true,
     "profiles": [
       "complex-src-layout",
       "generated-code",
-      "large-monorepo"
+      "large-monorepo",
+      "multi-binary-workspace"
     ],
     "repositories": [
       {
@@ -819,10 +997,18 @@
         "license": "Apache-2.0",
         "repository": "kubernetes/client-go",
         "tag": "v0.36.2"
+      },
+      {
+        "commit": "2af9e89ba536fad01aa828b06e0ac2174bad0f6d",
+        "fileCount": 7,
+        "id": "rustlings",
+        "license": "MIT",
+        "repository": "rust-lang/rustlings",
+        "tag": "v6.5.0"
       }
     ],
-    "repositoryCount": 3,
-    "schemaVersion": 2,
+    "repositoryCount": 4,
+    "schemaVersion": 3,
     "thresholds": {
       "classificationCoverage": 1,
       "precision": 0.9,
@@ -863,10 +1049,21 @@
       "precision": 1,
       "recall": 1,
       "truePositive": 7
+    },
+    {
+      "cases": 6,
+      "classificationCoverage": 1,
+      "classifiedCases": 6,
+      "falseNegative": 0,
+      "falsePositive": 0,
+      "language": "rust",
+      "precision": 1,
+      "recall": 1,
+      "truePositive": 5
     }
   ],
   "passed": true,
-  "precisionRevision": 3,
+  "precisionRevision": 4,
   "providerStates": [
     {
       "coverage": 0.1893939393939394,
@@ -891,6 +1088,17 @@
       "status": "ready"
     },
     {
+      "coverage": 0.8333333333333334,
+      "eligibleEdges": 6,
+      "language": "rust",
+      "lastError": null,
+      "provider": "rust_analyzer",
+      "providerVersion": "rust-analyzer-lsp-v1",
+      "rejectedEdges": 0,
+      "resolvedEdges": 5,
+      "status": "ready"
+    },
+    {
       "coverage": 1,
       "eligibleEdges": 13,
       "language": "typescript/javascript",
@@ -912,9 +1120,9 @@
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
-    "files": 160,
-    "headCommit": "39300066d12bc9dcf9f7ee61aa162f4ff5c79f40",
-    "headTreeDigest": "9cf84657b112918301e0c34d3f2169b84ed452be210cca195f5f264ee896ea7d",
-    "treeDigest": "9cf84657b112918301e0c34d3f2169b84ed452be210cca195f5f264ee896ea7d"
+    "files": 169,
+    "headCommit": "bf1d41bcd14fd08a1cc224c182f385ce9652d389",
+    "headTreeDigest": "027b8711dd46be8752c42483fba6fc4b4a98a0010b251bc27ff9e5baf0211413",
+    "treeDigest": "027b8711dd46be8752c42483fba6fc4b4a98a0010b251bc27ff9e5baf0211413"
   }
 }
