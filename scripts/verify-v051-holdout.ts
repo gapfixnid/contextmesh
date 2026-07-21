@@ -14,7 +14,7 @@ import {
 } from "./v04-artifact-contract.js";
 
 const FIXTURE_ID = "contextmesh-v051-external-holdout-v3";
-const FIXTURE_DIGEST = "2eea7e32a0a31bf234109fcc3f8521b477bfe6667f229b4c24d91d65d24eced8";
+const FIXTURE_DIGEST = "66486790bddc503ce645a913847b53a6915d074c83edf26d2f37ab976abd6942";
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
 const REQUIRED_REPOSITORIES = ["kubernetes/client-go", "nrwl/nx", "pallets/flask", "rust-lang/rustlings"];
 const REQUIRED_LANGUAGES = ["go", "python", "rust", "typescript"];

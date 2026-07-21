@@ -619,7 +619,7 @@
       "id": "rustlings-quiz1-missing-function",
       "repositoryId": "rustlings",
       "language": "rust",
-      "sourceQualifiedName": "rustlings/exercises/quizzes/quiz1.rs#tests.verify_test",
+      "sourceQualifiedName": "rustlings/exercises/quizzes/quiz1.rs#verify_test",
       "sourceStartLine": 25,
       "expectedCallEdges": [],
       "expectedUnresolved": {

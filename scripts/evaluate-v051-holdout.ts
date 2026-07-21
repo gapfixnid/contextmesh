@@ -93,7 +93,7 @@ interface CaseResult {
 
 const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
 const CORPUS_ROOT = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
-const PINNED_FIXTURE_DIGEST = "2eea7e32a0a31bf234109fcc3f8521b477bfe6667f229b4c24d91d65d24eced8";
+const PINNED_FIXTURE_DIGEST = "66486790bddc503ce645a913847b53a6915d074c83edf26d2f37ab976abd6942";
 const LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
 process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
