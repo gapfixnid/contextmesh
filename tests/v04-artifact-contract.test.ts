@@ -51,10 +51,40 @@ afterEach(() => {
 
 describe("v0.4 performance artifact verifier", () => {
   it("ignores Unix core dumps without hiding ordinary untracked source", () => {
-    const rules = new Set(readFileSync(path.join(process.cwd(), ".gitignore"), "utf8").split(/\r?\n/));
-    expect(rules).toContain("core");
-    expect(rules).toContain("core.*");
-    expect(rules).not.toContain("*.ts");
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-core-ignore-contract-"));
+    roots.push(root);
+    writeFileSync(path.join(root, ".gitignore"), readFileSync(path.join(process.cwd(), ".gitignore"), "utf8"), "utf8");
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    mkdirSync(path.join(root, "packages", "core"), { recursive: true });
+    for (const file of ["core", "core.123", "src/core.ts", "packages/core/index.ts"]) {
+      writeFileSync(path.join(root, file), "fixture\n", "utf8");
+    }
+    expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core"], { cwd: root }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123"], { cwd: root }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "src/core.ts"], { cwd: root }).status).not.toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "packages/core/index.ts"], { cwd: root }).status).not.toBe(0);
+  });
+
+  it.each([
+    ["changed", (root: string) => writeFileSync(path.join(root, "README.md"),
+      `${readFileSync(path.join(root, "README.md"), "utf8")}\ndiagnostic change\n`, "utf8"), "changed:README.md"],
+    ["added", (root: string) => writeFileSync(path.join(root, "added.ts"), "export const added = true;\n", "utf8"), "added:added.ts"],
+    ["removed", (root: string) => rmSync(path.join(root, "README.md")), "removed:README.md"],
+  ] as const)("reports an exact %s path before the generic v0.4 tree mismatch", (_kind, mutate, expected) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v04-diagnostic-contract-"));
+    roots.push(root);
+    expect(spawnSync("git", ["clone", "--quiet", "--no-hardlinks", process.cwd(), root]).status).toBe(0);
+    mutate(root);
+    const tsxCli = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+    const run = spawnSync(process.execPath, [tsxCli, path.join(process.cwd(), "scripts", "verify-v04-artifact.ts")], {
+      cwd: root,
+      env: process.env,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    expect(run.status).not.toBe(0);
+    expect(`${run.stdout}\n${run.stderr}`).toContain(expected);
   });
 
   it("canonicalizes artifact-only descendants to the exact non-artifact source commit", () => {

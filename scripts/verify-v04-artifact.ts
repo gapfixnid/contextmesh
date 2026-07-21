@@ -108,12 +108,12 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
   }
   const currentSource = v04SourceEvidence();
+  requireCondition(currentSource.dirty === false,
+    `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
   requireCondition(
     artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
     "artifact was measured from a different source tree",
   );
-  requireCondition(currentSource.dirty === false,
-    `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
 } else {
   const sourceCommitPath = path.join(process.cwd(), "SOURCE_COMMIT");
   const sourceEvidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");
