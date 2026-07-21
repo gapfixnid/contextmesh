@@ -7,6 +7,7 @@ import type { OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor
 
 const PROBE_TIMEOUT_MS = 5_000;
 const LSP_REQUEST_TIMEOUT_MS = 15_000;
+const WORKSPACE_READY_TIMEOUT_MS = 30_000;
 const MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024;
 const WORKSPACE_READY_RETRY_ATTEMPTS = 40;
 const WORKSPACE_READY_RETRY_DELAY_MS = 250;
@@ -67,6 +68,7 @@ class JsonRpcClient {
   private nextId = 1;
   private terminalError: Error | null = null;
   private stderr = "";
+  private serverStatus: { health: "ok" | "warning" | "error"; quiescent: boolean; message?: string } | null = null;
   private readonly pending = new Map<number, {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
@@ -144,6 +146,17 @@ class JsonRpcClient {
         if (typeof diagnostic.message === "string") this.diagnostics.push(diagnostic.message.slice(0, 4_000));
       }
     }
+    if (message.method === "experimental/serverStatus") {
+      const status = message.params as { health?: unknown; quiescent?: unknown; message?: unknown } | undefined;
+      if ((status?.health === "ok" || status?.health === "warning" || status?.health === "error")
+        && typeof status.quiescent === "boolean") {
+        this.serverStatus = {
+          health: status.health,
+          quiescent: status.quiescent,
+          ...(typeof status.message === "string" ? { message: status.message.slice(0, 4_000) } : {}),
+        };
+      }
+    }
   }
 
   private write(value: unknown): Promise<void> {
@@ -176,6 +189,19 @@ class JsonRpcClient {
 
   notify(method: string, params: unknown): Promise<void> {
     return this.write({ jsonrpc: "2.0", method, params });
+  }
+
+  async waitForWorkspaceReady(): Promise<void> {
+    const deadline = Date.now() + WORKSPACE_READY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (this.terminalError) throw this.terminalError;
+      if (this.serverStatus?.health === "error") {
+        throw new Error(`RUST_ANALYZER_WORKSPACE_ERROR: ${this.serverStatus.message ?? "server reported an error"}`);
+      }
+      if (this.serverStatus?.quiescent) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`RUST_ANALYZER_WORKSPACE_TIMEOUT: server did not become quiescent within ${WORKSPACE_READY_TIMEOUT_MS}ms`);
   }
 
   async close(): Promise<void> {
@@ -301,7 +327,7 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
       await client.request("initialize", {
         processId: process.pid,
         rootUri: pathToFileURL(this.rootPath).href,
-        capabilities: {},
+        capabilities: { experimental: { serverStatusNotification: true } },
         workspaceFolders: [{ uri: pathToFileURL(this.rootPath).href, name: path.basename(this.rootPath) }],
       });
       await client.notify("initialized", {});
@@ -310,6 +336,7 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
           textDocument: { uri: pathToFileURL(file.absolutePath).href, languageId: "rust", version: 1, text: file.content },
         });
       }
+      await client.waitForWorkspaceReady();
       const nodesByPath = new Map<string, CodeNodeRecord[]>();
       for (const node of rustNodes) {
         const file = node.fileId ? fileById.get(node.fileId) : undefined;

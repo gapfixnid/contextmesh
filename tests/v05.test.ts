@@ -1334,15 +1334,17 @@ describe("v0.5 precision overlays and core languages", () => {
     const server = path.join(root, "fake-rust-analyzer.mjs");
     writeFileSync(server, [
       "if (process.argv.includes('--version')) { console.log('rust-analyzer fixture'); process.exit(0); }",
-      "let buffer = Buffer.alloc(0); const documents = new Map(); let definitionRequests = 0;",
+      "let buffer = Buffer.alloc(0); const documents = new Map(); let definitionRequests = 0; let workspaceReady = false;",
       "function send(value) { const body = Buffer.from(JSON.stringify(value)); process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\\r\\n\\r\\n`), body])); }",
       "function handle(message) {",
       "  if (message.method === 'textDocument/didOpen') { documents.set(message.params.textDocument.uri, message.params.textDocument.text); return; }",
+      "  if (message.method === 'initialized') { send({ jsonrpc: '2.0', method: 'experimental/serverStatus', params: { health: 'ok', quiescent: false } }); setTimeout(() => { workspaceReady = true; send({ jsonrpc: '2.0', method: 'experimental/serverStatus', params: { health: 'ok', quiescent: true } }); }, 100); return; }",
       "  if (message.method === 'exit') process.exit(0);",
       "  if (message.id === undefined) return;",
       "  if (message.method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { definitionProvider: true } } });",
       "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
       "  if (message.method === 'textDocument/definition') {",
+      "    if (!workspaceReady) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'workspace not quiescent' } });",
       "    definitionRequests += 1; if (definitionRequests <= 11) return send({ jsonrpc: '2.0', id: message.id, result: null });",
       "    const entry = [...documents.entries()].find(([, text]) => text.includes('pub fn rust_target'));",
       "    const lines = entry[1].split(/\\r?\\n/); const line = lines.findIndex((item) => item.includes('pub fn rust_target'));",

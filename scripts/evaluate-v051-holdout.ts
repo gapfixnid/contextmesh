@@ -297,12 +297,12 @@ function languageResults(results: CaseResult[]) {
   });
 }
 
-function graphFingerprint(
+function graphFingerprints(
   graph: StoredGraphPartition,
   cases: CaseResult[],
   providers: ReturnType<typeof providerStateSnapshot>,
   root: string,
-): string {
+): Record<string, string> {
   const byId = new Map(graph.nodes.map((node) => [node.id, {
     language: node.language ?? null,
     ecosystem: node.ecosystem ?? null,
@@ -369,7 +369,14 @@ function graphFingerprint(
     cases: normalizeValue(cases),
     providers: normalizeValue(providers),
   };
-  return digest(normalized);
+  return {
+    all: digest(normalized),
+    nodes: digest(normalized.nodes),
+    edges: digest(normalized.edges),
+    unresolved: digest(normalized.unresolved),
+    cases: digest(normalized.cases),
+    providers: digest(normalized.providers),
+  };
 }
 
 function providerStateSnapshot(app: ContextMeshApp, root: string) {
@@ -410,7 +417,7 @@ async function runDeterminismChild(): Promise<void> {
     const graph = currentGraph(app);
     const cases = scoreCases(fixture, graph.nodes, graph.edges, graph.unresolvedReferences);
     const providers = providerStateSnapshot(app, root);
-    process.stdout.write(`${JSON.stringify({ signature: graphFingerprint(graph, cases, providers, root) })}\n`);
+    process.stdout.write(`${JSON.stringify({ fingerprints: graphFingerprints(graph, cases, providers, root) })}\n`);
   } finally {
     await app.close();
     removeTemporaryDirectory(root);
@@ -436,13 +443,19 @@ async function runEvaluation(): Promise<void> {
     const providerStates = providerStateSnapshot(app, fixtureRoot);
     const scriptPath = fileURLToPath(import.meta.url);
     const signatures: string[] = [];
+    const componentRuns: Array<Record<string, string>> = [];
     for (let run = 0; run < 20; run += 1) {
       const output = execFileSync(
         process.execPath,
         ["--import", "tsx", scriptPath, "--determinism-child"],
         { encoding: "utf8", maxBuffer: 1024 * 1024, env: process.env },
       ).trim();
-      signatures.push((JSON.parse(output) as { signature: string }).signature);
+      const child = JSON.parse(output) as { fingerprints: Record<string, string> };
+      componentRuns.push(child.fingerprints);
+      signatures.push(child.fingerprints.all!);
+    }
+    if (new Set(signatures).size !== 1) {
+      process.stderr.write(`V051_DETERMINISM_COMPONENTS: ${JSON.stringify(componentRuns)}\n`);
     }
     const profiles = [...new Set(fixture.repositories.flatMap((item) => item.profiles))].sort();
     const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
