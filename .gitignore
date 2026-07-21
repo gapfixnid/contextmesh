@@ -8,6 +8,7 @@ artifacts/v04-local-*.json
 *.log
 /core
 /core.[0-9]*
+!/core.*[!0-9]*
 !/core/
 !/core/**
 !/core.[0-9]*/

@@ -62,8 +62,11 @@ describe("v0.4 performance artifact verifier", () => {
     expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123"], { cwd: root }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.1234"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core/index.ts"], { cwd: root }).status).not.toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123/index.ts"], { cwd: root }).status).not.toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123.ts"], { cwd: root }).status).not.toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123abc"], { cwd: root }).status).not.toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "src/core.ts"], { cwd: root }).status).not.toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "packages/core/index.ts"], { cwd: root }).status).not.toBe(0);
   });
@@ -72,6 +75,8 @@ describe("v0.4 performance artifact verifier", () => {
     ["changed", (root: string) => writeFileSync(path.join(root, "README.md"),
       `${readFileSync(path.join(root, "README.md"), "utf8")}\ndiagnostic change\n`, "utf8"), "changed:README.md"],
     ["added", (root: string) => writeFileSync(path.join(root, "added.ts"), "export const added = true;\n", "utf8"), "added:added.ts"],
+    ["numeric-prefix source", (root: string) => writeFileSync(path.join(root, "core.123.ts"),
+      "export const coreSource = true;\n", "utf8"), "added:core.123.ts"],
     ["removed", (root: string) => rmSync(path.join(root, "README.md")), "removed:README.md"],
   ] as const)("reports an exact %s path before the generic v0.4 tree mismatch", (_kind, mutate, expected) => {
     // Archive verification has no Git worktree; SOURCE_MANIFEST tamper tests cover that path separately.
