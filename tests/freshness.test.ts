@@ -98,6 +98,7 @@ describe("Phase 3 freshness coordination", () => {
       app = new ContextMeshApp(root);
       const afterRestart = await app.searchCode({ query: "double" });
       expect(afterRestart.warnings).not.toContainEqual(expect.stringContaining("INDEX_STALE"));
+      expect(afterRestart.snapshot).toMatchObject({ graphGeneration: 1, successFence: 3 });
     } finally {
       app.close();
     }

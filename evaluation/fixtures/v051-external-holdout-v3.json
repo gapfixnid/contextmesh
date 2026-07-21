@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "id": "contextmesh-v051-external-holdout-v2",
+  "schemaVersion": 3,
+  "id": "contextmesh-v051-external-holdout-v3",
   "immutable": true,
   "description": "Offline-replayable external-source holdout built from byte-identical files at pinned public release commits. Gold paths are derived from upstream source semantics and pinned by exact source and target spans; runtime output is not embedded as gold. This fixture measures only the selected cases, not whole-repository provider coverage.",
   "frozenAt": "2026-07-20",
@@ -124,6 +124,49 @@
           "sha256": "b02559718e8eeb5b0de6789667794c595cab3184d6fdf70854a36fadcaedfb30"
         }
       ]
+    },
+    {
+      "id": "rustlings",
+      "repository": "rust-lang/rustlings",
+      "url": "https://github.com/rust-lang/rustlings",
+      "tag": "v6.5.0",
+      "commit": "2af9e89ba536fad01aa828b06e0ac2174bad0f6d",
+      "license": "MIT",
+      "profiles": [
+        "multi-binary-workspace"
+      ],
+      "files": [
+        {
+          "upstreamPath": "LICENSE",
+          "corpusPath": "rustlings/LICENSE",
+          "sha256": "73a94c6d29e8563b3d7bf89a118572f01b4a0a3c984b15c02b95ce2c93f71b2f"
+        },
+        {
+          "upstreamPath": "solutions/02_functions/functions1.rs",
+          "corpusPath": "rustlings/solutions/02_functions/functions1.rs",
+          "sha256": "5f514e97915c24f25d04b5b64a2aa476a0db52a17b3f6203bc4c3c21e8448b64"
+        },
+        {
+          "upstreamPath": "solutions/02_functions/functions3.rs",
+          "corpusPath": "rustlings/solutions/02_functions/functions3.rs",
+          "sha256": "f22471d2d1d46e27e88eb2b1f80144423f79884bf42c4bbf7ae374e771060cb8"
+        },
+        {
+          "upstreamPath": "solutions/02_functions/functions4.rs",
+          "corpusPath": "rustlings/solutions/02_functions/functions4.rs",
+          "sha256": "7725915a442c37580a09d8814432012dc8c35f07f70bd790a9a30e19dec8d872"
+        },
+        {
+          "upstreamPath": "solutions/02_functions/functions5.rs",
+          "corpusPath": "rustlings/solutions/02_functions/functions5.rs",
+          "sha256": "b55962b9f06336b2fa488db4420302e939054cb003d12cc08961a4a893ab1cab"
+        },
+        {
+          "upstreamPath": "exercises/quizzes/quiz1.rs",
+          "corpusPath": "rustlings/exercises/quizzes/quiz1.rs",
+          "sha256": "5d9f7ed42d473bdefc9a489a901619969032aae5a906d6e66ea404c6f692c264"
+        }
+      ]
     }
   ],
   "harness": {
@@ -143,6 +186,11 @@
         "path": "go.mod",
         "sha256": "f27e9ece8584abe2bf19ec8b38eb20eee2689cd948f633377bf956be7a029d14",
         "purpose": "Offline Go module identity"
+      },
+      {
+        "path": "Cargo.toml",
+        "sha256": "4b087a62430797874efc98d36275917c7d3f5b8dcc71184ad9dfc4f6d2e1f9e8",
+        "purpose": "Rust project discovery"
       },
       {
         "path": "apimachinery/pkg/runtime/runtime.go",
@@ -494,6 +542,88 @@
       "expectedCallEdges": [],
       "expectedUnresolved": {
         "rawName": "IsAbs",
+        "minimumCandidates": 0
+      }
+    },
+    {
+      "id": "rustlings-functions1-main",
+      "repositoryId": "rustlings",
+      "language": "rust",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions1.rs#main",
+      "sourceStartLine": 6,
+      "expectedCallEdges": [
+        {
+          "target": "rustlings/solutions/02_functions/functions1.rs#call_me",
+          "targetStartLine": 2,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "rustlings-functions3-main",
+      "repositoryId": "rustlings",
+      "language": "rust",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions3.rs#main",
+      "sourceStartLine": 7,
+      "expectedCallEdges": [
+        {
+          "target": "rustlings/solutions/02_functions/functions3.rs#call_me",
+          "targetStartLine": 1,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "rustlings-sale-price-branch",
+      "repositoryId": "rustlings",
+      "language": "rust",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions4.rs#sale_price",
+      "sourceStartLine": 6,
+      "expectedCallEdges": [
+        {
+          "target": "rustlings/solutions/02_functions/functions4.rs#is_even",
+          "targetStartLine": 1,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "rustlings-functions4-main",
+      "repositoryId": "rustlings",
+      "language": "rust",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions4.rs#main",
+      "sourceStartLine": 14,
+      "expectedCallEdges": [
+        {
+          "target": "rustlings/solutions/02_functions/functions4.rs#sale_price",
+          "targetStartLine": 6,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "rustlings-functions5-main",
+      "repositoryId": "rustlings",
+      "language": "rust",
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions5.rs#main",
+      "sourceStartLine": 6,
+      "expectedCallEdges": [
+        {
+          "target": "rustlings/solutions/02_functions/functions5.rs#square",
+          "targetStartLine": 1,
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "id": "rustlings-quiz1-missing-function",
+      "repositoryId": "rustlings",
+      "language": "rust",
+      "sourceQualifiedName": "rustlings/exercises/quizzes/quiz1.rs#tests.verify_test",
+      "sourceStartLine": 25,
+      "expectedCallEdges": [],
+      "expectedUnresolved": {
+        "rawName": "calculate_price_of_apples",
         "minimumCandidates": 0
       }
     }

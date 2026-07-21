@@ -24,7 +24,7 @@ import {
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
-type Tier1Language = "typescript" | "python" | "go";
+type Tier1Language = "typescript" | "python" | "go" | "rust";
 
 interface FixtureFile {
   upstreamPath: string;
@@ -47,7 +47,7 @@ interface FixtureCase {
 }
 
 interface ExternalFixture {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
   immutable: true;
   description: string;
@@ -91,11 +91,15 @@ interface CaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
 const CORPUS_ROOT = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
-const PINNED_FIXTURE_DIGEST = "435356e534b94c41138775d682ceeca4f00e0496a5a0aa11fa3139737ce14046";
-const LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
-const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo"];
+const PINNED_FIXTURE_DIGEST = "2eea7e32a0a31bf234109fcc3f8521b477bfe6667f229b4c24d91d65d24eced8";
+const LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
+const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
+process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([
+  path.join(process.cwd(), "evaluation", "fixtures", "rust-analyzer-fixture.mjs"),
+]);
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -140,12 +144,12 @@ function sourceEvidence(): V04SourceEvidence {
 
 function loadFixture(): ExternalFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as ExternalFixture;
-  requireCondition(fixture.schemaVersion === 2, "schema version");
-  requireCondition(fixture.id === "contextmesh-v051-external-holdout-v2", "fixture id");
+  requireCondition(fixture.schemaVersion === 3, "schema version");
+  requireCondition(fixture.id === "contextmesh-v051-external-holdout-v3", "fixture id");
   requireCondition(fixture.immutable === true, "fixture must be immutable");
   requireCondition(digest(fixture) === PINNED_FIXTURE_DIGEST, "fixture digest mismatch");
-  requireCondition(fixture.repositories.length === 3, "three repositories are required");
-  requireCondition(new Set(fixture.repositories.map((item) => item.id)).size === 3, "repository ids must be unique");
+  requireCondition(fixture.repositories.length === 4, "four repositories are required");
+  requireCondition(new Set(fixture.repositories.map((item) => item.id)).size === 4, "repository ids must be unique");
   requireCondition(new Set(fixture.cases.map((item) => item.id)).size === fixture.cases.length, "case ids must be unique");
   requireCondition(
     canonical([...new Set(fixture.repositories.flatMap((item) => item.profiles))].sort()) === canonical(REQUIRED_PROFILES),
@@ -433,7 +437,7 @@ async function runEvaluation(): Promise<void> {
     const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
     const checks = {
       immutableFixturePinned: digest(fixture) === PINNED_FIXTURE_DIGEST,
-      externalRepositoryCount: fixture.repositories.length === 3,
+      externalRepositoryCount: fixture.repositories.length === 4,
       pinnedCommitsAndLicenses: fixture.repositories.every((item) =>
         /^[0-9a-f]{40}$/.test(item.commit) && ["MIT", "BSD-3-Clause", "Apache-2.0"].includes(item.license)),
       repositoryProfilesCovered: canonical(profiles) === canonical(REQUIRED_PROFILES),
@@ -453,7 +457,7 @@ async function runEvaluation(): Promise<void> {
       generatedGoEvidence: caseResults.filter((item) => item.id.includes("generated"))
         .every((item) => item.passed),
       twentyRunDeterminism: signatures.length === 20 && new Set(signatures).size === 1,
-      providersHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
+      providersHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
         providerStates.some((state) => state.provider === provider && ["ready", "partial"].includes(state.status))),
     };
     const artifact = {

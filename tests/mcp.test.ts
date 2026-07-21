@@ -51,8 +51,12 @@ describe("MCP protocol", () => {
 
       const searched = await client.callTool({ name: "search_code", arguments: { query: "Calculator" } });
       expect(searched.isError).not.toBe(true);
-      const structured = searched.structuredContent as { data: { results: Array<{ name: string }> } };
+      const structured = searched.structuredContent as {
+        data: { results: Array<{ name: string }> };
+        snapshot: { graphGeneration: number; successFence: number };
+      };
       expect(structured.data.results.some((result) => result.name === "Calculator")).toBe(true);
+      expect(structured.snapshot).toMatchObject({ graphGeneration: 1, successFence: 1 });
 
       const invalid = await client.callTool({ name: "search_code", arguments: { query: "" } });
       expect(invalid.isError).toBe(true);

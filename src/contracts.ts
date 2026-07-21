@@ -49,6 +49,7 @@ export type PrecisionProviderStatus = "not_configured" | "running" | "ready" | "
 export interface WorkspaceSnapshot {
   graphGeneration: number;
   precisionRevision: number;
+  successFence: number;
   freshness: "fresh" | "fast-verified" | "stale";
 }
 

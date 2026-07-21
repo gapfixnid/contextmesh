@@ -28,6 +28,7 @@ const envelopeOutputSchema = z.object({
   snapshot: z.object({
     graphGeneration: z.number().int().nonnegative(),
     precisionRevision: z.number().int().nonnegative(),
+    successFence: z.number().int().nonnegative(),
     freshness: z.enum(["fresh", "fast-verified", "stale"]),
   }).optional(),
 });

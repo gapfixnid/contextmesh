@@ -19,13 +19,13 @@ function canonical(value: unknown): string {
 
 describe("v0.5 resolved-edge quality gate", () => {
   it("pins syntax-distinct Python development and holdout positive cases", () => {
-    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v4.json");
+    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
       id: string;
       files: Array<{ path: string; content: string }>;
       cases: Array<{ language: string; category: string; split: string; sourceQualifiedName: string; syntaxForm?: string }>;
     };
-    expect(fixture.id).toBe("contextmesh-v05-tier1-resolved-edge-v4");
+    expect(fixture.id).toBe("contextmesh-v05-tier1-resolved-edge-v5");
     const positives = fixture.cases.filter((item) => item.language === "python" && item.category === "positive");
     expect(new Set(positives.map((item) => item.split))).toEqual(new Set(["development", "holdout"]));
     const syntaxForms = new Set(positives.map((item) => item.syntaxForm));
@@ -39,7 +39,7 @@ describe("v0.5 resolved-edge quality gate", () => {
   });
 
   it("scores immutable gold positives, false positives, ambiguous cases, and unresolved cases", () => {
-    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v4.json");
+    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
     const semanticFixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
       immutable: boolean;
@@ -54,7 +54,7 @@ describe("v0.5 resolved-edge quality gate", () => {
     };
     expect(fixture.immutable).toBe(true);
     expect(fixture.provenance).toMatchObject({ origin: expect.any(String), mutationPolicy: expect.any(String) });
-    for (const language of ["typescript", "python", "go"]) {
+    for (const language of ["typescript", "python", "go", "rust"]) {
       const languageCases = fixture.cases.filter((item) => item.language === language);
       expect(languageCases.length).toBeGreaterThanOrEqual(6);
       for (const split of ["development", "holdout"]) {
@@ -126,7 +126,7 @@ describe("v0.5 resolved-edge quality gate", () => {
         digest: createHash("sha256").update(canonical(semanticFixture)).digest("hex"),
         caseCount: semanticFixture.cases.length,
       });
-      expect(artifact.languageResults).toHaveLength(3);
+      expect(artifact.languageResults).toHaveLength(4);
       for (const result of artifact.languageResults) {
         expect(result).toMatchObject({
           goldPositive: expect.any(Number),
@@ -149,7 +149,7 @@ describe("v0.5 resolved-edge quality gate", () => {
       expect(new Set(artifact.caseResults.map((item) => item.split))).toEqual(new Set(["development", "holdout"]));
       expect(artifact.semanticCaseResults).toHaveLength(semanticFixture.cases.length);
       expect(artifact.semanticCaseResults.every((item) => item.passed && item.unexpectedEdges.length === 0 && item.missingEdges.length === 0)).toBe(true);
-      expect(artifact.providerAbsence).toHaveLength(3);
+      expect(artifact.providerAbsence).toHaveLength(4);
       expect(artifact.providerAbsence.every((item) => item.preservesBase
         && item.providerState === "not_configured"
         && item.exactBaseGraph

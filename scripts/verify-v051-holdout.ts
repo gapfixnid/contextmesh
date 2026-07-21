@@ -13,11 +13,11 @@ import {
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
-const FIXTURE_ID = "contextmesh-v051-external-holdout-v2";
-const FIXTURE_DIGEST = "435356e534b94c41138775d682ceeca4f00e0496a5a0aa11fa3139737ce14046";
-const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo"];
-const REQUIRED_REPOSITORIES = ["kubernetes/client-go", "nrwl/nx", "pallets/flask"];
-const REQUIRED_LANGUAGES = ["go", "python", "typescript"];
+const FIXTURE_ID = "contextmesh-v051-external-holdout-v3";
+const FIXTURE_DIGEST = "2eea7e32a0a31bf234109fcc3f8521b477bfe6667f229b4c24d91d65d24eced8";
+const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
+const REQUIRED_REPOSITORIES = ["kubernetes/client-go", "nrwl/nx", "pallets/flask", "rust-lang/rustlings"];
+const REQUIRED_LANGUAGES = ["go", "python", "rust", "typescript"];
 
 interface Artifact {
   schemaVersion: number;
@@ -161,7 +161,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   verifyV04ArchiveSourceManifest(artifact.source);
 }
 
-const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");
+const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
 const corpusRoot = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
   id: string;
@@ -189,7 +189,7 @@ const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
   }>;
 };
 requireCondition(
-  fixture.id === FIXTURE_ID && fixture.schemaVersion === 2 && fixture.immutable === true,
+  fixture.id === FIXTURE_ID && fixture.schemaVersion === 3 && fixture.immutable === true,
   "fixture identity mismatch",
 );
 requireCondition(canonicalDigest(fixture) === FIXTURE_DIGEST, "fixture digest mismatch");
@@ -198,7 +198,7 @@ requireCondition(
   stableStringify(artifact.fixture.thresholds) === stableStringify(fixture.thresholds),
   "quality thresholds differ from the pinned fixture",
 );
-requireCondition(artifact.fixture.repositoryCount === 3, "three repositories are required");
+requireCondition(artifact.fixture.repositoryCount === 4, "four repositories are required");
 requireCondition(artifact.fixture.fileCount === fixture.repositories.reduce((sum, item) => sum + item.files.length, 0), "file count mismatch");
 requireCondition(artifact.fixture.caseCount === fixture.cases.length && artifact.fixture.caseCount >= 18, "case count mismatch");
 requireCondition(
@@ -273,7 +273,7 @@ requireCondition(
   fixture.cases.every((item) => artifact.caseResults.some((result) => result.id === item.id)),
   "one or more fixture cases are missing",
 );
-requireCondition(["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
+requireCondition(["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
   artifact.providerStates.some((state) => state.provider === provider && ["ready", "partial"].includes(state.status))),
   "required provider is unhealthy",
 );

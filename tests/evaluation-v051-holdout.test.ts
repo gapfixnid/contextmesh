@@ -40,7 +40,7 @@ interface ExternalFixture {
   }>;
 }
 
-const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v2.json");
+const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
 const corpusRoot = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
 const hasGo = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true }).status === 0;
 
@@ -49,8 +49,8 @@ describe("v0.5.1 external holdout release contract", () => {
     expect(existsSync(fixturePath)).toBe(true);
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ExternalFixture;
     expect(fixture).toMatchObject({
-      schemaVersion: 2,
-      id: "contextmesh-v051-external-holdout-v2",
+      schemaVersion: 3,
+      id: "contextmesh-v051-external-holdout-v3",
       immutable: true,
       thresholds: { precision: 0.9, recall: 0.8, classificationCoverage: 1 },
     });
@@ -58,9 +58,10 @@ describe("v0.5.1 external holdout release contract", () => {
       "kubernetes/client-go",
       "nrwl/nx",
       "pallets/flask",
+      "rust-lang/rustlings",
     ]);
     expect(new Set(fixture.repositories.flatMap((item) => item.profiles))).toEqual(
-      new Set(["complex-src-layout", "generated-code", "large-monorepo"]),
+      new Set(["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"]),
     );
     expect(new Set(fixture.repositories.map((item) => item.license))).toEqual(
       new Set(["Apache-2.0", "BSD-3-Clause", "MIT"]),
@@ -76,8 +77,8 @@ describe("v0.5.1 external holdout release contract", () => {
         expect(createHash("sha256").update(source).digest("hex")).toBe(file.sha256);
       }
     }
-    expect(fixture.cases.length).toBeGreaterThanOrEqual(18);
-    for (const language of ["typescript", "python", "go"]) {
+    expect(fixture.cases.length).toBeGreaterThanOrEqual(24);
+    for (const language of ["typescript", "python", "go", "rust"]) {
       const cases = fixture.cases.filter((item) => item.language === language);
       expect(cases.length).toBeGreaterThanOrEqual(6);
       expect(cases.every((item) => Number.isSafeInteger(item.sourceStartLine) && item.sourceStartLine > 0)).toBe(true);
@@ -106,10 +107,10 @@ describe("v0.5.1 external holdout release contract", () => {
       passed: boolean;
     };
     expect(artifact.release).toBe("v0.5.1");
-    expect(artifact.fixture).toMatchObject({ repositoryCount: 3 });
-    expect(artifact.fixture.caseCount).toBeGreaterThanOrEqual(18);
-    expect(new Set(artifact.fixture.profiles)).toEqual(new Set(["complex-src-layout", "generated-code", "large-monorepo"]));
-    expect(artifact.languageResults).toHaveLength(3);
+    expect(artifact.fixture).toMatchObject({ repositoryCount: 4 });
+    expect(artifact.fixture.caseCount).toBeGreaterThanOrEqual(24);
+    expect(new Set(artifact.fixture.profiles)).toEqual(new Set(["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"]));
+    expect(artifact.languageResults).toHaveLength(4);
     expect(artifact.languageResults.every((item) => item.precision >= 0.9 && item.recall >= 0.8 && item.classificationCoverage === 1)).toBe(true);
     expect(artifact.determinism).toMatchObject({
       scope: "20 fresh Node processes with independent application, database, and materialized workspace instances",

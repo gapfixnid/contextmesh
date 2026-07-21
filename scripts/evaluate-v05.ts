@@ -14,12 +14,12 @@ import {
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
-type Tier1Language = "typescript" | "python" | "go";
+type Tier1Language = "typescript" | "python" | "go" | "rust";
 type CaseCategory = "positive" | "negative" | "ambiguous";
 type CaseSplit = "development" | "holdout";
 
 interface QualityFixture {
-  schemaVersion: 4;
+  schemaVersion: 5;
   id: string;
   immutable: true;
   description: string;
@@ -105,11 +105,11 @@ interface SemanticCaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v4.json");
-const PINNED_FIXTURE_DIGEST = "72b6606f714c638b5b8e52cb635dd1d6feda2e5b953dde6982d230e3e7aebfb2";
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
+const PINNED_FIXTURE_DIGEST = "de252515174a3bfed25bf5e9aceb900f95357fea6fd99c99bbc6c61655bd1953";
 const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json");
 const PINNED_SEMANTIC_FIXTURE_DIGEST = "61e3f30443a15f3fa128e304db09cdc5c271443164833f061901ddf54c2d2e52";
-const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
+const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
 
 function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
   if (existsSync(path.join(root, ".git"))) {
@@ -163,8 +163,8 @@ function digest(value: unknown): string {
 function loadFixture(): QualityFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as QualityFixture;
   if (
-    fixture.schemaVersion !== 4 ||
-    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v4" ||
+    fixture.schemaVersion !== 5 ||
+    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v5" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||
@@ -471,6 +471,12 @@ function stablePretty(value: unknown): string {
 const fixture = loadFixture();
 const semanticFixture = loadSemanticFixture();
 const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-quality-"));
+const priorRustAnalyzerCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+const priorRustAnalyzerArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([
+  path.join(process.cwd(), "evaluation", "fixtures", "rust-analyzer-fixture.mjs"),
+]);
 let app: ContextMeshApp | null = null;
 try {
   writeFixture(fixtureRoot, fixture);
@@ -558,6 +564,7 @@ try {
     { language: "typescript", environment: "CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE", provider: "typescript_type_checker", partition: "non-python" as const },
     { language: "python", environment: "CONTEXTMESH_PYTHON_PRECISION_DISABLE", provider: "contextmesh_python_resolver", partition: "python" as const },
     { language: "go", environment: "CONTEXTMESH_GO_TYPES_DISABLE", provider: "go_types", partition: "non-python" as const },
+    { language: "rust", environment: "CONTEXTMESH_RUST_ANALYZER_DISABLE", provider: "rust_analyzer", partition: "non-python" as const },
   ] as const;
   const providerAbsence: Array<{
     language: Tier1Language;
@@ -637,12 +644,12 @@ try {
     semanticCallAndInheritanceConformance: semanticCaseResults.every((item) => item.passed),
     semanticProviderConformance: providerConformance.every((item) => item.passed),
     baseGraphWithoutPrecision: TIER1_LANGUAGES.every((language) => baseLanguages.includes(language)),
-    optionalProviderAbsencePreservesBase: providerAbsence.length === 3 && providerAbsence.every((item) => item.preservesBase),
-    providerAbsenceExactBaseFingerprint: providerAbsence.length === 3 && providerAbsence.every((item) => item.exactBaseGraph),
+    optionalProviderAbsencePreservesBase: providerAbsence.length === TIER1_LANGUAGES.length && providerAbsence.every((item) => item.preservesBase),
+    providerAbsenceExactBaseFingerprint: providerAbsence.length === TIER1_LANGUAGES.length && providerAbsence.every((item) => item.exactBaseGraph),
     twentyRunGraphDeterminism: determinism.runs === 20 && determinism.identical,
     providerUpdatePreservesGeneration: generationBeforeProviderUpdate === generationAfterProviderUpdate,
     providerUpdateAdvancesPrecisionRevision: revisionAfterProviderUpdate === revisionBeforeProviderUpdate + 1,
-    providerStatesHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
+    providerStatesHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
       providerStates.some((state) => state.provider === provider && (state.status === "ready" || state.status === "partial"))),
   };
   const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
@@ -705,5 +712,9 @@ try {
   }
 } finally {
   await app?.close();
+  if (priorRustAnalyzerCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+  else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorRustAnalyzerCommand;
+  if (priorRustAnalyzerArgs === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+  else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorRustAnalyzerArgs;
   rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
 }

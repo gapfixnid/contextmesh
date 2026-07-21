@@ -122,9 +122,9 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   verifyV04ArchiveSourceManifest(artifact.source);
 }
 
-const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v4.json"), "utf8")) as Record<string, unknown>;
+const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json"), "utf8")) as Record<string, unknown>;
 const semanticFixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json"), "utf8")) as Record<string, unknown>;
-requireCondition(artifact.fixture.id === "contextmesh-v05-tier1-resolved-edge-v4" && artifact.fixture.schemaVersion === 4 && artifact.fixture.immutable, "primary fixture identity mismatch");
+requireCondition(artifact.fixture.id === "contextmesh-v05-tier1-resolved-edge-v5" && artifact.fixture.schemaVersion === 5 && artifact.fixture.immutable, "primary fixture identity mismatch");
 requireCondition(artifact.semanticFixture.id === "contextmesh-v05-semantic-conformance-v3" && artifact.semanticFixture.schemaVersion === 3 && artifact.semanticFixture.immutable, "semantic fixture identity mismatch");
 requireCondition(artifact.fixture.digest === canonicalDigest(fixture), "primary fixture digest mismatch");
 requireCondition(artifact.semanticFixture.digest === canonicalDigest(semanticFixture), "semantic fixture digest mismatch");
@@ -136,8 +136,8 @@ requireCondition(Boolean(artifact.runner.platform), "platform identity missing")
 requireCondition(/^go version go\d+\.\d+(?:\.\d+)?\s/.test(artifact.runner.go), "Go runtime identity missing");
 requireCondition(Number.isSafeInteger(artifact.generation) && artifact.generation > 0, "generation must be positive");
 requireCondition(Number.isSafeInteger(artifact.precisionRevision) && artifact.precisionRevision > 0, "precision revision must be positive");
-requireCondition(artifact.languageResults.length === 3, "three Tier 1 language results are required");
-requireCondition(new Set(artifact.languageResults.map((item) => item.language)).size === 3, "Tier 1 language results must be unique");
+requireCondition(artifact.languageResults.length === 4, "four Tier 1 language results are required");
+requireCondition(new Set(artifact.languageResults.map((item) => item.language)).size === 4, "Tier 1 language results must be unique");
 requireCondition(artifact.languageResults.every((item) =>
   item.falsePositive === 0 && item.falseNegative === 0 &&
   item.precision >= artifact.fixture.thresholds.precision && item.recall >= artifact.fixture.thresholds.recall), "Tier 1 quality threshold failed");
@@ -147,14 +147,14 @@ requireCondition(artifact.semanticCaseResults.length === artifact.semanticFixtur
   item.passed && item.unexpectedEdges.length === 0 && item.missingEdges.length === 0), "semantic conformance paths failed");
 requireCondition(stableStringify(artifact.statusCoverage) === stableStringify(["candidate", "rejected", "resolved"]), "edge status coverage mismatch");
 
-const expectedAbsenceLanguages = ["go", "python", "typescript"];
-requireCondition(artifact.providerAbsence.length === 3, "three provider-absence runs are required");
+const expectedAbsenceLanguages = ["go", "python", "rust", "typescript"];
+requireCondition(artifact.providerAbsence.length === 4, "four provider-absence runs are required");
 requireCondition(stableStringify(artifact.providerAbsence.map((item) => item.language).sort()) === stableStringify(expectedAbsenceLanguages), "provider-absence languages mismatch");
 requireCondition(artifact.providerAbsence.every((item) =>
   item.providerState === "not_configured" && item.preservesBase && item.exactBaseGraph &&
   /^[0-9a-f]{64}$/.test(item.expectedBaseDigest) && item.expectedBaseDigest === item.actualBaseDigest), "provider absence did not preserve the exact base graph");
 requireCondition(artifact.providerConformance.length >= 2 && artifact.providerConformance.every((item) => item.passed), "provider conformance failed");
-requireCondition(["typescript_type_checker", "contextmesh_python_resolver", "go_types"].every((provider) =>
+requireCondition(["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
   artifact.providerStates.some((state) => state.provider === provider && (state.status === "ready" || state.status === "partial"))), "required provider state is unhealthy");
 const goState = artifact.providerStates.find((state) => state.provider === "go_types");
 const runnerGo = artifact.runner.go.match(/^go version (go\d+\.\d+(?:\.\d+)?)/)?.[1];

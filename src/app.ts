@@ -179,13 +179,15 @@ export class ContextMeshApp {
   ): EnvelopeScope {
     const captured = typeof snapshotOrGeneration === "number" ? null : snapshotOrGeneration;
     const generation = captured?.generation ?? snapshotOrGeneration as number;
-    const freshness = captured ?? this.database.getFreshnessState();
+    const durable = captured ? null : this.database.getFreshnessState();
+    const freshness = captured ?? durable!;
     return {
       workspaceId: this.database.workspace.id,
       generation,
       ...(includeSnapshot ? { snapshot: {
         graphGeneration: generation,
         precisionRevision: freshness.precisionRevision,
+        successFence: captured?.successFence ?? durable!.successFenceGeneration,
         freshness: freshness.stale ? "stale" : "fresh",
       } as const } : {}),
     };
