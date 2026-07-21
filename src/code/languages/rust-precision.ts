@@ -183,7 +183,10 @@ class JsonRpcClient {
     const exited = new Promise<void>((resolve) => this.child.once("exit", () => resolve()));
     this.child.stdin.end();
     await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
-    if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill();
+    if (this.child.exitCode === null && this.child.signalCode === null) {
+      this.child.kill();
+      await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
+    }
   }
 }
 
