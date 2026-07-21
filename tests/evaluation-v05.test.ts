@@ -83,6 +83,8 @@ describe("v0.5 resolved-edge quality gate", () => {
         timeout: 120_000,
       });
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
+      expect(run.stdout).not.toContain('"lastError"');
+      expect(run.stdout).toContain('"passed":true');
       const artifact = JSON.parse(readFileSync(output, "utf8")) as {
         schemaVersion: number;
         source: { contract: string; treeDigest: string; files: number; headCommit: string; dirty: boolean };

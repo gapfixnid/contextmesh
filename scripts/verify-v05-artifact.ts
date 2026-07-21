@@ -7,6 +7,7 @@ import {
   stableStringify,
   V04_SOURCE_CONTRACT,
   v04CommitSourceEvidence,
+  v04SourceDifferencePaths,
   v04SourceEvidence,
   verifyV04ArchiveSourceManifest,
   type V04SourceEvidence,
@@ -98,7 +99,8 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     throw new Error("Invalid v0.5 artifact: non-artifact source changed after the evaluated source commit");
   }
   const current = v04SourceEvidence();
-  requireCondition(current.dirty === false, "current non-artifact source working tree is dirty");
+  requireCondition(current.dirty === false,
+    `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
   requireCondition(
     current.treeDigest === artifact.source.treeDigest && current.files === artifact.source.files,
     "artifact was evaluated from a different source tree",

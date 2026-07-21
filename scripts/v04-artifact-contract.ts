@@ -75,6 +75,32 @@ function manifestEvidence(manifest: Array<{ path: string; sha256: string }>): { 
   };
 }
 
+function workingSourceManifest(root: string): V04SourceManifestEntry[] {
+  return execFileSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+  )
+    .split("\0")
+    .filter(Boolean)
+    .map((item) => item.replaceAll("\\", "/"))
+    .filter((item) => !isGeneratedArtifactPath(item) && existsSync(path.join(root, item)))
+    .sort((left, right) => left.localeCompare(right))
+    .map((file) => ({ path: file, sha256: normalizedDigest(path.join(root, file)) }));
+}
+
+export function v04SourceDifferencePaths(root = process.cwd(), commit = "HEAD"): string[] {
+  const committed = new Map(v04CommitSourceManifest(commit, root).map((item) => [item.path, item.sha256]));
+  const working = new Map(workingSourceManifest(root).map((item) => [item.path, item.sha256]));
+  return [...new Set([...committed.keys(), ...working.keys()])]
+    .sort((left, right) => left.localeCompare(right))
+    .flatMap((file) => {
+      if (!committed.has(file)) return [`added:${file}`];
+      if (!working.has(file)) return [`removed:${file}`];
+      return committed.get(file) === working.get(file) ? [] : [`changed:${file}`];
+    });
+}
+
 export function v04CommitSourceManifest(commit: string, root = process.cwd()): V04SourceManifestEntry[] {
   const files = execFileSync(
     "git",
@@ -102,20 +128,7 @@ export function v04CommitSourceEvidence(commit: string, root = process.cwd()): {
 
 export function v04SourceEvidence(root = process.cwd()): V04SourceEvidence {
   const headCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-  const files = execFileSync(
-    "git",
-    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-    { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
-  )
-    .split("\0")
-    .filter(Boolean)
-    .map((item) => item.replaceAll("\\", "/"))
-    .filter((item) => !isGeneratedArtifactPath(item) && existsSync(path.join(root, item)))
-    .sort((left, right) => left.localeCompare(right));
-  const manifest = files.map((file) => ({
-    path: file,
-    sha256: normalizedDigest(path.join(root, file)),
-  }));
+  const manifest = workingSourceManifest(root);
   const working = manifestEvidence(manifest);
   const head = v04CommitSourceEvidence(headCommit, root);
   return {

@@ -9,6 +9,7 @@ import {
   V04_SOURCE_CONTRACT,
   validateFixedHardwareIdentity,
   v04CommitSourceEvidence,
+  v04SourceDifferencePaths,
   v04SourceEvidence,
   verifyV04ArchiveSourceManifest,
 } from "./v04-artifact-contract.js";
@@ -111,7 +112,8 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
     "artifact was measured from a different source tree",
   );
-  requireCondition(currentSource.dirty === false, "current non-artifact source working tree is dirty");
+  requireCondition(currentSource.dirty === false,
+    `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
 } else {
   const sourceCommitPath = path.join(process.cwd(), "SOURCE_COMMIT");
   const sourceEvidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");

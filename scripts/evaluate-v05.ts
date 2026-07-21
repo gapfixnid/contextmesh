@@ -6,7 +6,13 @@ import path from "node:path";
 import { ContextMeshApp } from "../src/app.js";
 import type { CodeEdgeKind, CodeEdgeRecord, CodeNodeRecord, ExtractedGraph, UnresolvedReferenceRecord } from "../src/contracts.js";
 import type { StoredGraphPartition } from "../src/storage/database.js";
-import { stableStringify, V04_SOURCE_CONTRACT, v04CanonicalSourceEvidence, type V04SourceEvidence } from "./v04-artifact-contract.js";
+import {
+  stableStringify,
+  V04_SOURCE_CONTRACT,
+  v04CanonicalSourceEvidence,
+  v04SourceDifferencePaths,
+  type V04SourceEvidence,
+} from "./v04-artifact-contract.js";
 
 type Tier1Language = "typescript" | "python" | "go";
 type CaseCategory = "positive" | "negative" | "ambiguous";
@@ -106,7 +112,13 @@ const PINNED_SEMANTIC_FIXTURE_DIGEST = "61e3f30443a15f3fa128e304db09cdc5c2714431
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go"];
 
 function evaluationSourceEvidence(root = process.cwd()): V04SourceEvidence {
-  if (existsSync(path.join(root, ".git"))) return v04CanonicalSourceEvidence(root);
+  if (existsSync(path.join(root, ".git"))) {
+    const evidence = v04CanonicalSourceEvidence(root);
+    if (evidence.dirty) {
+      throw new Error(`V05_SOURCE_WORKTREE_DIRTY: ${v04SourceDifferencePaths(root).join(", ") || "unknown difference"}`);
+    }
+    return evidence;
+  }
   const sourceCommitPath = path.join(root, "SOURCE_COMMIT");
   const sourceEvidencePath = path.join(root, "SOURCE_EVIDENCE.json");
   if (!existsSync(sourceCommitPath) || !existsSync(sourceEvidencePath)) {
@@ -683,7 +695,9 @@ try {
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, `${stablePretty(artifact)}\n`, "utf8");
   }
-  process.stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+  process.stdout.write(target
+    ? `${JSON.stringify({ output: target, release: artifact.release, passed: artifact.passed })}\n`
+    : `${JSON.stringify(artifact, null, 2)}\n`);
   if (!artifact.passed) {
     throw new Error(
       `v0.5 quality gate failed: ${Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name).join(", ")}`,

@@ -96,6 +96,8 @@ describe("v0.5.1 external holdout release contract", () => {
       cwd: process.cwd(), env: process.env, encoding: "utf8", timeout: 300_000,
     });
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
+    expect(run.stdout).not.toContain('"lastError"');
+    expect(run.stdout).toContain('"passed":true');
     const artifact = JSON.parse(readFileSync(output, "utf8")) as {
       release: string;
       fixture: { repositoryCount: number; caseCount: number; profiles: string[] };

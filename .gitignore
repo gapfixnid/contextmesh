@@ -6,6 +6,8 @@ coverage/
 native/graph-kernel/target/
 artifacts/v04-local-*.json
 *.log
+core
+core.*
 .env
 .env.*
 !.env.example

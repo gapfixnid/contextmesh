@@ -5,7 +5,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { v04CanonicalSourceEvidence, v04SourceEvidence } from "../scripts/v04-artifact-contract.js";
+import {
+  v04CanonicalSourceEvidence,
+  v04SourceDifferencePaths,
+  v04SourceEvidence,
+} from "../scripts/v04-artifact-contract.js";
 
 const roots: string[] = [];
 
@@ -46,6 +50,12 @@ afterEach(() => {
 });
 
 describe("v0.4 performance artifact verifier", () => {
+  it("ignores Unix core dumps without hiding ordinary untracked source", () => {
+    expect(spawnSync("git", ["check-ignore", "-q", "core"], { cwd: process.cwd() }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "core.123"], { cwd: process.cwd() }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "unexpected-source.ts"], { cwd: process.cwd() }).status).not.toBe(0);
+  });
+
   it("canonicalizes artifact-only descendants to the exact non-artifact source commit", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-source-commit-contract-"));
     roots.push(root);
@@ -113,6 +123,9 @@ describe("v0.4 performance artifact verifier", () => {
     expect(clean.dirty).toBe(false);
     expect(dirty).toMatchObject({ headCommit: clean.headCommit, headTreeDigest: clean.treeDigest, dirty: true });
     expect(dirty.treeDigest).not.toBe(clean.treeDigest);
+    expect(v04SourceDifferencePaths(root)).toEqual(["changed:source.ts"]);
+    writeFileSync(path.join(root, "added.ts"), "export const added = true;\n", "utf8");
+    expect(v04SourceDifferencePaths(root)).toEqual(["added:added.ts", "changed:source.ts"]);
   });
 
   it("rejects evidence bound to a stale source tree", () => {

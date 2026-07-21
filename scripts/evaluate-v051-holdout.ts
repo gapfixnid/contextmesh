@@ -20,6 +20,7 @@ import {
   stableStringify,
   V04_SOURCE_CONTRACT,
   v04CanonicalSourceEvidence,
+  v04SourceDifferencePaths,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
@@ -120,7 +121,13 @@ function requireCondition(condition: unknown, message: string): asserts conditio
 }
 
 function sourceEvidence(): V04SourceEvidence {
-  if (existsSync(path.join(process.cwd(), ".git"))) return v04CanonicalSourceEvidence();
+  if (existsSync(path.join(process.cwd(), ".git"))) {
+    const evidence = v04CanonicalSourceEvidence();
+    if (evidence.dirty) {
+      throw new Error(`V051_SOURCE_WORKTREE_DIRTY: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
+    }
+    return evidence;
+  }
   const sourceCommit = readFileSync(path.join(process.cwd(), "SOURCE_COMMIT"), "utf8").trim();
   const evidence = JSON.parse(
     readFileSync(path.join(process.cwd(), "SOURCE_EVIDENCE.json"), "utf8"),
@@ -497,7 +504,9 @@ async function runEvaluation(): Promise<void> {
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, text, "utf8");
     }
-    process.stdout.write(text);
+    process.stdout.write(target
+      ? `${JSON.stringify({ output: target, release: artifact.release, passed: artifact.passed })}\n`
+      : text);
     if (!artifact.passed) {
       throw new Error(`v0.5.1 external holdout failed: ${Object.entries(checks)
         .filter(([, passed]) => !passed).map(([name]) => name).join(", ")}`);
