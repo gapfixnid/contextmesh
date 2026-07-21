@@ -62,6 +62,8 @@ describe("v0.4 performance artifact verifier", () => {
     expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123"], { cwd: root }).status).toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core/index.ts"], { cwd: root }).status).not.toBe(0);
+    expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "core.123/index.ts"], { cwd: root }).status).not.toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "src/core.ts"], { cwd: root }).status).not.toBe(0);
     expect(spawnSync("git", ["check-ignore", "-q", "--no-index", "packages/core/index.ts"], { cwd: root }).status).not.toBe(0);
   });
