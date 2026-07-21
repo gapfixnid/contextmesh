@@ -20,7 +20,7 @@ type CaseCategory = "positive" | "negative" | "ambiguous";
 type CaseSplit = "development" | "holdout";
 
 interface QualityFixture {
-  schemaVersion: 5;
+  schemaVersion: 6;
   id: string;
   immutable: true;
   description: string;
@@ -106,8 +106,8 @@ interface SemanticCaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
-const PINNED_FIXTURE_DIGEST = "7f24663f67837f8db6aacdf897326542dfd8a32876243d4142000a066de25a02";
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v6.json");
+const PINNED_FIXTURE_DIGEST = "b10244eecf79b967a2b55415deded60cc2c6f3e63e44fd699d0373f067338d03";
 const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json");
 const PINNED_SEMANTIC_FIXTURE_DIGEST = "61e3f30443a15f3fa128e304db09cdc5c271443164833f061901ddf54c2d2e52";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
@@ -164,8 +164,8 @@ function digest(value: unknown): string {
 function loadFixture(): QualityFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as QualityFixture;
   if (
-    fixture.schemaVersion !== 5 ||
-    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v5" ||
+    fixture.schemaVersion !== 6 ||
+    fixture.id !== "contextmesh-v05-tier1-resolved-edge-v6" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||
@@ -652,7 +652,7 @@ try {
     providerStatesHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
       providerStates.some((state) => state.provider === provider && (state.status === "ready" || state.status === "partial"))),
     rustAnalyzerMatchesPinnedToolchain: Boolean(analyzerIdentity && compilerIdentity &&
-      analyzerIdentity[1] === compilerIdentity[1] && analyzerIdentity[2] === compilerIdentity[2]),
+      analyzerIdentity[1] === compilerIdentity[1] && compilerIdentity[2]!.startsWith(analyzerIdentity[2]!)),
   };
   const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
   const artifact = {

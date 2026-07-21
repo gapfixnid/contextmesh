@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 3,
-  "id": "contextmesh-v051-external-holdout-v3",
+  "schemaVersion": 4,
+  "id": "contextmesh-v051-external-holdout-v4",
   "immutable": true,
   "description": "Offline-replayable external-source holdout built from byte-identical files at pinned public release commits. Gold paths are derived from upstream source semantics and pinned by exact source and target spans; runtime output is not embedded as gold. This fixture measures only the selected cases, not whole-repository provider coverage.",
   "frozenAt": "2026-07-20",
@@ -194,8 +194,8 @@
       },
       {
         "path": "Cargo.toml",
-        "sha256": "4b087a62430797874efc98d36275917c7d3f5b8dcc71184ad9dfc4f6d2e1f9e8",
-        "purpose": "Rust project discovery"
+        "sha256": "9d6d4d3c7e9f5b836b6003bac718957793ad550f02d458b76243d0c7f049bb98",
+        "purpose": "Rust project discovery with explicit bins for each pinned upstream file"
       },
       {
         "path": "apimachinery/pkg/runtime/runtime.go",

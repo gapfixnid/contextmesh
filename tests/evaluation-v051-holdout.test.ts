@@ -40,7 +40,7 @@ interface ExternalFixture {
   }>;
 }
 
-const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
+const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v4.json");
 const corpusRoot = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
 const hasGo = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true }).status === 0;
 
@@ -49,8 +49,8 @@ describe("v0.5.1 external holdout release contract", () => {
     expect(existsSync(fixturePath)).toBe(true);
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ExternalFixture;
     expect(fixture).toMatchObject({
-      schemaVersion: 3,
-      id: "contextmesh-v051-external-holdout-v3",
+      schemaVersion: 4,
+      id: "contextmesh-v051-external-holdout-v4",
       immutable: true,
       thresholds: { precision: 0.9, recall: 0.8, classificationCoverage: 1 },
     });

@@ -2,3 +2,28 @@
 name = "contextmesh-v051-rust-holdout"
 version = "0.1.0"
 edition = "2021"
+autobins = false
+
+[[bin]]
+name = "rustlings-functions1-solution"
+path = "rustlings/solutions/02_functions/functions1.rs"
+
+[[bin]]
+name = "rustlings-functions2-solution"
+path = "rustlings/solutions/02_functions/functions2.rs"
+
+[[bin]]
+name = "rustlings-functions3-solution"
+path = "rustlings/solutions/02_functions/functions3.rs"
+
+[[bin]]
+name = "rustlings-functions4-solution"
+path = "rustlings/solutions/02_functions/functions4.rs"
+
+[[bin]]
+name = "rustlings-functions5-solution"
+path = "rustlings/solutions/02_functions/functions5.rs"
+
+[[bin]]
+name = "rustlings-functions1-exercise"
+path = "rustlings/exercises/02_functions/functions1.rs"

@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 5,
-  "id": "contextmesh-v05-tier1-resolved-edge-v5",
+  "schemaVersion": 6,
+  "id": "contextmesh-v05-tier1-resolved-edge-v6",
   "immutable": true,
   "description": "Pinned Tier 1 resolved-edge gold with independent development and holdout splits for TypeScript, Python, Go, and Rust.",
   "provenance": {
@@ -100,23 +100,27 @@
     },
     {
       "path": "Cargo.toml",
-      "content": "[package]\nname = \"contextmesh-v05-quality\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+      "content": "[package]\nname = \"contextmesh-v05-quality\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"rust/src/lib.rs\"\n"
     },
     {
-      "path": "rust/target.rs",
+      "path": "rust/src/lib.rs",
+      "content": "mod ambiguous_a;\nmod ambiguous_b;\nmod caller;\nmod target;\n"
+    },
+    {
+      "path": "rust/src/target.rs",
       "content": "pub fn rust_target() -> i32 { 1 }\npub fn rust_holdout_target() -> i32 { 2 }\n"
     },
     {
-      "path": "rust/ambiguous_a.rs",
+      "path": "rust/src/ambiguous_a.rs",
       "content": "pub fn rust_ambiguous() -> i32 { 1 }\npub fn rust_holdout_ambiguous() -> i32 { 3 }\n"
     },
     {
-      "path": "rust/ambiguous_b.rs",
+      "path": "rust/src/ambiguous_b.rs",
       "content": "pub fn rust_ambiguous() -> i32 { 2 }\npub fn rust_holdout_ambiguous() -> i32 { 4 }\n"
     },
     {
-      "path": "rust/caller.rs",
-      "content": "pub fn rust_positive() -> i32 { rust_target() }\npub fn rust_negative() -> i32 { rust_missing() }\npub fn rust_ambiguous_caller() -> i32 { rust_ambiguous() }\npub fn rust_holdout_positive() -> i32 { rust_holdout_target() }\npub fn rust_holdout_negative() -> i32 { rust_holdout_missing() }\npub fn rust_holdout_ambiguous_caller() -> i32 { rust_holdout_ambiguous() }\n"
+      "path": "rust/src/caller.rs",
+      "content": "use crate::target::{rust_holdout_target, rust_target};\n\npub fn rust_positive() -> i32 { rust_target() }\npub fn rust_negative() -> i32 { rust_missing() }\npub fn rust_ambiguous_caller() -> i32 { rust_ambiguous() }\npub fn rust_holdout_positive() -> i32 { rust_holdout_target() }\npub fn rust_holdout_negative() -> i32 { rust_holdout_missing() }\npub fn rust_holdout_ambiguous_caller() -> i32 { rust_holdout_ambiguous() }\n"
     }
   ],
   "cases": [
@@ -328,16 +332,16 @@
       "language": "rust",
       "split": "development",
       "category": "positive",
-      "sourceQualifiedName": "rust/caller.rs#rust_positive",
-      "expectedResolvedTargets": ["rust/target.rs#rust_target"],
-      "expectedCallEdges": [{ "target": "rust/target.rs#rust_target", "status": "resolved" }]
+      "sourceQualifiedName": "rust/src/caller.rs#rust_positive",
+      "expectedResolvedTargets": ["rust/src/target.rs#rust_target"],
+      "expectedCallEdges": [{ "target": "rust/src/target.rs#rust_target", "status": "resolved" }]
     },
     {
       "id": "rust-negative-missing",
       "language": "rust",
       "split": "development",
       "category": "negative",
-      "sourceQualifiedName": "rust/caller.rs#rust_negative",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_negative",
       "expectedResolvedTargets": [],
       "expectedCallEdges": [],
       "expectedUnresolved": { "rawName": "rust_missing", "minimumCandidates": 0 }
@@ -347,7 +351,7 @@
       "language": "rust",
       "split": "development",
       "category": "ambiguous",
-      "sourceQualifiedName": "rust/caller.rs#rust_ambiguous_caller",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_ambiguous_caller",
       "expectedResolvedTargets": [],
       "expectedCallEdges": [],
       "expectedUnresolved": { "rawName": "rust_ambiguous", "minimumCandidates": 2 }
@@ -357,16 +361,16 @@
       "language": "rust",
       "split": "holdout",
       "category": "positive",
-      "sourceQualifiedName": "rust/caller.rs#rust_holdout_positive",
-      "expectedResolvedTargets": ["rust/target.rs#rust_holdout_target"],
-      "expectedCallEdges": [{ "target": "rust/target.rs#rust_holdout_target", "status": "resolved" }]
+      "sourceQualifiedName": "rust/src/caller.rs#rust_holdout_positive",
+      "expectedResolvedTargets": ["rust/src/target.rs#rust_holdout_target"],
+      "expectedCallEdges": [{ "target": "rust/src/target.rs#rust_holdout_target", "status": "resolved" }]
     },
     {
       "id": "rust-holdout-negative-missing",
       "language": "rust",
       "split": "holdout",
       "category": "negative",
-      "sourceQualifiedName": "rust/caller.rs#rust_holdout_negative",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_holdout_negative",
       "expectedResolvedTargets": [],
       "expectedCallEdges": [],
       "expectedUnresolved": { "rawName": "rust_holdout_missing", "minimumCandidates": 0 }
@@ -376,7 +380,7 @@
       "language": "rust",
       "split": "holdout",
       "category": "ambiguous",
-      "sourceQualifiedName": "rust/caller.rs#rust_holdout_ambiguous_caller",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_holdout_ambiguous_caller",
       "expectedResolvedTargets": [],
       "expectedCallEdges": [],
       "expectedUnresolved": { "rawName": "rust_holdout_ambiguous", "minimumCandidates": 2 }

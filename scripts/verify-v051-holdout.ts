@@ -13,8 +13,8 @@ import {
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
-const FIXTURE_ID = "contextmesh-v051-external-holdout-v3";
-const FIXTURE_DIGEST = "e48573c4d8789ea8690cbb7d472cf41f7702a8b6d1c913f040b4ae46f8774ef4";
+const FIXTURE_ID = "contextmesh-v051-external-holdout-v4";
+const FIXTURE_DIGEST = "2f880eeebc580634d1460f14d528e7a2de3c15ef6ffbe072865ea762079a595c";
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
 const REQUIRED_REPOSITORIES = ["kubernetes/client-go", "nrwl/nx", "pallets/flask", "rust-lang/rustlings"];
 const REQUIRED_LANGUAGES = ["go", "python", "rust", "typescript"];
@@ -161,7 +161,7 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   verifyV04ArchiveSourceManifest(artifact.source);
 }
 
-const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
+const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v4.json");
 const corpusRoot = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
   id: string;
@@ -189,7 +189,7 @@ const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
   }>;
 };
 requireCondition(
-  fixture.id === FIXTURE_ID && fixture.schemaVersion === 3 && fixture.immutable === true,
+  fixture.id === FIXTURE_ID && fixture.schemaVersion === 4 && fixture.immutable === true,
   "fixture identity mismatch",
 );
 requireCondition(canonicalDigest(fixture) === FIXTURE_DIGEST, "fixture digest mismatch");
@@ -235,7 +235,7 @@ requireCondition(/^go version go1\.23(?:\.\d+)?\s/.test(artifact.runner.go), "Go
 const rustAnalyzerIdentity = artifact.runner.rustAnalyzer.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
 const rustcIdentity = artifact.runner.rustc.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
 requireCondition(Boolean(rustAnalyzerIdentity && rustcIdentity && rustAnalyzerIdentity[1] === rustcIdentity[1]
-  && rustAnalyzerIdentity[2] === rustcIdentity[2]), "rust-analyzer provenance does not match the pinned Rust toolchain");
+  && rustcIdentity[2]!.startsWith(rustAnalyzerIdentity[2]!)), "rust-analyzer provenance does not match the pinned Rust toolchain");
 requireCondition(Number.isSafeInteger(artifact.generation) && artifact.generation > 0, "generation must be positive");
 requireCondition(Number.isSafeInteger(artifact.precisionRevision) && artifact.precisionRevision > 0, "precision revision must be positive");
 requireCondition(

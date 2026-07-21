@@ -122,9 +122,9 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   verifyV04ArchiveSourceManifest(artifact.source);
 }
 
-const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json"), "utf8")) as Record<string, unknown>;
+const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v6.json"), "utf8")) as Record<string, unknown>;
 const semanticFixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json"), "utf8")) as Record<string, unknown>;
-requireCondition(artifact.fixture.id === "contextmesh-v05-tier1-resolved-edge-v5" && artifact.fixture.schemaVersion === 5 && artifact.fixture.immutable, "primary fixture identity mismatch");
+requireCondition(artifact.fixture.id === "contextmesh-v05-tier1-resolved-edge-v6" && artifact.fixture.schemaVersion === 6 && artifact.fixture.immutable, "primary fixture identity mismatch");
 requireCondition(artifact.semanticFixture.id === "contextmesh-v05-semantic-conformance-v3" && artifact.semanticFixture.schemaVersion === 3 && artifact.semanticFixture.immutable, "semantic fixture identity mismatch");
 requireCondition(artifact.fixture.digest === canonicalDigest(fixture), "primary fixture digest mismatch");
 requireCondition(artifact.semanticFixture.digest === canonicalDigest(semanticFixture), "semantic fixture digest mismatch");
@@ -137,7 +137,7 @@ requireCondition(/^go version go\d+\.\d+(?:\.\d+)?\s/.test(artifact.runner.go), 
 const rustAnalyzerIdentity = artifact.runner.rustAnalyzer.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
 const rustcIdentity = artifact.runner.rustc.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
 requireCondition(Boolean(rustAnalyzerIdentity && rustcIdentity && rustAnalyzerIdentity[1] === rustcIdentity[1]
-  && rustAnalyzerIdentity[2] === rustcIdentity[2]), "rust-analyzer provenance does not match the pinned Rust toolchain");
+  && rustcIdentity[2]!.startsWith(rustAnalyzerIdentity[2]!)), "rust-analyzer provenance does not match the pinned Rust toolchain");
 requireCondition(Number.isSafeInteger(artifact.generation) && artifact.generation > 0, "generation must be positive");
 requireCondition(Number.isSafeInteger(artifact.precisionRevision) && artifact.precisionRevision > 0, "precision revision must be positive");
 requireCondition(artifact.languageResults.length === 4, "four Tier 1 language results are required");

@@ -36,13 +36,13 @@ describe("v0.5 resolved-edge quality gate", () => {
   });
 
   it("pins syntax-distinct Python development and holdout positive cases", () => {
-    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
+    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v6.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
       id: string;
       files: Array<{ path: string; content: string }>;
       cases: Array<{ language: string; category: string; split: string; sourceQualifiedName: string; syntaxForm?: string }>;
     };
-    expect(fixture.id).toBe("contextmesh-v05-tier1-resolved-edge-v5");
+    expect(fixture.id).toBe("contextmesh-v05-tier1-resolved-edge-v6");
     const positives = fixture.cases.filter((item) => item.language === "python" && item.category === "positive");
     expect(new Set(positives.map((item) => item.split))).toEqual(new Set(["development", "holdout"]));
     const syntaxForms = new Set(positives.map((item) => item.syntaxForm));
@@ -56,7 +56,7 @@ describe("v0.5 resolved-edge quality gate", () => {
   });
 
   it("scores immutable gold positives, false positives, ambiguous cases, and unresolved cases", () => {
-    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
+    const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v6.json");
     const semanticFixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
       immutable: boolean;

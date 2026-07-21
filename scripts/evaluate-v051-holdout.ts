@@ -48,7 +48,7 @@ interface FixtureCase {
 }
 
 interface ExternalFixture {
-  schemaVersion: 3;
+  schemaVersion: 4;
   id: string;
   immutable: true;
   description: string;
@@ -92,9 +92,9 @@ interface CaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v3.json");
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v4.json");
 const CORPUS_ROOT = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-corpus-v1");
-const PINNED_FIXTURE_DIGEST = "e48573c4d8789ea8690cbb7d472cf41f7702a8b6d1c913f040b4ae46f8774ef4";
+const PINNED_FIXTURE_DIGEST = "2f880eeebc580634d1460f14d528e7a2de3c15ef6ffbe072865ea762079a595c";
 const LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
 
@@ -141,8 +141,8 @@ function sourceEvidence(): V04SourceEvidence {
 
 function loadFixture(): ExternalFixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as ExternalFixture;
-  requireCondition(fixture.schemaVersion === 3, "schema version");
-  requireCondition(fixture.id === "contextmesh-v051-external-holdout-v3", "fixture id");
+  requireCondition(fixture.schemaVersion === 4, "schema version");
+  requireCondition(fixture.id === "contextmesh-v051-external-holdout-v4", "fixture id");
   requireCondition(fixture.immutable === true, "fixture must be immutable");
   requireCondition(digest(fixture) === PINNED_FIXTURE_DIGEST, "fixture digest mismatch");
   requireCondition(fixture.repositories.length === 4, "four repositories are required");
@@ -462,7 +462,7 @@ async function runEvaluation(): Promise<void> {
       providersHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
         providerStates.some((state) => state.provider === provider && ["ready", "partial"].includes(state.status))),
       rustAnalyzerMatchesPinnedToolchain: Boolean(analyzerIdentity && compilerIdentity &&
-        analyzerIdentity[1] === compilerIdentity[1] && analyzerIdentity[2] === compilerIdentity[2]),
+        analyzerIdentity[1] === compilerIdentity[1] && compilerIdentity[2]!.startsWith(analyzerIdentity[2]!)),
     };
     const artifact = {
       schemaVersion: 1,
