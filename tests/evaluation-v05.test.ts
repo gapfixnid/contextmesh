@@ -111,6 +111,7 @@ describe("v0.5 resolved-edge quality gate", () => {
           actualBaseDigest: string;
           exactBaseGraph: boolean;
         }>;
+        providerStates: Array<{ language: string; provider: string; status: string }>;
         determinism: { runs: number; identical: boolean; signatures: string[] };
         checks: Record<string, boolean>;
         passed: boolean;
@@ -150,10 +151,16 @@ describe("v0.5 resolved-edge quality gate", () => {
       expect(artifact.semanticCaseResults).toHaveLength(semanticFixture.cases.length);
       expect(artifact.semanticCaseResults.every((item) => item.passed && item.unexpectedEdges.length === 0 && item.missingEdges.length === 0)).toBe(true);
       expect(artifact.providerAbsence).toHaveLength(4);
+      expect(new Set(artifact.providerAbsence.map((item) => item.language))).toEqual(
+        new Set(["typescript", "python", "go", "rust"]),
+      );
       expect(artifact.providerAbsence.every((item) => item.preservesBase
         && item.providerState === "not_configured"
         && item.exactBaseGraph
         && item.expectedBaseDigest === item.actualBaseDigest)).toBe(true);
+      expect(artifact.providerStates).toContainEqual(expect.objectContaining({
+        language: "rust", provider: "rust_analyzer", status: "ready",
+      }));
       expect(artifact.determinism).toMatchObject({ runs: 20, identical: true });
       expect(new Set(artifact.determinism.signatures).size).toBe(1);
       expect(Object.values(artifact.checks).every(Boolean)).toBe(true);
