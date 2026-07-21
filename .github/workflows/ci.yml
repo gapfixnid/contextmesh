@@ -212,6 +212,8 @@ jobs:
   clean-source-zip-release-gate:
     needs: [hosted-quality, actual-model-smoke, ubuntu-windows-parity, fixed-windows-performance]
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.85.0
     steps:
       - uses: actions/checkout@v4
         with:

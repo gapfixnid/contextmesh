@@ -16,6 +16,7 @@ describe("CI release tooling contract", () => {
     expect(job).toContain("uses: actions-rust-lang/setup-rust-toolchain@v1");
     expect(job).toContain("toolchain: 1.85.0");
     expect(job).toContain("components: rust-analyzer");
+    expect(job).toContain("RUSTUP_TOOLCHAIN: 1.85.0");
     expect(job!.indexOf("actions/setup-go@v5")).toBeLessThan(job!.indexOf("npm ci"));
     expect(job!.indexOf("actions-rust-lang/setup-rust-toolchain@v1")).toBeLessThan(job!.indexOf("npm ci"));
   });
