@@ -404,7 +404,7 @@ async function runDeterminismChild(): Promise<void> {
     process.stdout.write(`${JSON.stringify({ signature: graphFingerprint(graph, cases, providers, root) })}\n`);
   } finally {
     await app.close();
-    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 }
 
@@ -523,7 +523,7 @@ async function runEvaluation(): Promise<void> {
     }
   } finally {
     await app?.close();
-    rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
+    rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 }
 

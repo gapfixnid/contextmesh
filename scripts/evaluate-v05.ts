@@ -604,7 +604,7 @@ try {
       await absentApp?.close();
       if (prior === undefined) delete process.env[specification.environment];
       else process.env[specification.environment] = prior;
-      rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+      rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
     }
   }
 
@@ -716,5 +716,5 @@ try {
   }
 } finally {
   await app?.close();
-  rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
+  rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
