@@ -412,7 +412,7 @@ export class ContextMeshApp {
       });
       const hydrated = await this.context.hydrateSnippets(snapshotResult.assembled, snapshotResult.snapshot.generation, snapshotResult.snapshot.successFence);
       const final = await this.code.indexer.readFinalRequestState();
-      const generationChanged = hydrated.generationChanged || initial.generation !== snapshotResult.snapshot.generation || initial.precisionRevision !== snapshotResult.snapshot.precisionRevision || final.generation !== snapshotResult.snapshot.generation || final.precisionRevision !== snapshotResult.snapshot.precisionRevision || final.successFence !== snapshotResult.snapshot.successFence;
+      const generationChanged = hydrated.generationChanged || initial.generation !== snapshotResult.snapshot.generation || initial.precisionRevision !== snapshotResult.snapshot.precisionRevision || initial.successFence !== snapshotResult.snapshot.successFence || final.generation !== snapshotResult.snapshot.generation || final.precisionRevision !== snapshotResult.snapshot.precisionRevision || final.successFence !== snapshotResult.snapshot.successFence;
       if (generationChanged && attempt === 0) continue;
       const relations = (snapshotResult.focused?.edges ?? hydrated.assembled.relationships)
         .filter((edge) => parsed.intent !== "architecture" || ["CONTAINS", "IMPORTS", "EXTENDS", "IMPLEMENTS", "EXPORTS"].includes(edge.kind))

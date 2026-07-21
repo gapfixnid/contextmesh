@@ -42,7 +42,7 @@ interface Artifact {
       fileCount: number;
     }>;
   };
-  runner: { node: string; platform: string; go: string };
+  runner: { node: string; platform: string; go: string; rustAnalyzer: string; rustc: string };
   generation: number;
   precisionRevision: number;
   languageResults: Array<{
@@ -232,6 +232,10 @@ for (const file of fixture.harness.files) {
 requireCondition(/^v\d+\.\d+\.\d+$/.test(artifact.runner.node), "Node runtime identity missing");
 requireCondition(Boolean(artifact.runner.platform), "platform identity missing");
 requireCondition(/^go version go1\.23(?:\.\d+)?\s/.test(artifact.runner.go), "Go 1.23 runtime identity missing");
+const rustAnalyzerIdentity = artifact.runner.rustAnalyzer.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
+const rustcIdentity = artifact.runner.rustc.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
+requireCondition(Boolean(rustAnalyzerIdentity && rustcIdentity && rustAnalyzerIdentity[1] === rustcIdentity[1]
+  && rustAnalyzerIdentity[2] === rustcIdentity[2]), "rust-analyzer provenance does not match the pinned Rust toolchain");
 requireCondition(Number.isSafeInteger(artifact.generation) && artifact.generation > 0, "generation must be positive");
 requireCondition(Number.isSafeInteger(artifact.precisionRevision) && artifact.precisionRevision > 0, "precision revision must be positive");
 requireCondition(

@@ -87,6 +87,11 @@ describe("v0.5.1 external holdout release contract", () => {
       expect(cases.some((item) => item.expectedCallEdges.length > 0)).toBe(true);
       expect(cases.some((item) => item.expectedUnresolved)).toBe(true);
     }
+    for (const relative of ["evaluation/README.md", "docs/operations.md", "docs/multilanguage.md"]) {
+      const documentation = readFileSync(path.join(process.cwd(), relative), "utf8");
+      expect(documentation).toContain("29 selected TypeScript, Python, Go, and Rust cases");
+      expect(documentation).toMatch(/Nx, Flask, Kubernetes client-go, and Rustlings/);
+    }
   });
 
   it.skipIf(!hasGo)("produces a deterministic external holdout artifact when the Go provider is available", () => {
@@ -101,6 +106,7 @@ describe("v0.5.1 external holdout release contract", () => {
     expect(run.stdout).toContain('"passed":true');
     const artifact = JSON.parse(readFileSync(output, "utf8")) as {
       release: string;
+      runner: { rustAnalyzer: string; rustc: string };
       fixture: { repositoryCount: number; caseCount: number; profiles: string[] };
       languageResults: Array<{ language: string; precision: number; recall: number; classificationCoverage: number }>;
       providerStates: Array<{ language: string; provider: string; status: string }>;
@@ -108,6 +114,8 @@ describe("v0.5.1 external holdout release contract", () => {
       passed: boolean;
     };
     expect(artifact.release).toBe("v0.5.1");
+    expect(artifact.runner.rustAnalyzer).toMatch(/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
+    expect(artifact.runner.rustc).toMatch(/^rustc \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
     expect(artifact.fixture).toMatchObject({ repositoryCount: 4 });
     expect(artifact.fixture.caseCount).toBeGreaterThanOrEqual(24);
     expect(new Set(artifact.fixture.profiles)).toEqual(new Set(["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"]));

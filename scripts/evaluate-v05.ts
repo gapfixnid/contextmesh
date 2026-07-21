@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { ContextMeshApp } from "../src/app.js";
+import { probeRustAnalyzerRuntime } from "../src/code/languages/rust-precision.js";
 import type { CodeEdgeKind, CodeEdgeRecord, CodeNodeRecord, ExtractedGraph, UnresolvedReferenceRecord } from "../src/contracts.js";
 import type { StoredGraphPartition } from "../src/storage/database.js";
 import {
@@ -471,12 +472,11 @@ function stablePretty(value: unknown): string {
 const fixture = loadFixture();
 const semanticFixture = loadSemanticFixture();
 const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-quality-"));
-const priorRustAnalyzerCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
-const priorRustAnalyzerArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
-process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
-process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([
-  path.join(process.cwd(), "evaluation", "fixtures", "rust-analyzer-fixture.mjs"),
-]);
+const rustAnalyzerRuntime = await probeRustAnalyzerRuntime();
+const rustcVersion = spawnSync("rustc", ["--version"], { encoding: "utf8", windowsHide: true });
+const rustcIdentity = rustcVersion.status === 0 ? rustcVersion.stdout.trim() : "unavailable";
+const analyzerIdentity = rustAnalyzerRuntime.version.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) /);
+const compilerIdentity = rustcIdentity.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) /);
 let app: ContextMeshApp | null = null;
 try {
   writeFixture(fixtureRoot, fixture);
@@ -651,6 +651,8 @@ try {
     providerUpdateAdvancesPrecisionRevision: revisionAfterProviderUpdate === revisionBeforeProviderUpdate + 1,
     providerStatesHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
       providerStates.some((state) => state.provider === provider && (state.status === "ready" || state.status === "partial"))),
+    rustAnalyzerMatchesPinnedToolchain: Boolean(analyzerIdentity && compilerIdentity &&
+      analyzerIdentity[1] === compilerIdentity[1] && analyzerIdentity[2] === compilerIdentity[2]),
   };
   const goVersion = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
   const artifact = {
@@ -680,6 +682,8 @@ try {
       node: process.version,
       platform: `${process.platform}-${process.arch}`,
       go: goVersion.status === 0 ? goVersion.stdout.trim() : "unavailable",
+      rustAnalyzer: rustAnalyzerRuntime.version,
+      rustc: rustcIdentity,
     },
     generation: generationBeforeProviderUpdate,
     precisionRevision: revisionAfterProviderUpdate,
@@ -712,9 +716,5 @@ try {
   }
 } finally {
   await app?.close();
-  if (priorRustAnalyzerCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
-  else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorRustAnalyzerCommand;
-  if (priorRustAnalyzerArgs === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
-  else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorRustAnalyzerArgs;
   rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
 }

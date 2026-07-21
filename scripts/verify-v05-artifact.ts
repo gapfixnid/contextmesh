@@ -48,7 +48,7 @@ interface Artifact {
     thresholds: { precision: number; recall: number };
   };
   semanticFixture: { id: string; schemaVersion: number; immutable: boolean; digest: string; caseCount: number };
-  runner: { node: string; platform: string; go: string };
+  runner: { node: string; platform: string; go: string; rustAnalyzer: string; rustc: string };
   generation: number;
   precisionRevision: number;
   languageResults: Array<{ language: string; falsePositive: number; falseNegative: number; precision: number; recall: number }>;
@@ -134,6 +134,10 @@ requireCondition(artifact.semanticFixture.caseCount === (semanticFixture.cases a
 requireCondition(/^v\d+\.\d+\.\d+$/.test(artifact.runner.node), "Node runtime identity missing");
 requireCondition(Boolean(artifact.runner.platform), "platform identity missing");
 requireCondition(/^go version go\d+\.\d+(?:\.\d+)?\s/.test(artifact.runner.go), "Go runtime identity missing");
+const rustAnalyzerIdentity = artifact.runner.rustAnalyzer.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
+const rustcIdentity = artifact.runner.rustc.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) \d{4}-\d{2}-\d{2}\)$/);
+requireCondition(Boolean(rustAnalyzerIdentity && rustcIdentity && rustAnalyzerIdentity[1] === rustcIdentity[1]
+  && rustAnalyzerIdentity[2] === rustcIdentity[2]), "rust-analyzer provenance does not match the pinned Rust toolchain");
 requireCondition(Number.isSafeInteger(artifact.generation) && artifact.generation > 0, "generation must be positive");
 requireCondition(Number.isSafeInteger(artifact.precisionRevision) && artifact.precisionRevision > 0, "precision revision must be positive");
 requireCondition(artifact.languageResults.length === 4, "four Tier 1 language results are required");
@@ -179,6 +183,7 @@ const requiredChecks = [
   "providerUpdatePreservesGeneration",
   "providerUpdateAdvancesPrecisionRevision",
   "providerStatesHealthy",
+  "rustAnalyzerMatchesPinnedToolchain",
 ];
 requireCondition(requiredChecks.every((name) => artifact.checks[name] === true), "one or more mandatory checks are missing or failed");
 requireCondition(Object.values(artifact.checks).every((value) => value === true), "one or more recorded checks failed");

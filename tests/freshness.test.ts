@@ -14,6 +14,32 @@ afterEach(() => {
 });
 
 describe("Phase 3 freshness coordination", () => {
+  it("retries explore_context when the initial success fence differs from the captured snapshot", async () => {
+    const root = createFixtureWorkspace();
+    workspaces.push(root);
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const current = await app.code.freshnessState();
+      const freshness = vi.spyOn(app.code, "freshnessState")
+        .mockResolvedValueOnce({ ...current, successFence: current.successFence - 1, stale: true })
+        .mockResolvedValue({ ...current, stale: false });
+
+      const result = await app.exploreContext({
+        query: "Calculator",
+        intent: "architecture",
+        tokenBudget: 2_000,
+        limit: 8,
+      });
+
+      expect(freshness).toHaveBeenCalledTimes(2);
+      expect(result.snapshot).toMatchObject({ successFence: current.successFence, freshness: "fresh" });
+      expect(result.warnings).not.toContainEqual(expect.stringContaining("INDEX_STALE"));
+    } finally {
+      await app.close();
+    }
+  });
+
   it("reuses project discovery only while the complete source and configuration probes match", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);

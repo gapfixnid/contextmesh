@@ -47,6 +47,18 @@ function runProbe(command: CommandSpec): Promise<{ code: number; stdout: string;
   });
 }
 
+export async function probeRustAnalyzerRuntime(): Promise<{ version: string }> {
+  const result = await runProbe(configuredCommand());
+  const version = (result.stdout || result.stderr).trim().split(/\r?\n/, 1)[0] ?? "";
+  if (result.code !== 0) {
+    throw new Error(`RUST_ANALYZER_UNAVAILABLE: ${version || `probe exited ${result.code}`}`);
+  }
+  if (!/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/.test(version)) {
+    throw new Error(`RUST_ANALYZER_IDENTITY_INVALID: ${version || "empty version"}`);
+  }
+  return { version };
+}
+
 class JsonRpcClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private buffer = Buffer.alloc(0);

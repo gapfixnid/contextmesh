@@ -18,6 +18,23 @@ function canonical(value: unknown): string {
 }
 
 describe("v0.5 resolved-edge quality gate", () => {
+  it("does not replace an invalid configured Rust analyzer with the protocol fixture", () => {
+    const npmCli = process.env.npm_execpath;
+    if (!npmCli) throw new Error("npm_execpath is required");
+    const run = spawnSync(process.execPath, [npmCli, "run", "evaluate:v05"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CONTEXTMESH_RUST_ANALYZER_COMMAND: path.join(os.tmpdir(), "definitely-missing-rust-analyzer"),
+        CONTEXTMESH_RUST_ANALYZER_ARGS_JSON: "[]",
+      },
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(run.status).not.toBe(0);
+    expect(`${run.stdout}\n${run.stderr}`).toMatch(/RUST_ANALYZER_|ENOENT/);
+  });
+
   it("pins syntax-distinct Python development and holdout positive cases", () => {
     const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
@@ -87,6 +104,7 @@ describe("v0.5 resolved-edge quality gate", () => {
       expect(run.stdout).toContain('"passed":true');
       const artifact = JSON.parse(readFileSync(output, "utf8")) as {
         schemaVersion: number;
+        runner: { rustAnalyzer: string; rustc: string };
         source: { contract: string; treeDigest: string; files: number; headCommit: string; dirty: boolean };
         fixture: { digest: string; splitsByLanguage: Record<string, Record<string, number>> };
         semanticFixture: { id: string; digest: string; caseCount: number };
@@ -117,6 +135,8 @@ describe("v0.5 resolved-edge quality gate", () => {
         passed: boolean;
       };
       expect(artifact.schemaVersion).toBe(4);
+      expect(artifact.runner.rustAnalyzer).toMatch(/^rust-analyzer \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
+      expect(artifact.runner.rustc).toMatch(/^rustc \d+\.\d+\.\d+ \([0-9a-f]{8,} \d{4}-\d{2}-\d{2}\)$/);
       expect(artifact.source).toMatchObject({
         contract: expect.any(String), treeDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
         files: expect.any(Number), headCommit: expect.stringMatching(/^[0-9a-f]{40}$/), dirty: expect.any(Boolean),

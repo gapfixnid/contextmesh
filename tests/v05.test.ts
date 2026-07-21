@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
+import { probeRustAnalyzerRuntime } from "../src/code/languages/rust-precision.js";
 import type { CodeEvidence, Envelope } from "../src/contracts.js";
 
 const roots: string[] = [];
@@ -1306,6 +1307,21 @@ describe("v0.5 precision overlays and core languages", () => {
       if (priorCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
       else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorCommand;
       await app.close();
+    }
+  });
+
+  it("rejects an invalid configured rust-analyzer for release provenance", async () => {
+    const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = path.join(os.tmpdir(), "definitely-missing-rust-analyzer");
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    try {
+      await expect(probeRustAnalyzerRuntime()).rejects.toThrow(/RUST_ANALYZER_(?:UNAVAILABLE|SPAWN_FAILED)|ENOENT/);
+    } finally {
+      if (priorCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorCommand;
+      if (priorArgs === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorArgs;
     }
   });
 

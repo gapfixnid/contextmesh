@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ContextMeshApp } from "../src/app.js";
+import { probeRustAnalyzerRuntime } from "../src/code/languages/rust-precision.js";
 import type { CodeEdgeRecord, CodeNodeRecord, UnresolvedReferenceRecord } from "../src/contracts.js";
 import type { StoredGraphPartition } from "../src/storage/database.js";
 import {
@@ -96,10 +97,6 @@ const CORPUS_ROOT = path.join(process.cwd(), "evaluation", "fixtures", "v051-ext
 const PINNED_FIXTURE_DIGEST = "e48573c4d8789ea8690cbb7d472cf41f7702a8b6d1c913f040b4ae46f8774ef4";
 const LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
 const REQUIRED_PROFILES = ["complex-src-layout", "generated-code", "large-monorepo", "multi-binary-workspace"];
-process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
-process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([
-  path.join(process.cwd(), "evaluation", "fixtures", "rust-analyzer-fixture.mjs"),
-]);
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -413,6 +410,11 @@ async function runDeterminismChild(): Promise<void> {
 
 async function runEvaluation(): Promise<void> {
   const fixture = loadFixture();
+  const rustAnalyzerRuntime = await probeRustAnalyzerRuntime();
+  const rustcVersion = spawnSync("rustc", ["--version"], { encoding: "utf8", windowsHide: true });
+  const rustcIdentity = rustcVersion.status === 0 ? rustcVersion.stdout.trim() : "unavailable";
+  const analyzerIdentity = rustAnalyzerRuntime.version.match(/^rust-analyzer (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) /);
+  const compilerIdentity = rustcIdentity.match(/^rustc (\d+\.\d+\.\d+) \(([0-9a-f]{8,}) /);
   const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-external-"));
   let app: ContextMeshApp | null = null;
   try {
@@ -459,6 +461,8 @@ async function runEvaluation(): Promise<void> {
       twentyRunDeterminism: signatures.length === 20 && new Set(signatures).size === 1,
       providersHealthy: ["typescript_type_checker", "contextmesh_python_resolver", "go_types", "rust_analyzer"].every((provider) =>
         providerStates.some((state) => state.provider === provider && ["ready", "partial"].includes(state.status))),
+      rustAnalyzerMatchesPinnedToolchain: Boolean(analyzerIdentity && compilerIdentity &&
+        analyzerIdentity[1] === compilerIdentity[1] && analyzerIdentity[2] === compilerIdentity[2]),
     };
     const artifact = {
       schemaVersion: 1,
@@ -487,6 +491,8 @@ async function runEvaluation(): Promise<void> {
         node: process.version,
         platform: `${process.platform}-${process.arch}`,
         go: goVersion.status === 0 ? goVersion.stdout.trim() : "unavailable",
+        rustAnalyzer: rustAnalyzerRuntime.version,
+        rustc: rustcIdentity,
       },
       generation: app.database.getWorkspace().currentGeneration,
       precisionRevision: app.database.getPrecisionRevision(),
