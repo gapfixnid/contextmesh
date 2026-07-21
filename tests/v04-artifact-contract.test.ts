@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -72,6 +72,8 @@ describe("v0.4 performance artifact verifier", () => {
     ["added", (root: string) => writeFileSync(path.join(root, "added.ts"), "export const added = true;\n", "utf8"), "added:added.ts"],
     ["removed", (root: string) => rmSync(path.join(root, "README.md")), "removed:README.md"],
   ] as const)("reports an exact %s path before the generic v0.4 tree mismatch", (_kind, mutate, expected) => {
+    // Archive verification has no Git worktree; SOURCE_MANIFEST tamper tests cover that path separately.
+    if (!existsSync(path.join(process.cwd(), ".git"))) return;
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v04-diagnostic-contract-"));
     roots.push(root);
     expect(spawnSync("git", ["clone", "--quiet", "--no-hardlinks", process.cwd(), root]).status).toBe(0);
