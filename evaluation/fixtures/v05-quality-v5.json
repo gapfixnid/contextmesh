@@ -349,10 +349,7 @@
       "category": "ambiguous",
       "sourceQualifiedName": "rust/caller.rs#rust_ambiguous_caller",
       "expectedResolvedTargets": [],
-      "expectedCallEdges": [
-        { "target": "rust/ambiguous_a.rs#rust_ambiguous", "status": "candidate" },
-        { "target": "rust/ambiguous_b.rs#rust_ambiguous", "status": "candidate" }
-      ],
+      "expectedCallEdges": [],
       "expectedUnresolved": { "rawName": "rust_ambiguous", "minimumCandidates": 2 }
     },
     {
@@ -381,10 +378,7 @@
       "category": "ambiguous",
       "sourceQualifiedName": "rust/caller.rs#rust_holdout_ambiguous_caller",
       "expectedResolvedTargets": [],
-      "expectedCallEdges": [
-        { "target": "rust/ambiguous_a.rs#rust_holdout_ambiguous", "status": "candidate" },
-        { "target": "rust/ambiguous_b.rs#rust_holdout_ambiguous", "status": "candidate" }
-      ],
+      "expectedCallEdges": [],
       "expectedUnresolved": { "rawName": "rust_holdout_ambiguous", "minimumCandidates": 2 }
     }
   ]

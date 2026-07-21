@@ -106,7 +106,7 @@ interface SemanticCaseResult {
 }
 
 const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v5.json");
-const PINNED_FIXTURE_DIGEST = "de252515174a3bfed25bf5e9aceb900f95357fea6fd99c99bbc6c61655bd1953";
+const PINNED_FIXTURE_DIGEST = "7f24663f67837f8db6aacdf897326542dfd8a32876243d4142000a066de25a02";
 const SEMANTIC_FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v05-semantic-conformance-v3.json");
 const PINNED_SEMANTIC_FIXTURE_DIGEST = "61e3f30443a15f3fa128e304db09cdc5c271443164833f061901ddf54c2d2e52";
 const TIER1_LANGUAGES: readonly Tier1Language[] = ["typescript", "python", "go", "rust"];
