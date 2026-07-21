@@ -1329,12 +1329,12 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
-  it("waits for a cold Rust workspace before committing a resolved LSP call", async () => {
+  it("waits for a quiescent Rust workspace before committing a resolved LSP call", async () => {
     const root = workspace();
     const server = path.join(root, "fake-rust-analyzer.mjs");
     writeFileSync(server, [
       "if (process.argv.includes('--version')) { console.log('rust-analyzer fixture'); process.exit(0); }",
-      "let buffer = Buffer.alloc(0); const documents = new Map(); let definitionRequests = 0; let workspaceReady = false;",
+      "let buffer = Buffer.alloc(0); const documents = new Map(); let workspaceReady = false;",
       "function send(value) { const body = Buffer.from(JSON.stringify(value)); process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\\r\\n\\r\\n`), body])); }",
       "function handle(message) {",
       "  if (message.method === 'textDocument/didOpen') { documents.set(message.params.textDocument.uri, message.params.textDocument.text); return; }",
@@ -1345,7 +1345,6 @@ describe("v0.5 precision overlays and core languages", () => {
       "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
       "  if (message.method === 'textDocument/definition') {",
       "    if (!workspaceReady) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'workspace not quiescent' } });",
-      "    definitionRequests += 1; if (definitionRequests <= 11) return send({ jsonrpc: '2.0', id: message.id, result: null });",
       "    const entry = [...documents.entries()].find(([, text]) => text.includes('pub fn rust_target'));",
       "    const lines = entry[1].split(/\\r?\\n/); const line = lines.findIndex((item) => item.includes('pub fn rust_target'));",
       "    return send({ jsonrpc: '2.0', id: message.id, result: { uri: entry[0], range: { start: { line, character: 7 }, end: { line, character: 18 } } } });",
