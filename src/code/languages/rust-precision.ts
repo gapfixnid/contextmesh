@@ -315,6 +315,7 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
         const key = process.platform === "win32" ? file.relativePath.toLocaleLowerCase("en-US") : file.relativePath;
         const values = nodesByPath.get(key) ?? []; values.push(node); nodesByPath.set(key, values);
       }
+      let workspaceReady = false;
       for (const query of queries.values()) {
         let response: unknown;
         try {
@@ -322,6 +323,16 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
             textDocument: { uri: pathToFileURL(query.file.absolutePath).href },
             position: { line: query.line, character: query.character },
           });
+          let locations = definitionLocations(response);
+          for (let attempt = 0; !workspaceReady && locations.length === 0 && attempt < 10; attempt += 1) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 250));
+            response = await client.request("textDocument/definition", {
+              textDocument: { uri: pathToFileURL(query.file.absolutePath).href },
+              position: { line: query.line, character: query.character },
+            });
+            locations = definitionLocations(response);
+          }
+          if (locations.length > 0) workspaceReady = true;
         } catch (error) {
           diagnostics.push(error instanceof Error ? error.message : String(error));
           continue;
