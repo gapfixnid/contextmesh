@@ -162,9 +162,14 @@
           "sha256": "b55962b9f06336b2fa488db4420302e939054cb003d12cc08961a4a893ab1cab"
         },
         {
-          "upstreamPath": "exercises/quizzes/quiz1.rs",
-          "corpusPath": "rustlings/exercises/quizzes/quiz1.rs",
-          "sha256": "5d9f7ed42d473bdefc9a489a901619969032aae5a906d6e66ea404c6f692c264"
+          "upstreamPath": "solutions/02_functions/functions2.rs",
+          "corpusPath": "rustlings/solutions/02_functions/functions2.rs",
+          "sha256": "fb4f3aeb76a3a145e3474c4e860fe3eb419ac81b8ed4c832b19492f236854dbe"
+        },
+        {
+          "upstreamPath": "exercises/02_functions/functions1.rs",
+          "corpusPath": "rustlings/exercises/02_functions/functions1.rs",
+          "sha256": "23da5e6ff9b5ffa87352c7e22c25a0c4a9a8a53ccae8cf484d51686a7bcec597"
         }
       ]
     }
@@ -588,15 +593,15 @@
       ]
     },
     {
-      "id": "rustlings-functions4-main",
+      "id": "rustlings-functions2-main",
       "repositoryId": "rustlings",
       "language": "rust",
-      "sourceQualifiedName": "rustlings/solutions/02_functions/functions4.rs#main",
-      "sourceStartLine": 14,
+      "sourceQualifiedName": "rustlings/solutions/02_functions/functions2.rs#main",
+      "sourceStartLine": 9,
       "expectedCallEdges": [
         {
-          "target": "rustlings/solutions/02_functions/functions4.rs#sale_price",
-          "targetStartLine": 6,
+          "target": "rustlings/solutions/02_functions/functions2.rs#call_me",
+          "targetStartLine": 3,
           "status": "resolved"
         }
       ]
@@ -616,15 +621,15 @@
       ]
     },
     {
-      "id": "rustlings-quiz1-missing-function",
+      "id": "rustlings-exercise-missing-function",
       "repositoryId": "rustlings",
       "language": "rust",
-      "sourceQualifiedName": "rustlings/exercises/quizzes/quiz1.rs#verify_test",
-      "sourceStartLine": 25,
+      "sourceQualifiedName": "rustlings/exercises/02_functions/functions1.rs#main",
+      "sourceStartLine": 3,
       "expectedCallEdges": [],
       "expectedUnresolved": {
-        "rawName": "calculate_price_of_apples",
-        "minimumCandidates": 0
+        "rawName": "call_me",
+        "minimumCandidates": 2
       }
     }
   ]
