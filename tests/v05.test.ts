@@ -124,8 +124,10 @@ describe("v0.5 precision overlays and core languages", () => {
 
   it("indexes Go, Rust, Java, and C# syntax without configured precision providers", async () => {
     const root = workspace();
-    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    const priorGoDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    const priorRustDisable = process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
     process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE = "1";
     const app = new ContextMeshApp(root);
     try {
       const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{ adapterStats: Array<{ language: string }> }>;
@@ -148,8 +150,10 @@ describe("v0.5 precision overlays and core languages", () => {
       const trace = await app.traceCode({ symbolId: goCaller.id, direction: "out", depth: 1 }) as Envelope<{ edges: Array<{ kind: string; status: string }> }>;
       expect(trace.data.edges).toContainEqual(expect.objectContaining({ kind: "CALLS", status: "candidate" }));
     } finally {
-      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
-      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      if (priorGoDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorGoDisable;
+      if (priorRustDisable === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE = priorRustDisable;
       await app.close();
     }
   });
