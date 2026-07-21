@@ -391,6 +391,15 @@ function outputPath(): string | null {
   return index >= 0 && process.argv[index + 1] ? path.resolve(process.argv[index + 1]!) : null;
 }
 
+function removeTemporaryDirectory(root: string): void {
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (error) {
+    if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    process.stderr.write(`V051_TEMP_CLEANUP_DEFERRED: ${path.basename(root)}\n`);
+  }
+}
+
 async function runDeterminismChild(): Promise<void> {
   const fixture = loadFixture();
   const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v051-determinism-"));
@@ -404,7 +413,7 @@ async function runDeterminismChild(): Promise<void> {
     process.stdout.write(`${JSON.stringify({ signature: graphFingerprint(graph, cases, providers, root) })}\n`);
   } finally {
     await app.close();
-    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    removeTemporaryDirectory(root);
   }
 }
 
@@ -523,7 +532,7 @@ async function runEvaluation(): Promise<void> {
     }
   } finally {
     await app?.close();
-    rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    removeTemporaryDirectory(fixtureRoot);
   }
 }
 

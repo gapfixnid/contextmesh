@@ -469,6 +469,15 @@ function stablePretty(value: unknown): string {
   return JSON.stringify(JSON.parse(stableStringify(value)), null, 2);
 }
 
+function removeTemporaryDirectory(root: string): void {
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (error) {
+    if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    process.stderr.write(`V05_TEMP_CLEANUP_DEFERRED: ${path.basename(root)}\n`);
+  }
+}
+
 const fixture = loadFixture();
 const semanticFixture = loadSemanticFixture();
 const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-quality-"));
@@ -604,7 +613,7 @@ try {
       await absentApp?.close();
       if (prior === undefined) delete process.env[specification.environment];
       else process.env[specification.environment] = prior;
-      rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      removeTemporaryDirectory(root);
     }
   }
 
@@ -716,5 +725,5 @@ try {
   }
 } finally {
   await app?.close();
-  rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  removeTemporaryDirectory(fixtureRoot);
 }
