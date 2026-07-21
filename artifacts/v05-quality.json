@@ -572,11 +572,11 @@
       "actualEdges": [
         {
           "status": "resolved",
-          "target": "rust/target.rs#rust_target"
+          "target": "rust/src/target.rs#rust_target"
         }
       ],
       "actualResolvedTargets": [
-        "rust/target.rs#rust_target"
+        "rust/src/target.rs#rust_target"
       ],
       "actualStatuses": [
         "resolved"
@@ -585,11 +585,11 @@
       "expectedCallEdges": [
         {
           "status": "resolved",
-          "target": "rust/target.rs#rust_target"
+          "target": "rust/src/target.rs#rust_target"
         }
       ],
       "expectedResolvedTargets": [
-        "rust/target.rs#rust_target"
+        "rust/src/target.rs#rust_target"
       ],
       "falseNegative": 0,
       "falsePositive": 0,
@@ -598,7 +598,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "rust/caller.rs#rust_positive",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_positive",
       "split": "development",
       "truePositive": 1,
       "unexpectedPaths": [],
@@ -619,7 +619,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "rust/caller.rs#rust_negative",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_negative",
       "split": "development",
       "truePositive": 0,
       "unexpectedPaths": [],
@@ -640,7 +640,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "rust/caller.rs#rust_ambiguous_caller",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_ambiguous_caller",
       "split": "development",
       "truePositive": 0,
       "unexpectedPaths": [],
@@ -651,11 +651,11 @@
       "actualEdges": [
         {
           "status": "resolved",
-          "target": "rust/target.rs#rust_holdout_target"
+          "target": "rust/src/target.rs#rust_holdout_target"
         }
       ],
       "actualResolvedTargets": [
-        "rust/target.rs#rust_holdout_target"
+        "rust/src/target.rs#rust_holdout_target"
       ],
       "actualStatuses": [
         "resolved"
@@ -664,11 +664,11 @@
       "expectedCallEdges": [
         {
           "status": "resolved",
-          "target": "rust/target.rs#rust_holdout_target"
+          "target": "rust/src/target.rs#rust_holdout_target"
         }
       ],
       "expectedResolvedTargets": [
-        "rust/target.rs#rust_holdout_target"
+        "rust/src/target.rs#rust_holdout_target"
       ],
       "falseNegative": 0,
       "falsePositive": 0,
@@ -677,7 +677,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "rust/caller.rs#rust_holdout_positive",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_holdout_positive",
       "split": "holdout",
       "truePositive": 1,
       "unexpectedPaths": [],
@@ -698,7 +698,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "rust/caller.rs#rust_holdout_negative",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_holdout_negative",
       "split": "holdout",
       "truePositive": 0,
       "unexpectedPaths": [],
@@ -719,7 +719,7 @@
       "missingPaths": [],
       "passed": true,
       "pathPassed": true,
-      "sourceQualifiedName": "rust/caller.rs#rust_holdout_ambiguous_caller",
+      "sourceQualifiedName": "rust/src/caller.rs#rust_holdout_ambiguous_caller",
       "split": "holdout",
       "truePositive": 0,
       "unexpectedPaths": [],
@@ -745,6 +745,7 @@
     "providerStatesHealthy": true,
     "providerUpdateAdvancesPrecisionRevision": true,
     "providerUpdatePreservesGeneration": true,
+    "rustAnalyzerMatchesPinnedToolchain": true,
     "semanticCallAndInheritanceConformance": true,
     "semanticProviderConformance": true,
     "tier1FixtureCoverage": true,
@@ -756,26 +757,26 @@
     "identical": true,
     "runs": 20,
     "signatures": [
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91",
-      "ed398241d9b536c96b032399c0a734a555775aa6cc29e31191d0d7ebf6f60c91"
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f",
+      "65d4d4e3c5de44ca0b8f353c00ad4c737d6842f996a66a6023209a60adee113f"
     ]
   },
   "fixture": {
@@ -802,8 +803,8 @@
         "positive"
       ]
     },
-    "digest": "7f24663f67837f8db6aacdf897326542dfd8a32876243d4142000a066de25a02",
-    "id": "contextmesh-v05-tier1-resolved-edge-v5",
+    "digest": "b10244eecf79b967a2b55415deded60cc2c6f3e63e44fd699d0373f067338d03",
+    "id": "contextmesh-v05-tier1-resolved-edge-v6",
     "immutable": true,
     "provenance": {
       "authoredAgainst": "language behavior and product contracts; no runtime output is embedded as gold",
@@ -811,7 +812,7 @@
       "mutationPolicy": "Any case, source, split, or expected-path change requires a new fixture id, schema version, and pinned SHA-256",
       "origin": "ContextMesh v0.5 product-design acceptance criteria plus published TypeScript, Python, Go, and Rust name-resolution semantics"
     },
-    "schemaVersion": 5,
+    "schemaVersion": 6,
     "splitsByLanguage": {
       "go": {
         "development": 3,
@@ -937,9 +938,9 @@
       "providerState": "not_configured"
     },
     {
-      "actualBaseDigest": "16c280c14b006c0c25cc2efdd10a1950bad2b2904787ef763e6b0859eb4b9538",
+      "actualBaseDigest": "95bc5458d9a4c1f87587aca4b305ab855cc5262edddddee825326d6f8865361b",
       "exactBaseGraph": true,
-      "expectedBaseDigest": "16c280c14b006c0c25cc2efdd10a1950bad2b2904787ef763e6b0859eb4b9538",
+      "expectedBaseDigest": "95bc5458d9a4c1f87587aca4b305ab855cc5262edddddee825326d6f8865361b",
       "language": "rust",
       "preservesBase": true,
       "provider": "rust_analyzer",
@@ -1042,7 +1043,9 @@
   "runner": {
     "go": "go version go1.23.12 windows/amd64",
     "node": "v24.18.0",
-    "platform": "win32-x64"
+    "platform": "win32-x64",
+    "rustAnalyzer": "rust-analyzer 1.96.1 (31fca3ad 2026-06-26)",
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)"
   },
   "schemaVersion": 4,
   "semanticCaseResults": [
@@ -1262,10 +1265,10 @@
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
-    "files": 169,
-    "headCommit": "bf1d41bcd14fd08a1cc224c182f385ce9652d389",
-    "headTreeDigest": "027b8711dd46be8752c42483fba6fc4b4a98a0010b251bc27ff9e5baf0211413",
-    "treeDigest": "027b8711dd46be8752c42483fba6fc4b4a98a0010b251bc27ff9e5baf0211413"
+    "files": 168,
+    "headCommit": "0c8b175f4152c539635393c76bdb105aa8e60246",
+    "headTreeDigest": "d9dde53e400a14cfa8b52de6cadbbaa686135e397b4b3969393b5d51988f51b5",
+    "treeDigest": "d9dde53e400a14cfa8b52de6cadbbaa686135e397b4b3969393b5d51988f51b5"
   },
   "statusCoverage": [
     "candidate",
