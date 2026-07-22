@@ -940,26 +940,26 @@
     "runs": 20,
     "scope": "20 fresh Node processes with independent application, database, and materialized workspace instances",
     "signatures": [
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987",
-      "8652f0c273c3281ad2c8a1f33cd3550598747d5c6331eac8bc896a8d080b6987"
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7",
+      "bc4c623b6a451ed37fb536df084f577abc750afb560951b53b346ba7f69e83b7"
     ]
   },
   "fixture": {
@@ -1092,9 +1092,9 @@
       "coverage": 0.8333333333333334,
       "eligibleEdges": 6,
       "language": "rust",
-      "lastError": "cannot find function `call_me` in this scope\nnot found in this scope",
+      "lastError": "RUST_ANALYZER_DEFINITION_UNRESOLVED: rustlings/exercises/02_functions/functions1.rs:105:call_me",
       "provider": "rust_analyzer",
-      "providerVersion": "rust-analyzer-lsp-v1",
+      "providerVersion": "rust-analyzer-lsp-v2:safe:5ec1419d97d8",
       "rejectedEdges": 0,
       "resolvedEdges": 5,
       "status": "partial"
@@ -1116,16 +1116,16 @@
     "go": "go version go1.23.12 windows/amd64",
     "node": "v24.18.0",
     "platform": "win32-x64",
-    "rustAnalyzer": "rust-analyzer 1.96.1 (31fca3ad 2026-06-26)",
-    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)"
+    "rustAnalyzer": "rust-analyzer 1.85.0 (4d91de4e 2025-02-17)",
+    "rustc": "rustc 1.85.0 (4d91de4e4 2025-02-17)"
   },
   "schemaVersion": 1,
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
-    "files": 169,
-    "headCommit": "67b325878b9cab6511fcf3df0299c43229fcf846",
-    "headTreeDigest": "29060271352d0dbec680b1143904598a399760ffbf5d4ea2c2518cf84adaae69",
-    "treeDigest": "29060271352d0dbec680b1143904598a399760ffbf5d4ea2c2518cf84adaae69"
+    "files": 171,
+    "headCommit": "8a435841a727c9c050d576fcacc9458f53cdd97b",
+    "headTreeDigest": "7db334721329b4f15f0de8dc05e5e1cfd721575e220e71a2cc5d356fef089d55",
+    "treeDigest": "7db334721329b4f15f0de8dc05e5e1cfd721575e220e71a2cc5d356fef089d55"
   }
 }
