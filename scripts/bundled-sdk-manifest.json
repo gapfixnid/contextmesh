@@ -1,0 +1,858 @@
+{
+  "schemaVersion": 1,
+  "directBundles": [
+    "@modelcontextprotocol/sdk"
+  ],
+  "baseline": {
+    "packedSizeBytes": 3571006,
+    "unpackedSizeBytes": 18304639,
+    "bundledPackageCount": 93,
+    "bundledFileCount": 3350
+  },
+  "limits": {
+    "maxPackedSizeBytes": 4500000,
+    "maxUnpackedSizeBytes": 23000000,
+    "maxBundledPackageCount": 98,
+    "maxBundledFileCount": 3700
+  },
+  "bundledTreeSha256": "638bed1c45620101d851966c076a6d1ddcb31f13f1761c29f0f3bbfefefdcc63",
+  "packages": [
+    {
+      "name": "@hono/node-server",
+      "version": "2.0.11",
+      "path": "node_modules/@hono/node-server",
+      "contentSha256": "9f8bc63040260590ffa0cc03012ca9d37e9e5cfc8b6848ebf1cb150ad6c58ed5",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 25
+    },
+    {
+      "name": "@modelcontextprotocol/sdk",
+      "version": "1.29.0",
+      "path": "node_modules/@modelcontextprotocol/sdk",
+      "contentSha256": "e54fbb9f6fba8f9b34800d1782fbd0bbf92c040dfac86e2d1e52ff292b1025e4",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 677
+    },
+    {
+      "name": "accepts",
+      "version": "2.0.0",
+      "path": "node_modules/accepts",
+      "contentSha256": "0963ed82ec36c44b349d38e6918f0a86e5492db876e50f5293ef343975f1f88d",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "ajv",
+      "version": "8.20.0",
+      "path": "node_modules/ajv",
+      "contentSha256": "b1f0216ff82e2bdec5e0df6b38c659daaee2959f55ee558389fca98195c449f5",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 466
+    },
+    {
+      "name": "ajv-formats",
+      "version": "3.0.1",
+      "path": "node_modules/ajv-formats",
+      "contentSha256": "7fd292b20ac502e58823bd61b4206beb3b058572e9a3ba8adcc28b45332bcbd2",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 15
+    },
+    {
+      "name": "body-parser",
+      "version": "2.3.0",
+      "path": "node_modules/body-parser",
+      "contentSha256": "f0fa475d52850bff468ce9e8f64887c233eb1957afdf18b04cbf2551e343b294",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 10
+    },
+    {
+      "name": "content-type",
+      "version": "2.0.0",
+      "path": "node_modules/body-parser/node_modules/content-type",
+      "contentSha256": "db681a2f1eecf61ca84e98a23de5adb23086e0a02c2c96f9cad36208e2ef1120",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "bytes",
+      "version": "3.1.2",
+      "path": "node_modules/bytes",
+      "contentSha256": "ac9037b794a289ad4e2da07ec1363051c368306366cacafd0d723a744fe3ece3",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "call-bind-apply-helpers",
+      "version": "1.0.2",
+      "path": "node_modules/call-bind-apply-helpers",
+      "contentSha256": "78d444c22334c1df03d9fb54dd9d980fda25d80de0e5dffeff7b756cac6d9fb2",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 21
+    },
+    {
+      "name": "call-bound",
+      "version": "1.0.4",
+      "path": "node_modules/call-bound",
+      "contentSha256": "2e7ff22a46ba17ab3e815e36d863a5213d48a11603b6cf87701a9bacf88507c7",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 11
+    },
+    {
+      "name": "content-disposition",
+      "version": "1.1.0",
+      "path": "node_modules/content-disposition",
+      "contentSha256": "3372da6804b959fa9556169a739d8a1bac99d2f3570454d7de8b17c7b95ba99d",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "content-type",
+      "version": "1.0.5",
+      "path": "node_modules/content-type",
+      "contentSha256": "7e96562b841c512abcf7dae465d3568243f876183222e4df7b835119b9598ca2",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "cookie",
+      "version": "0.7.2",
+      "path": "node_modules/cookie",
+      "contentSha256": "3cbf1edb169239563dad6c447221a17f41624ecaf93a2223b06c5c99df351eeb",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "cookie-signature",
+      "version": "1.2.2",
+      "path": "node_modules/cookie-signature",
+      "contentSha256": "c77293b373db0312490d9d7aaf1976fbc0b7113f3137e56bae260d06bad569cf",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "cors",
+      "version": "2.8.6",
+      "path": "node_modules/cors",
+      "contentSha256": "5d31146a7193335b247090be70db5a4fd822fb014cba563bcae76d298cf8327d",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "cross-spawn",
+      "version": "7.0.6",
+      "path": "node_modules/cross-spawn",
+      "contentSha256": "50d45ef104e5361de8f5c469dc99022a460db9d205d4cad6a0fd2d7ffa9a58b7",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 9
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "path": "node_modules/debug",
+      "contentSha256": "c7bfd08d2f133dc76e58b3c15372ce90a98e9486742b80f639c9c5bd25a91a76",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 7
+    },
+    {
+      "name": "depd",
+      "version": "2.0.0",
+      "path": "node_modules/depd",
+      "contentSha256": "af221ebc7155a3e62c9abdd8f63078b321ffaec71c697cebb548947e5d060e6c",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "dunder-proto",
+      "version": "1.0.1",
+      "path": "node_modules/dunder-proto",
+      "contentSha256": "ee069f20a4e4b28aa0fbce4f44e0ad7a34161f3f8c6fb8a49c16597db5f1d2d0",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 15
+    },
+    {
+      "name": "ee-first",
+      "version": "1.1.1",
+      "path": "node_modules/ee-first",
+      "contentSha256": "84da9e3fa1839edba4275648035065179ee77ca913d32a79f6de4e89d4926e5f",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "encodeurl",
+      "version": "2.0.0",
+      "path": "node_modules/encodeurl",
+      "contentSha256": "ee68af195201fb216f1ea7d4cf08bdd1bff6bf2a7e238866b2f26603ae69003a",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "es-define-property",
+      "version": "1.0.1",
+      "path": "node_modules/es-define-property",
+      "contentSha256": "f44e6550dafb40a965b787f2d657c68760f4b6fd47cc40113d1b50fc75c8a767",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 11
+    },
+    {
+      "name": "es-errors",
+      "version": "1.3.0",
+      "path": "node_modules/es-errors",
+      "contentSha256": "dfe681924b11014d4ae62cb9ebdde0165b09ab1c20a75a45bb42223e279033b9",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 22
+    },
+    {
+      "name": "es-object-atoms",
+      "version": "1.1.2",
+      "path": "node_modules/es-object-atoms",
+      "contentSha256": "73a6fe956d86bfc0604c017cc720e5f0e72606ad07059aca82e7e5cc2340d274",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 16
+    },
+    {
+      "name": "escape-html",
+      "version": "1.0.3",
+      "path": "node_modules/escape-html",
+      "contentSha256": "e133d7cd35293c143033f845813aeb2047c1e95a229118279f9e0e250722ef26",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "etag",
+      "version": "1.8.1",
+      "path": "node_modules/etag",
+      "contentSha256": "3e9e1029cba147802d3f989768622ead1ed920ad727dc9d7943dce84c309c32f",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "eventsource",
+      "version": "3.0.7",
+      "path": "node_modules/eventsource",
+      "contentSha256": "722d3ce801b34865f8f100d80abde322665638b0b1efee75f73ba16c61052212",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 13
+    },
+    {
+      "name": "eventsource-parser",
+      "version": "3.1.0",
+      "path": "node_modules/eventsource-parser",
+      "contentSha256": "ec45404f657505b9b744151a88be80b97102d1e732a3d69612bab98961b49b56",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 21
+    },
+    {
+      "name": "express",
+      "version": "5.2.1",
+      "path": "node_modules/express",
+      "contentSha256": "41e758746e2ed136caabb4b0ed2b4a6f46c3fc14139092395e4fce5ce8785ad5",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 10
+    },
+    {
+      "name": "express-rate-limit",
+      "version": "8.5.2",
+      "path": "node_modules/express-rate-limit",
+      "contentSha256": "8211ef4dbed490f571829e552f0a968c5ad6611f6141e0fc5b50d211583df863",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 9
+    },
+    {
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "path": "node_modules/fast-deep-equal",
+      "contentSha256": "421c05349d6794d85f4b4aed72ce3792f4d1bfd4f38e7e775f1683db77837d96",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 11
+    },
+    {
+      "name": "fast-uri",
+      "version": "3.1.4",
+      "path": "node_modules/fast-uri",
+      "contentSha256": "637ced9e03e0bf7c337e4c4fc17c4e74056608291548f370424b464bf2fed411",
+      "license": "BSD-3-Clause",
+      "lifecycleScripts": {},
+      "fileCount": 34
+    },
+    {
+      "name": "finalhandler",
+      "version": "2.1.1",
+      "path": "node_modules/finalhandler",
+      "contentSha256": "56d387274f71131618619a9caa5fcf6bc2cac405e453a930bd74568f70b5425d",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "forwarded",
+      "version": "0.2.0",
+      "path": "node_modules/forwarded",
+      "contentSha256": "45e8a46f87199766647a1b8e8e58596a20ac047341d5399402c120e38223bca4",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "fresh",
+      "version": "2.0.0",
+      "path": "node_modules/fresh",
+      "contentSha256": "ea61e9b5daf44109bd0a9b2639268d9de974be1e51e9f32735dcf669e0dba9f7",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "function-bind",
+      "version": "1.1.2",
+      "path": "node_modules/function-bind",
+      "contentSha256": "21530ae61240b1a43d5b0c8d27b44785632c568450e0f44a822f24a5292bddf7",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 12
+    },
+    {
+      "name": "get-intrinsic",
+      "version": "1.3.0",
+      "path": "node_modules/get-intrinsic",
+      "contentSha256": "c73ed46bd0ea014a03e890437370790bbe56c01199544c38ac1511188fa28898",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 9
+    },
+    {
+      "name": "get-proto",
+      "version": "1.0.1",
+      "path": "node_modules/get-proto",
+      "contentSha256": "80e69990c41a08de45cf553f826e6692d9f8e2330ee150a0a57a9bf1ff018f4a",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 15
+    },
+    {
+      "name": "gopd",
+      "version": "1.2.0",
+      "path": "node_modules/gopd",
+      "contentSha256": "0b58cd99b46dacc655f73aec625ac7b740f3dff8d077710b4008bc818b2d20b5",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 12
+    },
+    {
+      "name": "has-symbols",
+      "version": "1.1.0",
+      "path": "node_modules/has-symbols",
+      "contentSha256": "0335a16422f224ca8ebceaaa84a98f94d07a931b17e73dcd9528f32be0a98306",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 16
+    },
+    {
+      "name": "hasown",
+      "version": "2.0.4",
+      "path": "node_modules/hasown",
+      "contentSha256": "c18a34e4afba899f170e18787162963b932a76a38bd8d650d913473b864f798c",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 10
+    },
+    {
+      "name": "hono",
+      "version": "4.12.30",
+      "path": "node_modules/hono",
+      "contentSha256": "b9377484c0b7d360c683499eb07ed12edb52dbce9d0aee8871cccf8a62082381",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 562
+    },
+    {
+      "name": "http-errors",
+      "version": "2.0.1",
+      "path": "node_modules/http-errors",
+      "contentSha256": "5f2932edc33077365c67b5db67435b1e923b8b31b1f91bcbd00f735f2123a023",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.7.3",
+      "path": "node_modules/iconv-lite",
+      "contentSha256": "d09a4ab158751f15a6859263dcb93ce3013451038f92f94b4d5884e4665360a8",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 27
+    },
+    {
+      "name": "inherits",
+      "version": "2.0.4",
+      "path": "node_modules/inherits",
+      "contentSha256": "587edd580a9b9550c761dae64f0b542724601bfc16bb84844447506655f1aa00",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "ip-address",
+      "version": "10.2.0",
+      "path": "node_modules/ip-address",
+      "contentSha256": "100879484c565616c363be1ca19bf09aac98e7a3cbd18d66743a8ede66a21633",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 30
+    },
+    {
+      "name": "ipaddr.js",
+      "version": "1.9.1",
+      "path": "node_modules/ipaddr.js",
+      "contentSha256": "094167e7a91619a7c77e17474e5a20755863b3e101de2d909519fed2ae715b04",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "is-promise",
+      "version": "4.0.0",
+      "path": "node_modules/is-promise",
+      "contentSha256": "f962698ae17ad89d461f0e495bdbd3257a07e55bcd9881bde988d574c83d3b7e",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "isexe",
+      "version": "2.0.0",
+      "path": "node_modules/isexe",
+      "contentSha256": "f273c8421c8f32eda5312cdd81cf0f9095a0e245e41ff57f0b9c157b15f82380",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 8
+    },
+    {
+      "name": "jose",
+      "version": "6.2.3",
+      "path": "node_modules/jose",
+      "contentSha256": "e2b51c931b2ef4416adbb44dee98c39bc6bbeb7d26f461748eea682c806e6851",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 88
+    },
+    {
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "path": "node_modules/json-schema-traverse",
+      "contentSha256": "689c984368e1e41ab46926c7d74ac678864c66e66f10cade41cfac00371adea7",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 12
+    },
+    {
+      "name": "json-schema-typed",
+      "version": "8.0.2",
+      "path": "node_modules/json-schema-typed",
+      "contentSha256": "667a87b8c13340e05a4b860dae0898fbdd0937a3cf184135759b70513f9dc0c1",
+      "license": "BSD-2-Clause",
+      "lifecycleScripts": {},
+      "fileCount": 9
+    },
+    {
+      "name": "math-intrinsics",
+      "version": "1.1.0",
+      "path": "node_modules/math-intrinsics",
+      "contentSha256": "09c6c6beea4b336687e65f23b1eddc25c2611a321e06a52391d15bb1033605a8",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 38
+    },
+    {
+      "name": "media-typer",
+      "version": "1.1.0",
+      "path": "node_modules/media-typer",
+      "contentSha256": "2b2238816159ef8293300bae09b18dbac7c3dbdd126140aed949ad80d4871e45",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "merge-descriptors",
+      "version": "2.0.0",
+      "path": "node_modules/merge-descriptors",
+      "contentSha256": "272076ca11e5dadbab53e5116598bca9c6b0bab7f6409228a9f6b451a443cbd6",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "mime-db",
+      "version": "1.54.0",
+      "path": "node_modules/mime-db",
+      "contentSha256": "d728748c91296fdc64c9d39a32719e01c9edc1e4f127b171aa26331d2298cae4",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "mime-types",
+      "version": "3.0.2",
+      "path": "node_modules/mime-types",
+      "contentSha256": "88aecb9e9017b6ce55120e5cc219f9610ffab2d0e104277cfbbc1d66504dc615",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "path": "node_modules/ms",
+      "contentSha256": "4c2ee1021428331df1dcff93bb2476aa0e0c869fd463dcc7ad4b7052da904a48",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "negotiator",
+      "version": "1.0.0",
+      "path": "node_modules/negotiator",
+      "contentSha256": "5ac55e8a16ef251a859902155b5d04a4283a000955781027db88815ad2437e38",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 9
+    },
+    {
+      "name": "object-assign",
+      "version": "4.1.1",
+      "path": "node_modules/object-assign",
+      "contentSha256": "519e2b93914776ca4b41ae5474b1858ad8c00801f160cba512226568b3e77bf2",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "object-inspect",
+      "version": "1.13.4",
+      "path": "node_modules/object-inspect",
+      "contentSha256": "92cebb1a3161b9a8ed49157e3c786a45919601495988568099f874db2930ef7e",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 34
+    },
+    {
+      "name": "on-finished",
+      "version": "2.4.1",
+      "path": "node_modules/on-finished",
+      "contentSha256": "25804158791a821d1b4748897a9872f6239969fee35824d4cafcfef7ff9edd8a",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "once",
+      "version": "1.4.0",
+      "path": "node_modules/once",
+      "contentSha256": "651ee50effda433aadafedf45450ca0c8f09340ad915b1594c1292d34862f909",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "parseurl",
+      "version": "1.3.3",
+      "path": "node_modules/parseurl",
+      "contentSha256": "9e36999b51afd76cb2fae84f43a6f310e99e639c7b6272b30cb6325692f5ee66",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "path-key",
+      "version": "3.1.1",
+      "path": "node_modules/path-key",
+      "contentSha256": "2cfae20310d5c11f77aa94c4ea8040afc3edb83911347c2ff761718bc7d11140",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "path-to-regexp",
+      "version": "8.4.2",
+      "path": "node_modules/path-to-regexp",
+      "contentSha256": "702017a2ff744a1a7587453925bcc9353b587d04b39746e354ecf85ac05dd761",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "pkce-challenge",
+      "version": "5.0.1",
+      "path": "node_modules/pkce-challenge",
+      "contentSha256": "8dd2c0ea35235c2fcbe5ca14beaad072c01628d71fd5511ebeba950aa2f46f16",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 10
+    },
+    {
+      "name": "proxy-addr",
+      "version": "2.0.7",
+      "path": "node_modules/proxy-addr",
+      "contentSha256": "5dc4bb666fb6e67f0b41ee515f72455eb64ff6669764f3a16f070edeff73b30d",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "qs",
+      "version": "6.15.3",
+      "path": "node_modules/qs",
+      "contentSha256": "7eddcc7b9986f63deae717ce46d380b86a61c2271e0eea3403772d1024752df5",
+      "license": "BSD-3-Clause",
+      "lifecycleScripts": {},
+      "fileCount": 20
+    },
+    {
+      "name": "range-parser",
+      "version": "1.3.0",
+      "path": "node_modules/range-parser",
+      "contentSha256": "4b3726413c919bca4ebd280adb75b44a8e4fe395722a5cd2c19dedce8d16d0f1",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "raw-body",
+      "version": "3.0.2",
+      "path": "node_modules/raw-body",
+      "contentSha256": "381283af09e812b39a6f3f6c9118996d542f5029de62668629abe54636a8dabe",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "require-from-string",
+      "version": "2.0.2",
+      "path": "node_modules/require-from-string",
+      "contentSha256": "990c4ff1d64a0ea79d673231f746a61da4a8f398152fb90c559aab7e3eb7581b",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "router",
+      "version": "2.2.0",
+      "path": "node_modules/router",
+      "contentSha256": "8cd20f20616d30ab8f8458db1aa1e038297dbfc6ee7bbf38c0e79d74cd1b012b",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 7
+    },
+    {
+      "name": "safer-buffer",
+      "version": "2.1.2",
+      "path": "node_modules/safer-buffer",
+      "contentSha256": "1630b69209f1f058a742d9f6236c38537a5139a8ec877ff3e47dbec22552a03c",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 7
+    },
+    {
+      "name": "send",
+      "version": "1.2.1",
+      "path": "node_modules/send",
+      "contentSha256": "eac0f49544cdc430648b9af81cc4f7bea72b48ad743dce55ed8d551afbbc8695",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "serve-static",
+      "version": "2.2.1",
+      "path": "node_modules/serve-static",
+      "contentSha256": "4a49ad13442679aaef47dff7707624dd13c689f1a72c9ce19de8b298308e1765",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "setprototypeof",
+      "version": "1.2.0",
+      "path": "node_modules/setprototypeof",
+      "contentSha256": "182951292572896e4083c63e20121dd359339495a2277ac61204703d151bb627",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "shebang-command",
+      "version": "2.0.0",
+      "path": "node_modules/shebang-command",
+      "contentSha256": "e475adf4b9a31ff7255b7dbaa00bd1c3b962e01aa9ec6d6b6a8212011139fddf",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "shebang-regex",
+      "version": "3.0.0",
+      "path": "node_modules/shebang-regex",
+      "contentSha256": "aa7f334030b08350d98c44e12c0efdd3f0d06125def40d8a515199a9e5f6a0f3",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "side-channel",
+      "version": "1.1.1",
+      "path": "node_modules/side-channel",
+      "contentSha256": "3f573a00e1b3dd04cc06d8b87c3a6dcce88bd0dcbe0283001f71bd4dce9b2da4",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 12
+    },
+    {
+      "name": "side-channel-list",
+      "version": "1.0.1",
+      "path": "node_modules/side-channel-list",
+      "contentSha256": "c05e58cba4bbefe698149e96c9d44c596bccbaf36c0c3127150dab99e2fe500d",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 13
+    },
+    {
+      "name": "side-channel-map",
+      "version": "1.0.1",
+      "path": "node_modules/side-channel-map",
+      "contentSha256": "260226f5c9a6b8937577c0ca0fd1fadac1bad055a017bd23e72a7a571fff6a59",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 12
+    },
+    {
+      "name": "side-channel-weakmap",
+      "version": "1.0.2",
+      "path": "node_modules/side-channel-weakmap",
+      "contentSha256": "bab14618cacf04767c29a0a4f086e4111cf0342c275ab90306fce91f55905738",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 12
+    },
+    {
+      "name": "statuses",
+      "version": "2.0.2",
+      "path": "node_modules/statuses",
+      "contentSha256": "d62798700eed1725be90967da9a0372741d97f5411ae84c01fdfce04c1508826",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "toidentifier",
+      "version": "1.0.1",
+      "path": "node_modules/toidentifier",
+      "contentSha256": "c556e9f6d3ae5d899d10ad0739297846fc2988086667e7de324b049e8353efa3",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "type-is",
+      "version": "2.1.0",
+      "path": "node_modules/type-is",
+      "contentSha256": "4856cda945028b04de0d50423aef41a3ce86c0ebc7f4891b46e95162ce466033",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "content-type",
+      "version": "2.0.0",
+      "path": "node_modules/type-is/node_modules/content-type",
+      "contentSha256": "db681a2f1eecf61ca84e98a23de5adb23086e0a02c2c96f9cad36208e2ef1120",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 6
+    },
+    {
+      "name": "unpipe",
+      "version": "1.0.0",
+      "path": "node_modules/unpipe",
+      "contentSha256": "2162499365d0d33a2f6be704cdaf67a4dd9e1cb8fad0ff16869e3e934a882150",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "vary",
+      "version": "1.1.2",
+      "path": "node_modules/vary",
+      "contentSha256": "3cec3446997cbb6d27115ee9b20b56549204824bdd0d8fe0fe291fa80528890b",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "which",
+      "version": "2.0.2",
+      "path": "node_modules/which",
+      "contentSha256": "3b5b732d20b83babb6a20e1ed9d44d3c914a0719a6627988b31732ad3d50a431",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 5
+    },
+    {
+      "name": "wrappy",
+      "version": "1.0.2",
+      "path": "node_modules/wrappy",
+      "contentSha256": "9cc7aa27d983cf7a854e7024432a4aebafc628731d4dca551028c12b69a387a6",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 4
+    },
+    {
+      "name": "zod",
+      "version": "3.25.76",
+      "path": "node_modules/zod",
+      "contentSha256": "ee61eee521ec179d657e0ebfe6976eeb0288696660fa4f66c39b92eabe987c9e",
+      "license": "MIT",
+      "lifecycleScripts": {},
+      "fileCount": 596
+    },
+    {
+      "name": "zod-to-json-schema",
+      "version": "3.25.2",
+      "path": "node_modules/zod-to-json-schema",
+      "contentSha256": "de1982da562644d863f0a5ac67f31300f9274425de4e76a17f146110af100c49",
+      "license": "ISC",
+      "lifecycleScripts": {},
+      "fileCount": 130
+    }
+  ]
+}
