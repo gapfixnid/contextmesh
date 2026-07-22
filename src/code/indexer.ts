@@ -1151,13 +1151,16 @@ export class CodeIndexer {
         language: "typescript/javascript", capability: "typed", owner: `indexer-${process.pid}-${randomUUID()}` });
     } catch (error) {
       const message = `PRECISION_PROVIDER_CLAIM_FAILED: ${error instanceof Error ? error.message : String(error)}`;
+      const diagnostics = [message];
       try {
         this.database.transitionPrecisionProvider({
           language: "typescript/javascript", provider, providerVersion, capability: "typed", status: "failed", lastError: message,
         });
-      } catch { /* the original claim failure remains the actionable diagnostic */ }
-      return { committed: false, diagnostics: [message], outcome: this.precisionOutcomeForState(
-        "typescript/javascript", provider, providerVersion, "typed", invoked, [message],
+      } catch (transitionError) {
+        diagnostics.push(`PRECISION_PROVIDER_STATE_FAILED: ${transitionError instanceof Error ? transitionError.message : String(transitionError)}`);
+      }
+      return { committed: false, diagnostics, outcome: this.precisionOutcomeForState(
+        "typescript/javascript", provider, providerVersion, "typed", invoked, diagnostics,
       ) };
     }
     if (!claim.claim) return { committed: false, diagnostics: [], outcome: null };
