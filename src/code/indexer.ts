@@ -872,11 +872,18 @@ export class CodeIndexer {
             }
           } else if (typescriptFiles.length > 0 && typescriptPrecisionDisabled) {
             const message = "TypeScript TypeChecker precision disabled by policy";
-            this.database.transitionPrecisionProvider({ language: "typescript/javascript", provider: "typescript_type_checker",
-              providerVersion: ts.version, capability: "typed", status: "not_configured", lastError: message });
-            precisionOutcomes.push(this.precisionOutcomeForState(
-              "typescript/javascript", "typescript_type_checker", ts.version, "typed", false, [message],
-            ));
+            try {
+              this.database.transitionPrecisionProvider({ language: "typescript/javascript", provider: "typescript_type_checker",
+                providerVersion: ts.version, capability: "typed", status: "not_configured", lastError: message });
+              precisionOutcomes.push(this.precisionOutcomeForState(
+                "typescript/javascript", "typescript_type_checker", ts.version, "typed", false, [message],
+              ));
+            } catch (error) {
+              const diagnostic = `PRECISION_PROVIDER_STATE_FAILED: ${error instanceof Error ? error.message : String(error)}`;
+              precisionOutcomes.push(this.precisionOutcomeForState(
+                "typescript/javascript", "typescript_type_checker", ts.version, "typed", false, [message, diagnostic],
+              ));
+            }
           }
           const goGraph = coreGraphs[CORE_LANGUAGE_IDS.indexOf("go")];
           if (goGraph && goGraph.files.length > 0) {

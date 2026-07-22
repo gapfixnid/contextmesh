@@ -1084,6 +1084,40 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
+  it("keeps a full TypeScript base index when recording the disabled precision state fails", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-typescript-disabled-state-"));
+    roots.push(root);
+    writeFileSync(path.join(root, "entry.ts"), "export function BaseSurvivesStateFailure() { return 1; }\n");
+    const priorDisable = process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
+    process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    const originalTransition = app.database.transitionPrecisionProvider.bind(app.database);
+    const transitionSpy = vi.spyOn(app.database, "transitionPrecisionProvider").mockImplementation((input) => {
+      if (input.provider === "typescript_type_checker") throw new Error("injected disabled-state failure");
+      return originalTransition(input);
+    });
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(indexed.generation).toBe(1);
+      expect(indexed.warnings).toContainEqual(expect.stringMatching(
+        /PRECISION_PROVIDER_STATE_FAILED.*injected disabled-state failure/,
+      ));
+      expect((await app.searchCode({ query: "BaseSurvivesStateFailure", kinds: ["function"] }) as Envelope<{
+        results: unknown[];
+      }>).data.results).toHaveLength(1);
+      expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "syntax", status: "stale", coverage: 0,
+      }));
+    } finally {
+      transitionSpy.mockRestore();
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
+      else process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
   it("withdraws a ready TypeScript overlay when precision is disabled on a no-op run", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-v05-typescript-disabled-"));
     roots.push(root);
