@@ -628,7 +628,10 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
             .sort((left, right) => (left.endByte - left.startByte) - (right.endByte - right.startByte) || left.id.localeCompare(right.id));
           if (matches[0]) targets.set(matches[0].id, matches[0]);
         }
-        if (targets.size !== 1) continue;
+        if (targets.size !== 1) {
+          diagnostics.push(`RUST_ANALYZER_DEFINITION_${targets.size === 0 ? "UNRESOLVED" : "AMBIGUOUS"}: ${query.file.relativePath}:${query.byteOffset}:${query.rawName}`);
+          continue;
+        }
         const target = [...targets.values()][0]!;
         const resolved = {
           sourceId: query.sourceId, targetId: target.id, kind: "CALLS" as const, status: "resolved" as const,

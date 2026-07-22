@@ -521,6 +521,10 @@ try {
 
   const generationBeforeProviderUpdate = app.database.getWorkspace().currentGeneration;
   const revisionBeforeProviderUpdate = app.database.getPrecisionRevision();
+  const updateProbeNode = currentEffectiveGraph(app).nodes
+    .filter((node) => node.language === "python")
+    .sort((left, right) => left.id.localeCompare(right.id))[0];
+  if (!updateProbeNode) throw new Error("v0.5 provider revision probe requires a Python node");
   const claim = app.database.claimPrecisionProvider({
     provider: "quality_update_probe",
     providerVersion: "2",
@@ -529,6 +533,14 @@ try {
     owner: "quality-gate",
   });
   if (!claim.claim || !app.database.commitPrecisionOverlay(claim.claim, {
+    nodes: [{
+      nodeId: updateProbeNode.id,
+      analysisLevel: "resolved",
+      signature: updateProbeNode.signature,
+      doc: updateProbeNode.doc,
+      contentHash: updateProbeNode.contentHash,
+      metadata: updateProbeNode.metadata,
+    }],
     edges: [],
     eligibleEdges: 0,
     diagnostics: [],
