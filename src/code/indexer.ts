@@ -721,18 +721,18 @@ export class CodeIndexer {
           const adapterStats: AdapterStats[] = [
             ...(typescriptFiles.length > 0 ? [{
               language: "typescript/javascript", ecosystem: "npm", syntaxProvider: "typescript_compiler_ast",
-              precisionProvider: tsPrecisionProvider || tsPrecisionGraph ? "typescript_type_checker" : null,
-              analysisLevel: (tsPrecisionProvider || tsPrecisionGraph ? "typed" : "syntax") as "typed" | "syntax",
+              precisionProvider: tsPrecisionProvider ? tsPrecisionProvider.id : null,
+              analysisLevel: "syntax" as const,
               files: typescriptFiles.length,
               syntaxInvocations: this.lastTypeScriptInstrumentation.programCreations,
-              precisionInvocations: tsPrecisionProvider ? 1 : 0,
+              precisionInvocations: 0,
               configHash: compiler.configHash,
               providerVersions: {
                 syntax: ts.version,
-                ...((tsPrecisionProvider || tsPrecisionGraph) ? { precision: ts.version } : {}),
+                ...(tsPrecisionProvider ? { precision: tsPrecisionProvider.version } : {}),
               },
-              status: (tsPrecisionProvider || tsPrecisionGraph ? "ready" : "not_configured") as "ready" | "not_configured",
-              coverage: 1,
+              status: "not_configured" as const,
+              coverage: 0,
               diagnostics: typescriptPrecisionDisabled ? [{
                 code: "TYPESCRIPT_PRECISION_DISABLED",
                 severity: "info" as const,
@@ -843,35 +843,40 @@ export class CodeIndexer {
             if (outcome) precisionOutcomes.push(outcome);
           }
           if (tsPrecisionError && tsPrecisionProvider) {
-            this.database.registerPrecisionProvider({
-              language: "typescript/javascript",
-              provider: tsPrecisionProvider.id,
-              providerVersion: tsPrecisionProvider.version,
-              capability: "typed",
-              status: "failed",
-              lastError: tsPrecisionError instanceof Error ? tsPrecisionError.message : String(tsPrecisionError),
-            });
+            const message = tsPrecisionError instanceof Error ? tsPrecisionError.message : String(tsPrecisionError);
+            try {
+              this.database.transitionPrecisionProvider({ language: "typescript/javascript", provider: tsPrecisionProvider.id,
+                providerVersion: tsPrecisionProvider.version, capability: "typed", status: "failed", lastError: message });
+              precisionOutcomes.push(this.precisionOutcomeForState(
+                "typescript/javascript", tsPrecisionProvider.id, tsPrecisionProvider.version, "typed", true, [message],
+              ));
+            } catch (error) {
+              const diagnostic = `PRECISION_PROVIDER_STATE_FAILED: ${error instanceof Error ? error.message : String(error)}`;
+              precisionOutcomes.push(this.precisionOutcomeForState(
+                "typescript/javascript", tsPrecisionProvider.id, tsPrecisionProvider.version, "typed", true, [message, diagnostic],
+              ));
+            }
           } else if (tsPrecisionGraph) {
             const tsOutcome = await this.runTypeScriptPrecisionOverlay(
               tsPrecisionGraph,
               handle.generation,
               tsPrecisionProvider?.id,
               tsPrecisionProvider?.version,
+              !nonTypeScriptOnlyIncremental,
             );
             graph.diagnostics.push(...tsOutcome.diagnostics);
+            if (tsOutcome.outcome) precisionOutcomes.push(tsOutcome.outcome);
             if (!tsOutcome.committed) {
               this.database.backfillSemanticSourceHashes(true);
               await this.semantic?.reconcileCodeIfNeeded();
             }
           } else if (typescriptFiles.length > 0 && typescriptPrecisionDisabled) {
-            this.database.registerPrecisionProvider({
-              language: "typescript/javascript",
-              provider: "typescript_type_checker",
-              providerVersion: ts.version,
-              capability: "typed",
-              status: "not_configured",
-              lastError: "TypeScript TypeChecker precision disabled by policy",
-            });
+            const message = "TypeScript TypeChecker precision disabled by policy";
+            this.database.transitionPrecisionProvider({ language: "typescript/javascript", provider: "typescript_type_checker",
+              providerVersion: ts.version, capability: "typed", status: "not_configured", lastError: message });
+            precisionOutcomes.push(this.precisionOutcomeForState(
+              "typescript/javascript", "typescript_type_checker", ts.version, "typed", false, [message],
+            ));
           }
           const goGraph = coreGraphs[CORE_LANGUAGE_IDS.indexOf("go")];
           if (goGraph && goGraph.files.length > 0) {
@@ -883,7 +888,7 @@ export class CodeIndexer {
             const outcome = await this.runPrecisionOverlay("rust", project.coreProjects.rust, rustGraph, handle.generation);
             if (outcome) precisionOutcomes.push(outcome);
           }
-          this.applyPrecisionOutcomes(precisionOutcomes);
+          this.applyPrecisionOutcomes(precisionOutcomes, handle.id);
           graph.diagnostics.push(...precisionOutcomes.flatMap((outcome) => outcome.diagnostics));
           result = {
             generation: handle.generation,
@@ -923,7 +928,27 @@ export class CodeIndexer {
     });
   }
 
-  private applyPrecisionOutcomes(outcomes: PrecisionRunOutcome[]): void {
+  private precisionOutcomeForState(
+    language: string,
+    provider: string,
+    providerVersion: string,
+    capability: "resolved" | "typed",
+    invoked: boolean,
+    extraDiagnostics: string[] = [],
+  ): PrecisionRunOutcome {
+    const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider);
+    const status = state && ["ready", "partial", "not_configured", "failed", "stale"].includes(state.status)
+      ? state.status as PrecisionRunOutcome["status"] : "stale";
+    return {
+      language, provider, providerVersion: state?.providerVersion ?? providerVersion, status,
+      analysisLevel: status === "ready" || status === "partial" ? capability : "syntax",
+      coverage: status === "ready" || status === "partial" ? (state?.coverage ?? 0) : 0,
+      invoked,
+      diagnostics: [...new Set([...extraDiagnostics, ...(state?.lastError ? [state.lastError] : [])])],
+    };
+  }
+
+  private applyPrecisionOutcomes(outcomes: PrecisionRunOutcome[], indexRunId?: string): void {
     if (outcomes.length === 0) return;
     const byLanguage = new Map(outcomes.map((outcome) => [outcome.language, outcome]));
     this.lastAdapterStats = this.lastAdapterStats.map((stats) => {
@@ -952,6 +977,7 @@ export class CodeIndexer {
       adapterState[stats.language] = { ...prior, precisionRevision: this.database.getPrecisionRevision(), stats };
     }
     this.database.setAdapterState(adapterState);
+    if (indexRunId) this.database.updateIndexRunAdapterStats(indexRunId, this.lastAdapterStats);
   }
 
   private async reconcilePrecisionForProject(project: ProjectScan, generation: number): Promise<string[]> {
@@ -961,16 +987,24 @@ export class CodeIndexer {
     const files = project.files.filter((file) => isTypeScriptLanguage(file.language));
     const tsState = this.database.getPrecisionProviderStates().find((item) => item.provider === "typescript_type_checker");
     if (files.length > 0 && process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE === "1") {
-      this.database.registerPrecisionProvider({
-        language: "typescript/javascript",
-        provider: "typescript_type_checker",
-        providerVersion: ts.version,
-        capability: "typed",
-        status: "not_configured",
-        lastError: "TypeScript TypeChecker precision disabled by policy",
-      });
-    } else if (!(tsState?.providerVersion === ts.version && tsState.baseGeneration === generation &&
-      (tsState.status === "ready" || tsState.status === "partial"))) {
+      const message = "TypeScript TypeChecker precision disabled by policy";
+      try {
+        if (tsState?.providerVersion !== ts.version || tsState.baseGeneration !== generation || tsState.status !== "not_configured") {
+          this.database.transitionPrecisionProvider({ language: "typescript/javascript", provider: "typescript_type_checker",
+            providerVersion: ts.version, capability: "typed", status: "not_configured", lastError: message });
+        }
+        outcomes.push(this.precisionOutcomeForState(
+          "typescript/javascript", "typescript_type_checker", ts.version, "typed", false, [message],
+        ));
+      } catch (error) {
+        diagnostics.push(message, `PRECISION_PROVIDER_STATE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else if (tsState?.providerVersion === ts.version && tsState.baseGeneration === generation &&
+      (tsState.status === "ready" || tsState.status === "partial")) {
+      outcomes.push(this.precisionOutcomeForState(
+        "typescript/javascript", "typescript_type_checker", ts.version, "typed", false,
+      ));
+    } else {
       if (files.length > 0) {
         const runtime: TypeScriptProviderRuntime = { diagnostics: project.scan.diagnostics, compiler: project.compiler };
         const descriptor: ProjectDescriptor = { ...project.typescriptProject, runtime };
@@ -982,15 +1016,18 @@ export class CodeIndexer {
             const typed = await precision.refine(syntax);
             const outcome = await this.runTypeScriptPrecisionOverlay(typed, generation, precision.id, precision.version);
             diagnostics.push(...outcome.diagnostics);
+            if (outcome.outcome) outcomes.push(outcome.outcome);
           } catch (error) {
-            this.database.registerPrecisionProvider({
-              language: "typescript/javascript",
-              provider: precision.id,
-              providerVersion: precision.version,
-              capability: "typed",
-              status: "failed",
-              lastError: error instanceof Error ? error.message : String(error),
-            });
+            const message = error instanceof Error ? error.message : String(error);
+            try {
+              this.database.transitionPrecisionProvider({ language: "typescript/javascript", provider: precision.id,
+                providerVersion: precision.version, capability: "typed", status: "failed", lastError: message });
+              outcomes.push(this.precisionOutcomeForState(
+                "typescript/javascript", precision.id, precision.version, "typed", true, [message],
+              ));
+            } catch (transitionError) {
+              diagnostics.push(message, `PRECISION_PROVIDER_STATE_FAILED: ${transitionError instanceof Error ? transitionError.message : String(transitionError)}`);
+            }
           }
         }
       }
@@ -1018,38 +1055,33 @@ export class CodeIndexer {
   ): Promise<PrecisionRunOutcome | null> {
     const provider = this.coordinator.adapter(language)?.createOverlayPrecisionProvider?.(project);
     if (!provider) return null;
-    const outcomeFromState = (invoked: boolean, extraDiagnostics: string[] = []): PrecisionRunOutcome => {
-      const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
-      const status = state && ["ready", "partial", "not_configured", "failed", "stale"].includes(state.status)
-        ? state.status as PrecisionRunOutcome["status"] : "stale";
-      return {
-        language, provider: provider.id, providerVersion: provider.version, status,
-        analysisLevel: status === "ready" || status === "partial" ? provider.capability : "syntax",
-        coverage: status === "ready" || status === "partial" ? (state?.coverage ?? 0) : 0,
-        invoked, diagnostics: [...new Set([...extraDiagnostics, ...(state?.lastError ? [state.lastError] : [])])],
-      };
-    };
-    const transition = (status: "not_configured" | "failed" | "stale", lastError: string | null): string[] => {
+    const outcomeFromState = (invoked: boolean, extraDiagnostics: string[] = []): PrecisionRunOutcome =>
+      this.precisionOutcomeForState(language, provider.id, provider.version, provider.capability, invoked, extraDiagnostics);
+    const transition = (status: "not_configured" | "failed" | "stale", lastError: string | null): {
+      succeeded: boolean; diagnostics: string[];
+    } => {
       try {
         this.database.transitionPrecisionProvider({ language, provider: provider.id, providerVersion: provider.version,
           capability: provider.capability, status, lastError });
-        return lastError ? [lastError] : [];
+        return { succeeded: true, diagnostics: lastError ? [lastError] : [] };
       } catch (error) {
-        return [lastError, `PRECISION_PROVIDER_STATE_FAILED: ${error instanceof Error ? error.message : String(error)}`]
-          .filter((item): item is string => Boolean(item));
+        return { succeeded: false,
+          diagnostics: [lastError, `PRECISION_PROVIDER_STATE_FAILED: ${error instanceof Error ? error.message : String(error)}`]
+            .filter((item): item is string => Boolean(item)) };
       }
     };
     let availability: Awaited<ReturnType<typeof provider.available>>;
     try { availability = await provider.available(); }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return outcomeFromState(false, transition("failed", message));
+      return outcomeFromState(false, transition("failed", message).diagnostics);
     }
     if (!availability.available) {
       const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
       const message = availability.diagnostic ?? null;
-      if (state?.providerVersion !== provider.version || state.baseGeneration !== generation || state.status !== "not_configured") {
-        return outcomeFromState(false, transition("not_configured", message));
+      const unavailableStatus = availability.unavailableStatus ?? "not_configured";
+      if (state?.providerVersion !== provider.version || state.baseGeneration !== generation || state.status !== unavailableStatus) {
+        return outcomeFromState(false, transition(unavailableStatus, message).diagnostics);
       }
       return outcomeFromState(false, message ? [message] : []);
     }
@@ -1057,7 +1089,8 @@ export class CodeIndexer {
     if (existing?.providerVersion === provider.version && existing.baseGeneration === generation
       && (existing.status === "ready" || existing.status === "partial")) return outcomeFromState(false);
     if (existing && (existing.providerVersion !== provider.version || existing.baseGeneration !== generation)) {
-      transition("stale", "Precision provider configuration changed; previous overlay withdrawn");
+      const transitioned = transition("stale", "Precision provider configuration changed; previous overlay withdrawn");
+      if (!transitioned.succeeded) return outcomeFromState(false, transitioned.diagnostics);
     }
     let claimed;
     try {
@@ -1066,7 +1099,7 @@ export class CodeIndexer {
         leaseMs: PRECISION_PROVIDER_LEASE_MS });
     } catch (error) {
       const message = `PRECISION_PROVIDER_CLAIM_FAILED: ${error instanceof Error ? error.message : String(error)}`;
-      return outcomeFromState(false, transition("failed", message));
+      return outcomeFromState(false, transition("failed", message).diagnostics);
     }
     if (!claimed.claim) return null;
     let leaseLost = false;
@@ -1103,7 +1136,8 @@ export class CodeIndexer {
     _generation: number,
     provider = "typescript_type_checker",
     providerVersion = ts.version,
-  ): Promise<{ committed: boolean; diagnostics: string[] }> {
+    invoked = true,
+  ): Promise<{ committed: boolean; diagnostics: string[]; outcome: PrecisionRunOutcome | null }> {
     let claim;
     try {
       claim = this.database.claimPrecisionProvider({ provider, providerVersion,
@@ -1115,9 +1149,11 @@ export class CodeIndexer {
           language: "typescript/javascript", provider, providerVersion, capability: "typed", status: "failed", lastError: message,
         });
       } catch { /* the original claim failure remains the actionable diagnostic */ }
-      return { committed: false, diagnostics: [message] };
+      return { committed: false, diagnostics: [message], outcome: this.precisionOutcomeForState(
+        "typescript/javascript", provider, providerVersion, "typed", invoked, [message],
+      ) };
     }
-    if (!claim.claim) return { committed: false, diagnostics: [] };
+    if (!claim.claim) return { committed: false, diagnostics: [], outcome: null };
     try {
       const nodes = graph.nodes
         .filter((node) => node.analysisLevel === "typed" || node.analysisLevel === "resolved")
@@ -1135,15 +1171,22 @@ export class CodeIndexer {
           evidence: (edge.evidence ?? []).filter((item) => item.source === "type_checker") }));
       if (!this.database.commitPrecisionOverlay(claim.claim, { nodes, edges, eligibleEdges: edges.length, diagnostics: [] })) {
         this.database.abandonPrecisionProvider(claim.claim, "TypeScript precision-provider lease lost before commit");
-        return { committed: false, diagnostics: ["TypeScript precision-provider lease lost before commit"] };
+        const message = "TypeScript precision-provider lease lost before commit";
+        return { committed: false, diagnostics: [message], outcome: this.precisionOutcomeForState(
+          "typescript/javascript", provider, providerVersion, "typed", invoked, [message],
+        ) };
       }
-      return { committed: true, diagnostics: [] };
+      return { committed: true, diagnostics: [], outcome: this.precisionOutcomeForState(
+        "typescript/javascript", provider, providerVersion, "typed", invoked,
+      ) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!this.database.failPrecisionProvider(claim.claim, message)) {
         this.database.abandonPrecisionProvider(claim.claim, `TypeScript precision-provider lease lost: ${message}`);
       }
-      return { committed: false, diagnostics: [message] };
+      return { committed: false, diagnostics: [message], outcome: this.precisionOutcomeForState(
+        "typescript/javascript", provider, providerVersion, "typed", invoked, [message],
+      ) };
     }
   }
 

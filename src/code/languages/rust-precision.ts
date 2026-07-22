@@ -15,7 +15,7 @@ interface CommandSpec { executable: string; args: string[] }
 type RustAnalyzerPolicy = "safe" | "trusted" | "disabled" | "invalid";
 type LspPositionEncoding = "utf-8" | "utf-16";
 
-const ENVIRONMENT_POLICY_VERSION = "rust-analyzer-env-v1";
+const ENVIRONMENT_POLICY_VERSION = "rust-analyzer-env-v2";
 const SAFE_INITIALIZATION_OPTIONS = {
   cargo: { noDeps: true, autoreload: false, buildScripts: { enable: false } },
   procMacro: { enable: false },
@@ -58,7 +58,8 @@ function safeEnvironment(): NodeJS.ProcessEnv {
   ]);
   for (const key of Object.keys(env)) {
     const normalized = key.toUpperCase();
-    if (exact.has(normalized) || /^CARGO_TARGET_.+_(?:RUNNER|LINKER|RUSTFLAGS)$/.test(normalized)) delete env[key];
+    if (exact.has(normalized) || /^CARGO_BUILD_/.test(normalized)
+      || /^CARGO_TARGET_.+_(?:RUNNER|LINKER|RUSTFLAGS)$/.test(normalized)) delete env[key];
   }
   return env;
 }
@@ -498,7 +499,7 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
     this.version = snapshotVersion(this.snapshot);
   }
 
-  async available(): Promise<{ available: boolean; diagnostic?: string }> {
+  async available(): Promise<{ available: boolean; diagnostic?: string; unavailableStatus?: "not_configured" | "failed" }> {
     if (this.snapshot.policy === "disabled") return { available: false, diagnostic: "rust-analyzer disabled by policy" };
     if (this.snapshot.policy === "invalid") throw new Error(`RUST_ANALYZER_POLICY_INVALID: ${this.snapshot.invalidPolicy}`);
     try {
@@ -506,7 +507,9 @@ export class RustAnalyzerProvider implements OverlayPrecisionProvider {
       this.version = snapshotVersion(this.snapshot);
       return { available: true, diagnostic: this.snapshot.identity };
     } catch (error) {
-      return { available: false, diagnostic: error instanceof Error ? error.message : String(error) };
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      return { available: false, diagnostic,
+        unavailableStatus: (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ? "not_configured" : "failed" };
     }
   }
 

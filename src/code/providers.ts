@@ -92,7 +92,7 @@ export interface OverlayPrecisionProvider {
   readonly id: string;
   readonly version: string;
   readonly capability: Exclude<AnalysisLevel, "syntax">;
-  available(): Promise<{ available: boolean; diagnostic?: string }>;
+  available(): Promise<{ available: boolean; diagnostic?: string; unavailableStatus?: "not_configured" | "failed" }>;
   analyze(batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch>;
 }
 

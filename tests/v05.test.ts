@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -691,11 +692,22 @@ describe("v0.5 precision overlays and core languages", () => {
       return originalClaim(input);
     });
     try {
-      const indexed = await app.indexWorkspace({ mode: "full" });
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
       expect(indexed.warnings).toContainEqual(expect.stringMatching(/PRECISION_PROVIDER_CLAIM_FAILED.*injected claim failure/));
       expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
         provider: "claim_exception_fixture", status: "failed",
         lastError: expect.stringMatching(/PRECISION_PROVIDER_CLAIM_FAILED/),
+      }));
+      expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "go", analysisLevel: "syntax", status: "failed", coverage: 0,
+      }));
+      const status = await app.workspaceStatus() as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(status.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "go", analysisLevel: "syntax", status: "failed", coverage: 0,
       }));
     } finally {
       claimSpy.mockRestore();
@@ -731,6 +743,63 @@ describe("v0.5 precision overlays and core languages", () => {
         provider: "contention_fixture", status: "running",
       }));
       expect(app.database.abandonPrecisionProvider(active.claim!, "fixture complete")).toBe(true);
+    } finally {
+      mutableAdapter.createOverlayPrecisionProvider = originalProvider;
+      await app.close();
+    }
+  });
+
+  it("preserves a provider transition failure and does not claim the new version", async () => {
+    const root = workspace();
+    const app = new ContextMeshApp(root);
+    const adapter = app.code.indexer.coordinator.adapter("go")!;
+    const mutableAdapter = adapter as {
+      createOverlayPrecisionProvider: NonNullable<typeof adapter.createOverlayPrecisionProvider>;
+    };
+    const originalProvider = mutableAdapter.createOverlayPrecisionProvider;
+    let version = "1";
+    let analyses = 0;
+    mutableAdapter.createOverlayPrecisionProvider = () => ({
+      id: "transition_failure_fixture", version, capability: "resolved",
+      available: async () => ({ available: true }),
+      analyze: async (_batch, baseGeneration) => {
+        analyses += 1;
+        return { language: "go", provider: "transition_failure_fixture", providerVersion: version,
+          capability: "resolved", baseGeneration, edges: [], eligibleEdges: 0, diagnostics: [] };
+      },
+    });
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(analyses).toBe(1);
+      version = "2";
+      const originalTransition = app.database.transitionPrecisionProvider.bind(app.database);
+      const transitionSpy = vi.spyOn(app.database, "transitionPrecisionProvider").mockImplementation((input) => {
+        if (input.provider === "transition_failure_fixture") throw new Error("injected transition failure");
+        return originalTransition(input);
+      });
+      const originalClaim = app.database.claimPrecisionProvider.bind(app.database);
+      let newVersionClaims = 0;
+      const claimSpy = vi.spyOn(app.database, "claimPrecisionProvider").mockImplementation((input) => {
+        if (input.provider === "transition_failure_fixture" && input.providerVersion === "2") newVersionClaims += 1;
+        return originalClaim(input);
+      });
+      try {
+        const indexed = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{
+          adapterStats: Array<{ language: string; status: string; providerVersions?: Record<string, string> }>;
+        }>;
+        expect(indexed.warnings).toContainEqual(expect.stringMatching(/PRECISION_PROVIDER_STATE_FAILED.*injected transition failure/));
+        expect(newVersionClaims).toBe(0);
+        expect(analyses).toBe(1);
+        expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+          provider: "transition_failure_fixture", providerVersion: "1", status: "ready",
+        }));
+        expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+          language: "go", status: "ready", providerVersions: expect.objectContaining({ precision: "1" }),
+        }));
+      } finally {
+        claimSpy.mockRestore();
+        transitionSpy.mockRestore();
+      }
     } finally {
       mutableAdapter.createOverlayPrecisionProvider = originalProvider;
       await app.close();
@@ -990,13 +1059,24 @@ describe("v0.5 precision overlays and core languages", () => {
       refine: async () => { throw new Error("AUDIT_TYPECHECKER_UNAVAILABLE"); },
     });
     try {
-      const indexed = await app.indexWorkspace({ mode: "full" });
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
       expect(indexed.generation).toBe(1);
       expect((await app.searchCode({ query: "SyntaxCaller", kinds: ["function"] }) as Envelope<{ results: unknown[] }>).data.results).toHaveLength(1);
       expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
         provider: "typescript_type_checker",
         status: "failed",
         lastError: "AUDIT_TYPECHECKER_UNAVAILABLE",
+      }));
+      expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "syntax", status: "failed", coverage: 0,
+      }));
+      const status = await app.workspaceStatus() as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(status.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "syntax", status: "failed", coverage: 0,
       }));
     } finally {
       mutableAdapter.createPrecisionProvider = originalPrecisionProvider;
@@ -1020,7 +1100,10 @@ describe("v0.5 precision overlays and core languages", () => {
       });
 
       process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE = "1";
-      const noOp = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
+      const noOp = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{
+        noOp: boolean;
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
       expect(noOp.data.noOp).toBe(true);
       expect(noOp.snapshot!.precisionRevision).toBe(readyRevision + 1);
       expect(app.database.searchCode("DisabledLater", ["function"], 1)[0]).toMatchObject({
@@ -1031,6 +1114,34 @@ describe("v0.5 precision overlays and core languages", () => {
         provider: "typescript_type_checker",
         status: "not_configured",
         lastError: expect.stringMatching(/disabled/i),
+      }));
+      expect(noOp.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "syntax", status: "not_configured", coverage: 0,
+      }));
+      let status = await app.workspaceStatus() as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(status.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "syntax", status: "not_configured", coverage: 0,
+      }));
+
+      delete process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
+      const reenabled = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{
+        noOp: boolean;
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(reenabled.data.noOp).toBe(true);
+      expect(reenabled.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "typed", status: "ready", coverage: 1,
+      }));
+      expect(app.database.searchCode("DisabledLater", ["function"], 1)[0]).toMatchObject({
+        analysisLevel: "typed", doc: expect.stringContaining("Typed-only documentation"),
+      });
+      status = await app.workspaceStatus() as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(status.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "typescript/javascript", analysisLevel: "typed", status: "ready", coverage: 1,
       }));
     } finally {
       if (priorDisable === undefined) delete process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE;
@@ -1627,6 +1738,39 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
+  it("records a missing rust-analyzer executable as not configured", async () => {
+    const root = workspace();
+    const prior = {
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+      go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+    };
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = path.join(root, "missing-rust-analyzer");
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+      }>;
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "rust_analyzer", status: "not_configured", lastError: expect.stringMatching(/ENOENT/),
+      }));
+      expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "rust", analysisLevel: "syntax", status: "not_configured", coverage: 0,
+      }));
+    } finally {
+      if (prior.command === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = prior.command;
+      if (prior.args === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = prior.args;
+      if (prior.go === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = prior.go;
+      await app.close();
+    }
+  });
+
   it("accepts the official seven-character rust-analyzer commit identity", async () => {
     const root = workspace();
     const server = path.join(root, "rust-analyzer-version.mjs");
@@ -1647,6 +1791,61 @@ describe("v0.5 precision overlays and core languages", () => {
       else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorArgs;
     }
   });
+
+  it("records analyzer probe identity, exit, and timeout failures as failed", async () => {
+    const prior = {
+      disable: process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE,
+      policy: process.env.CONTEXTMESH_RUST_ANALYZER_POLICY,
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+      go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+    };
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "safe";
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    try {
+      for (const [mode, diagnostic] of [
+        ["identity", /RUST_ANALYZER_IDENTITY_INVALID/],
+        ["nonzero", /RUST_ANALYZER_UNAVAILABLE/],
+        ["timeout", /RUST_ANALYZER_UNAVAILABLE/],
+      ] as const) {
+        const root = workspace();
+        const server = path.join(root, `rust-analyzer-probe-${mode}.mjs`);
+        writeFileSync(server, [
+          "const mode = process.argv[2];",
+          "if (!process.argv.includes('--version')) process.exit(2);",
+          "if (mode === 'identity') { console.log('not rust-analyzer'); process.exit(0); }",
+          "if (mode === 'nonzero') { console.error('probe rejected'); process.exit(3); }",
+          "setTimeout(() => {}, 10_000);",
+        ].join("\n"));
+        process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server, mode]);
+        const app = new ContextMeshApp(root);
+        try {
+          const indexed = await app.indexWorkspace({ mode: "full" }) as Envelope<{
+            adapterStats: Array<{ language: string; analysisLevel: string; status: string; coverage: number }>;
+          }>;
+          expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+            provider: "rust_analyzer", status: "failed", lastError: expect.stringMatching(diagnostic),
+          }));
+          expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
+            language: "rust", analysisLevel: "syntax", status: "failed", coverage: 0,
+          }));
+        } finally { await app.close(); }
+      }
+    } finally {
+      for (const [key, value] of Object.entries({
+        CONTEXTMESH_RUST_ANALYZER_DISABLE: prior.disable,
+        CONTEXTMESH_RUST_ANALYZER_POLICY: prior.policy,
+        CONTEXTMESH_RUST_ANALYZER_COMMAND: prior.command,
+        CONTEXTMESH_RUST_ANALYZER_ARGS_JSON: prior.args,
+        CONTEXTMESH_GO_TYPES_DISABLE: prior.go,
+      })) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }, 30_000);
 
   it("does not spawn rust-analyzer for disabled or invalid policies", async () => {
     const root = workspace();
@@ -1720,7 +1919,7 @@ describe("v0.5 precision overlays and core languages", () => {
       "  if (message.method === 'textDocument/didOpen') { documents.set(message.params.textDocument.uri, message.params.textDocument.text); return; }",
       "  if (message.method === 'exit') process.exit(0);",
       "  if (message.id === undefined) return;",
-      "  if (message.method === 'initialize') { rootUri = message.params.rootUri; const c = message.params.capabilities; if (JSON.stringify(message.params.initializationOptions) !== JSON.stringify(safe) || message.params.initializationOptions['rust-analyzer'] !== undefined || JSON.stringify(c.general?.positionEncodings) !== JSON.stringify(['utf-8','utf-16']) || c.workspace?.configuration !== true || c.workspace?.workspaceFolders !== true || c.window?.workDoneProgress !== true || process.env.CARGO_NET_OFFLINE !== 'true' || process.env.RUSTC_WRAPPER !== undefined || process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER !== undefined || process.env.RUSTFLAGS !== undefined) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'initialize contract mismatch' } }); return send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { definitionProvider: true, positionEncoding: 'utf-8' } } }); }",
+      "  if (message.method === 'initialize') { rootUri = message.params.rootUri; const c = message.params.capabilities; if (JSON.stringify(message.params.initializationOptions) !== JSON.stringify(safe) || message.params.initializationOptions['rust-analyzer'] !== undefined || JSON.stringify(c.general?.positionEncodings) !== JSON.stringify(['utf-8','utf-16']) || c.workspace?.configuration !== true || c.workspace?.workspaceFolders !== true || c.window?.workDoneProgress !== true || process.env.CARGO_NET_OFFLINE !== 'true' || process.env.RUSTC_WRAPPER !== undefined || process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER !== undefined || process.env.CARGO_BUILD_TARGET !== undefined || process.env.CARGO_BUILD_JOBS !== undefined || process.env.RUSTFLAGS !== undefined) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'initialize contract mismatch' } }); return send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { definitionProvider: true, positionEncoding: 'utf-8' } } }); }",
       "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
       "  if (message.method === 'textDocument/definition') { const text = documents.get(message.params.textDocument.uri); const lines = text.split(/\\r?\\n/); const callLine = lines[message.params.position.line]; const expected = Buffer.byteLength(callLine.slice(0, callLine.indexOf('rust_target')), 'utf8'); if (message.params.position.character !== expected) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'utf-8 query position mismatch' } }); const line = lines.findIndex((item) => item.includes('pub fn rust_target')); const character = Buffer.byteLength(lines[line].slice(0, lines[line].indexOf('rust_target')), 'utf8'); return send({ jsonrpc: '2.0', id: message.id, result: { targetUri: message.params.textDocument.uri, targetSelectionRange: { start: { line, character }, end: { line, character: character + Buffer.byteLength('rust_target', 'utf8') } } } }); }",
       "  send({ jsonrpc: '2.0', id: message.id, result: null });",
@@ -1735,6 +1934,8 @@ describe("v0.5 precision overlays and core languages", () => {
       go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
       rustcWrapper: process.env.RUSTC_WRAPPER,
       targetRunner: process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER,
+      cargoBuildTarget: process.env.CARGO_BUILD_TARGET,
+      cargoBuildJobs: process.env.CARGO_BUILD_JOBS,
       rustflags: process.env.RUSTFLAGS,
     };
     delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
@@ -1744,6 +1945,8 @@ describe("v0.5 precision overlays and core languages", () => {
     process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
     process.env.RUSTC_WRAPPER = "malicious-wrapper";
     process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER = "malicious-runner";
+    process.env.CARGO_BUILD_TARGET = "malicious-target";
+    process.env.CARGO_BUILD_JOBS = "999";
     process.env.RUSTFLAGS = "-C linker=malicious-linker";
     const app = new ContextMeshApp(root);
     try {
@@ -1776,6 +1979,8 @@ describe("v0.5 precision overlays and core languages", () => {
         CONTEXTMESH_GO_TYPES_DISABLE: prior.go,
         RUSTC_WRAPPER: prior.rustcWrapper,
         CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: prior.targetRunner,
+        CARGO_BUILD_TARGET: prior.cargoBuildTarget,
+        CARGO_BUILD_JOBS: prior.cargoBuildJobs,
         RUSTFLAGS: prior.rustflags,
       })) {
         if (value === undefined) delete process.env[key];
@@ -1788,6 +1993,9 @@ describe("v0.5 precision overlays and core languages", () => {
   it("keeps build scripts disabled in safe mode and enables an explicit trusted analysis", async () => {
     const root = workspace();
     const marker = path.join(root, "trusted-build-script-marker.txt");
+    const procMarker = path.join(root, "trusted-proc-macro-marker.txt");
+    const generatedSource = path.join(root, "rust", "src", "generated_by_build.rs");
+    mkdirSync(path.join(root, "fixture-macros", "src"), { recursive: true });
     writeFileSync(path.join(root, "Cargo.toml"), [
       "[package]",
       "name='fixture'",
@@ -1796,20 +2004,41 @@ describe("v0.5 precision overlays and core languages", () => {
       "build='build.rs'",
       "[lib]",
       "path='rust/src/lib.rs'",
+      "[dependencies]",
+      "fixture_macros={path='fixture-macros'}",
       "",
     ].join("\n"));
     writeFileSync(path.join(root, "build.rs"), [
       "fn main() {",
       "    std::fs::write(\"trusted-build-script-marker.txt\", \"executed\").unwrap();",
+      "    std::fs::write(\"rust/src/generated_by_build.rs\", \"pub fn generated_by_build() -> i32 { 7 }\\n\").unwrap();",
       "    println!(\"cargo:rustc-cfg=contextmesh_build\");",
       "}",
       "",
     ].join("\n"));
     writeFileSync(path.join(root, "rust", "src", "lib.rs"), [
+      "#[fixture_macros::contextmesh_marker]",
       "#[cfg(contextmesh_build)]",
       "pub fn generated_target() -> i32 { 1 }",
       "pub fn generated_caller() -> i32 { generated_target() }",
       "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "fixture-macros", "Cargo.toml"), [
+      "[package]", "name='fixture_macros'", "version='0.1.0'", "edition='2021'",
+      "[lib]", "proc-macro=true", "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "fixture-macros", "src", "lib.rs"), [
+      "use proc_macro::TokenStream;",
+      "#[proc_macro_attribute]",
+      "pub fn contextmesh_marker(_attr: TokenStream, item: TokenStream) -> TokenStream {",
+      `    std::fs::write(r#"${procMarker.replaceAll("\\", "/")}"#, "executed").unwrap();`,
+      "    item",
+      "}",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "rust-analyzer.toml"), [
+      "checkOnSave=true", "[cargo]", "noDeps=false", "autoreload=true",
+      "[cargo.buildScripts]", "enable=true", "[procMacro]", "enable=true", "",
     ].join("\n"));
     const prior = {
       disable: process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE,
@@ -1827,6 +2056,8 @@ describe("v0.5 precision overlays and core languages", () => {
     try {
       await app.indexWorkspace({ mode: "full" });
       expect(existsSync(marker)).toBe(false);
+      expect(existsSync(procMarker)).toBe(false);
+      expect(existsSync(generatedSource)).toBe(false);
       const caller = await app.searchCode({ query: "generated_caller", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
       const target = await app.searchCode({ query: "generated_target", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
       let trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
@@ -1838,10 +2069,34 @@ describe("v0.5 precision overlays and core languages", () => {
       const trusted = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
       expect(trusted.data.noOp).toBe(true);
       expect(existsSync(marker)).toBe(true);
+      expect(existsSync(procMarker)).toBe(true);
+      expect(existsSync(generatedSource)).toBe(true);
       trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
         edges: Array<{ targetId: string; status: string }>;
       }>;
       expect(trace.data.edges).toContainEqual(expect.objectContaining({ targetId: target.data.results[0]!.id, status: "resolved" }));
+
+      await app.indexWorkspace({ mode: "full" });
+      const generated = await app.searchCode({ query: "generated_by_build", kinds: ["function"] }) as Envelope<{
+        results: Array<{ name: string; relativePath: string | null }>;
+      }>;
+      expect(generated.data.results).toContainEqual(expect.objectContaining({
+        name: "generated_by_build", relativePath: "rust/src/generated_by_build.rs",
+      }));
+
+      unlinkSync(marker);
+      unlinkSync(procMarker);
+      process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "safe";
+      const restrictedAgain = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
+      expect(restrictedAgain.data.noOp).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(procMarker)).toBe(false);
+      trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        targetId: target.data.results[0]!.id, status: "candidate",
+      }));
     } finally {
       for (const [key, value] of Object.entries({
         CONTEXTMESH_RUST_ANALYZER_DISABLE: prior.disable,
@@ -1856,6 +2111,66 @@ describe("v0.5 precision overlays and core languages", () => {
       await app.close();
     }
   }, 90_000);
+
+  it("keeps Cargo dependency resolution offline in safe mode while serving the base graph", async () => {
+    let connections = 0;
+    const trap = createServer((socket) => {
+      connections += 1;
+      socket.end("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+    });
+    await new Promise<void>((resolve, reject) => {
+      trap.once("error", reject);
+      trap.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = trap.address();
+    if (!address || typeof address === "string") throw new Error("network trap did not bind a TCP port");
+    const root = workspace();
+    mkdirSync(path.join(root, ".cargo"), { recursive: true });
+    writeFileSync(path.join(root, "Cargo.toml"), [
+      "[package]", "name='offline_fixture'", "version='0.1.0'", "edition='2021'",
+      "[lib]", "path='rust/src/lib.rs'", "[dependencies]", "network_probe='999.0.0'", "",
+    ].join("\n"));
+    writeFileSync(path.join(root, ".cargo", "config.toml"), [
+      "[source.crates-io]", "replace-with='contextmesh-trap'", "[source.contextmesh-trap]",
+      `registry='sparse+http://127.0.0.1:${address.port}/'`, "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "rust", "src", "lib.rs"), "pub fn offline_base() -> i32 { 1 }\n");
+    const prior = {
+      disable: process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE,
+      policy: process.env.CONTEXTMESH_RUST_ANALYZER_POLICY,
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+      go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+    };
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "safe";
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      expect(connections).toBe(0);
+      const base = await app.searchCode({ query: "offline_base", kinds: ["function"] }) as Envelope<{
+        results: Array<{ name: string; analysisLevel: string }>;
+      }>;
+      expect(base.data.results).toContainEqual(expect.objectContaining({ name: "offline_base" }));
+    } finally {
+      for (const [key, value] of Object.entries({
+        CONTEXTMESH_RUST_ANALYZER_DISABLE: prior.disable,
+        CONTEXTMESH_RUST_ANALYZER_POLICY: prior.policy,
+        CONTEXTMESH_RUST_ANALYZER_COMMAND: prior.command,
+        CONTEXTMESH_RUST_ANALYZER_ARGS_JSON: prior.args,
+        CONTEXTMESH_GO_TYPES_DISABLE: prior.go,
+      })) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await app.close();
+      await new Promise<void>((resolve) => trap.close(() => resolve()));
+    }
+  }, 60_000);
 
   it("waits for a quiescent Rust workspace before committing a resolved LSP call", async () => {
     const root = workspace();

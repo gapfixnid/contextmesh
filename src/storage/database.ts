@@ -562,6 +562,7 @@ export interface ContextMeshStorage {
   getIndexConfigHash(): string | null;
   getAdapterState(): AdapterStateMap;
   setAdapterState(state: AdapterStateMap): void;
+  updateIndexRunAdapterStats(runId: string, adapterStats: AdapterStats[]): void;
   getPrecisionRevision(): number;
   getPrecisionProviderStates(): PrecisionProviderState[];
   registerPrecisionProvider(input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null }): void;
@@ -1227,6 +1228,13 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       .run(JSON.stringify(state), this.nowIso(), this.workspace.id);
   }
 
+  updateIndexRunAdapterStats(runId: string, adapterStats: AdapterStats[]): void {
+    this.db.prepare(
+      `UPDATE index_runs SET adapter_stats_json=?
+       WHERE id=? AND workspace_id=? AND status IN ('succeeded','partial')`,
+    ).run(JSON.stringify(adapterStats), runId, this.workspace.id);
+  }
+
   private precisionNodeIds(provider: string): string[] {
     return this.db.prepare(
       "SELECT node_id FROM precision_nodes WHERE workspace_id=? AND provider=? ORDER BY node_id",
@@ -1443,6 +1451,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const leaseExpiry = now + (input.leaseMs ?? 30_000);
     const token = `precision_${randomUUID()}`;
     let acquired = false;
+    let transitionEpoch = 0;
     this.transaction(() => {
       const affectedNodes = this.precisionNodeIds(input.provider);
       const existing = this.db.prepare(
@@ -1462,12 +1471,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            transition_epoch=precision_provider_state.transition_epoch+1,updated_at=excluded.updated_at`,
       ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability,
         workspace.currentGeneration, input.owner, token, leaseExpiry, this.nowIso());
+      transitionEpoch = numberValue(this.db.prepare(
+        "SELECT transition_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+      ).get(this.workspace.id, input.provider)?.transition_epoch);
       this.refreshEffectiveNodeMaterializations(affectedNodes);
       acquired = true;
     });
-    const transitionEpoch = acquired ? numberValue(this.db.prepare(
-      "SELECT transition_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
-    ).get(this.workspace.id, input.provider)?.transition_epoch) : 0;
     return acquired ? { claim: { provider: input.provider, providerVersion: input.providerVersion, language: input.language,
       capability: input.capability, baseGeneration: workspace.currentGeneration, transitionEpoch, token, owner: input.owner }, reason: "acquired" }
       : { claim: null, reason: "leased" };
