@@ -1,9 +1,9 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import { probeRustAnalyzerRuntime } from "../src/code/languages/rust-precision.js";
@@ -62,7 +62,7 @@ describe("v0.5 precision overlays and core languages", () => {
       }>;
       expect(indexed.data.adapterStats).toContainEqual(expect.objectContaining({
         language: "python",
-        precisionProvider: null,
+        precisionProvider: "contextmesh_python_resolver",
         analysisLevel: "syntax",
         precisionInvocations: 0,
         status: "not_configured",
@@ -72,6 +72,7 @@ describe("v0.5 precision overlays and core languages", () => {
         language: "python",
         provider: "contextmesh_python_resolver",
         status: "not_configured",
+        coverage: 0,
         lastError: expect.stringMatching(/disabled/i),
       }));
     } finally {
@@ -99,16 +100,23 @@ describe("v0.5 precision overlays and core languages", () => {
         probes += 1;
         return available ? { available: true } : { available: false, diagnostic: "temporarily unavailable" };
       },
-      analyze: async (_batch, baseGeneration) => ({
-        language: "go",
-        provider: "recovery_fixture",
-        providerVersion: "1",
-        capability: "resolved",
-        baseGeneration,
-        edges: [],
-        eligibleEdges: 0,
-        diagnostics: [],
-      }),
+      analyze: async (batch, baseGeneration) => {
+        const candidate = batch.edges.find((edge) => edge.kind === "CALLS" && edge.status === "candidate")!;
+        return {
+          language: "go",
+          provider: "recovery_fixture",
+          providerVersion: "1",
+          capability: "resolved",
+          baseGeneration,
+          edges: [{
+            sourceId: candidate.sourceId, targetId: candidate.targetId, kind: candidate.kind,
+            status: "resolved" as const, confidence: 1, resolutionKind: candidate.resolutionKind,
+            evidence: [{ provider: "recovery_fixture", providerVersion: "1", source: "type_checker" as const, confidence: 1 }],
+          }],
+          eligibleEdges: 1,
+          diagnostics: [],
+        };
+      },
     });
     try {
       const first = await app.indexWorkspace({ mode: "full" });
@@ -126,6 +134,27 @@ describe("v0.5 precision overlays and core languages", () => {
         status: "ready",
         baseGeneration: first.generation,
       }));
+      const candidate = app.database.getStoredGraphPartition("non-python", false).edges.find((edge) =>
+        edge.kind === "CALLS" && app.database.getCodeNode(edge.sourceId)?.language === "go")!;
+      let trace = await app.traceCode({ symbolId: candidate.sourceId, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ targetId: candidate.targetId, status: "resolved" }));
+      const readyRevision = app.database.getPrecisionRevision();
+
+      available = false;
+      const disabled = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{
+        adapterStats: Array<{ language: string; analysisLevel: string; coverage: number; status: string }>;
+      }>;
+      expect(probes).toBe(3);
+      expect(app.database.getPrecisionRevision()).toBe(readyRevision + 1);
+      expect(disabled.data.adapterStats).toContainEqual(expect.objectContaining({
+        language: "go", analysisLevel: "syntax", coverage: 0, status: "not_configured",
+      }));
+      trace = await app.traceCode({ symbolId: candidate.sourceId, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ targetId: candidate.targetId, status: "candidate" }));
     } finally {
       mutableAdapter.createOverlayPrecisionProvider = originalProvider;
       await app.close();
@@ -166,6 +195,104 @@ describe("v0.5 precision overlays and core languages", () => {
       else process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE = priorRustDisable;
       await app.close();
     }
+  });
+
+  it("assigns calls to the nearest callable while Java initializers remain module-owned", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "java", "src", "Worker.java"), [
+      "package fixture;",
+      "public class Worker {",
+      "  static int staticValue = javaTargetA();",
+      "  int fieldValue = javaTargetB();",
+      "  { javaTargetC(); }",
+      "  public int javaTargetA() { return 1; }",
+      "  public int javaTargetB() { return 1; }",
+      "  public int javaTargetC() { return 1; }",
+      "  public int javaTarget() { return 1; }",
+      "  public int javaCaller() { return javaTarget(); }",
+      "}",
+    ].join("\n"));
+    writeFileSync(path.join(root, "rust", "src", "lib.rs"), [
+      "pub fn rust_target() -> i32 { 1 }",
+      "pub fn rust_outer() -> i32 {",
+      "    fn rust_inner() -> i32 { rust_target() }",
+      "    rust_target() + rust_inner()",
+      "}",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "dotnet", "Worker.cs"), [
+      "namespace Fixture;",
+      "public class CsWorker {",
+      "  public int CsTarget() { return 1; }",
+      "  public int CsOuter() {",
+      "    int CsLocal() { return CsTarget(); }",
+      "    return CsTarget() + CsLocal();",
+      "  }",
+      "}",
+      "",
+    ].join("\n"));
+    const priorGoDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("non-python", false);
+      const goCaller = graph.nodes.find((node) => node.language === "go" && node.name === "Caller")!;
+      expect(graph.edges.some((edge) => edge.kind === "CALLS" && edge.sourceId === goCaller.id)).toBe(true);
+      const rustTarget = graph.nodes.find((node) => node.language === "rust" && node.name === "rust_target")!;
+      for (const ownerName of ["rust_outer", "rust_inner"]) {
+        const owner = graph.nodes.find((node) => node.language === "rust" && node.name === ownerName)!;
+        expect(graph.edges).toContainEqual(expect.objectContaining({
+          sourceId: owner.id, targetId: rustTarget.id, kind: "CALLS",
+        }));
+      }
+      const csTarget = graph.nodes.find((node) => node.language === "csharp" && node.name === "CsTarget")!;
+      for (const ownerName of ["CsOuter", "CsLocal"]) {
+        const owner = graph.nodes.find((node) => node.language === "csharp" && node.name === ownerName)!;
+        expect(graph.edges).toContainEqual(expect.objectContaining({
+          sourceId: owner.id, targetId: csTarget.id, kind: "CALLS",
+        }));
+      }
+      const javaModule = graph.nodes.find((node) => node.language === "java" && node.kind === "module")!;
+      const javaCaller = graph.nodes.find((node) => node.language === "java" && node.name === "javaCaller")!;
+      expect(graph.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === javaModule.id)).toHaveLength(3);
+      expect(graph.edges.filter((edge) => edge.kind === "CALLS" && edge.sourceId === javaCaller.id)).toHaveLength(1);
+    } finally {
+      if (priorGoDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorGoDisable;
+      await app.close();
+    }
+  });
+
+  it("maps inheritance for duplicate Python class names by source span", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "python", "pkg", "target.py"), "class BaseA:\n    pass\n\nclass BaseB:\n    pass\n");
+    writeFileSync(path.join(root, "python", "pkg", "caller.py"), [
+      "from pkg.target import BaseA, BaseB",
+      "class First:",
+      "    class Duplicate(BaseA):",
+      "        pass",
+      "class Second:",
+      "    class Duplicate(BaseB):",
+      "        pass",
+      "",
+    ].join("\n"));
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const graph = app.database.getStoredGraphPartition("python");
+      const duplicates = graph.nodes.filter((node) => node.language === "python" && node.name === "Duplicate")
+        .sort((left, right) => left.startLine - right.startLine);
+      const baseA = graph.nodes.find((node) => node.language === "python" && node.name === "BaseA")!;
+      const baseB = graph.nodes.find((node) => node.language === "python" && node.name === "BaseB")!;
+      expect(duplicates).toHaveLength(2);
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: duplicates[0]!.id, targetId: baseA.id, kind: "EXTENDS", status: "resolved",
+      }));
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceId: duplicates[1]!.id, targetId: baseB.id, kind: "EXTENDS", status: "resolved",
+      }));
+    } finally { await app.close(); }
   });
 
   it("resolves Python aliases in an independent revision and leaves base generation unchanged on no-op", async () => {
@@ -334,6 +461,68 @@ describe("v0.5 precision overlays and core languages", () => {
         }],
       }], eligibleEdges: 1, diagnostics: [] })).toBe(false);
       expect(app.database.failPrecisionProvider(acquired.claim!, "late failure")).toBe(false);
+      const takeover = app.database.claimPrecisionProvider({
+        provider: "expired_fixture_provider", providerVersion: "1", language: "go",
+        capability: "resolved", owner: "takeover-owner", leaseMs: 60_000,
+      });
+      expect(takeover.reason).toBe("acquired");
+      expect(takeover.claim!.transitionEpoch).toBeGreaterThan(acquired.claim!.transitionEpoch);
+      expect(app.database.abandonPrecisionProvider(takeover.claim!, "fixture complete")).toBe(true);
+    } finally {
+      if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
+      await app.close();
+    }
+  });
+
+  it("atomically fences a late worker when provider policy changes without advancing graph revision", async () => {
+    const root = workspace();
+    const priorDisable = process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const candidate = app.database.getStoredGraphPartition("non-python").edges.find((edge) =>
+        edge.kind === "CALLS" && edge.status === "candidate" &&
+        app.database.getCodeNode(edge.sourceId)?.language === "go");
+      expect(candidate).toBeDefined();
+      const beforeRevision = app.database.getPrecisionRevision();
+      const trusted = app.database.claimPrecisionProvider({
+        provider: "policy_transition_fixture", providerVersion: "trusted", language: "go",
+        capability: "resolved", owner: "trusted-worker", leaseMs: 60_000,
+      });
+      expect(trusted.reason).toBe("acquired");
+      expect(app.database.getPrecisionRevision()).toBe(beforeRevision);
+
+      app.database.transitionPrecisionProvider({
+        language: "go", provider: "policy_transition_fixture", providerVersion: "safe",
+        capability: "resolved", status: "stale", lastError: "policy changed",
+      });
+      expect(app.database.getPrecisionRevision()).toBe(beforeRevision);
+      expect(app.database.heartbeatPrecisionProvider(trusted.claim!, 60_000)).toBe(false);
+      expect(app.database.commitPrecisionOverlay(trusted.claim!, { edges: [{
+        sourceId: candidate!.sourceId, targetId: candidate!.targetId, kind: candidate!.kind,
+        status: "resolved", confidence: 1, resolutionKind: candidate!.resolutionKind,
+        evidence: [{ provider: "policy_transition_fixture", providerVersion: "trusted", source: "type_checker", confidence: 1 }],
+      }], eligibleEdges: 1, diagnostics: [] })).toBe(false);
+      expect(app.database.failPrecisionProvider(trusted.claim!, "late failure")).toBe(false);
+
+      const safe = app.database.claimPrecisionProvider({
+        provider: "policy_transition_fixture", providerVersion: "safe", language: "go",
+        capability: "resolved", owner: "safe-worker", leaseMs: 60_000,
+      });
+      expect(safe.reason).toBe("acquired");
+      expect(safe.claim!.transitionEpoch).toBeGreaterThan(trusted.claim!.transitionEpoch);
+      expect(app.database.getPrecisionRevision()).toBe(beforeRevision);
+      expect(app.database.abandonPrecisionProvider(safe.claim!, "fixture complete")).toBe(true);
+      expect(app.database.getPrecisionRevision()).toBe(beforeRevision);
+
+      const trace = await app.traceCode({
+        symbolId: candidate!.sourceId, direction: "out", edgeKinds: ["CALLS"], depth: 1,
+      }) as Envelope<{ edges: Array<{ targetId: string; status: string }> }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({
+        targetId: candidate!.targetId, status: "candidate",
+      }));
     } finally {
       if (priorDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
       else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorDisable;
@@ -385,6 +574,29 @@ describe("v0.5 precision overlays and core languages", () => {
       expect(app.database.getStoredGraphPartition("non-python", false).nodes.find((node) => node.id === base!.id))
         .toMatchObject({ analysisLevel: "syntax", doc: "" });
       const committedRevision = app.database.getPrecisionRevision();
+
+      const identical = app.database.claimPrecisionProvider({
+        provider: "typed_node_fixture",
+        providerVersion: "1",
+        language: "go",
+        capability: "typed",
+        owner: "typed-node-identical",
+      });
+      expect(identical.reason).toBe("acquired");
+      expect(app.database.commitPrecisionOverlay(identical.claim!, {
+        nodes: [{
+          nodeId: base!.id,
+          analysisLevel: "typed",
+          signature: "func Target() string",
+          doc: "precisionOnlyDocumentation",
+          contentHash: base!.contentHash,
+          metadata: { ...base!.metadata, precisionFixture: true },
+        }],
+        edges: [],
+        eligibleEdges: 0,
+        diagnostics: [],
+      })).toBe(true);
+      expect(app.database.getPrecisionRevision()).toBe(committedRevision);
 
       const replacement = app.database.claimPrecisionProvider({
         provider: "typed_node_fixture",
@@ -451,6 +663,74 @@ describe("v0.5 precision overlays and core languages", () => {
         lastError: expect.stringMatching(/lease lost/i),
         leaseExpiresAt: null,
       }));
+    } finally {
+      mutableAdapter.createOverlayPrecisionProvider = originalProvider;
+      await app.close();
+    }
+  });
+
+  it("reports a precision claim exception instead of treating it as ordinary contention", async () => {
+    const root = workspace();
+    const app = new ContextMeshApp(root);
+    const adapter = app.code.indexer.coordinator.adapter("go")!;
+    const mutableAdapter = adapter as {
+      createOverlayPrecisionProvider: NonNullable<typeof adapter.createOverlayPrecisionProvider>;
+    };
+    const originalProvider = mutableAdapter.createOverlayPrecisionProvider;
+    mutableAdapter.createOverlayPrecisionProvider = () => ({
+      id: "claim_exception_fixture", version: "1", capability: "resolved",
+      available: async () => ({ available: true }),
+      analyze: async (_batch, baseGeneration) => ({
+        language: "go", provider: "claim_exception_fixture", providerVersion: "1",
+        capability: "resolved", baseGeneration, edges: [], eligibleEdges: 0, diagnostics: [],
+      }),
+    });
+    const originalClaim = app.database.claimPrecisionProvider.bind(app.database);
+    const claimSpy = vi.spyOn(app.database, "claimPrecisionProvider").mockImplementation((input) => {
+      if (input.provider === "claim_exception_fixture") throw new Error("injected claim failure");
+      return originalClaim(input);
+    });
+    try {
+      const indexed = await app.indexWorkspace({ mode: "full" });
+      expect(indexed.warnings).toContainEqual(expect.stringMatching(/PRECISION_PROVIDER_CLAIM_FAILED.*injected claim failure/));
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "claim_exception_fixture", status: "failed",
+        lastError: expect.stringMatching(/PRECISION_PROVIDER_CLAIM_FAILED/),
+      }));
+    } finally {
+      claimSpy.mockRestore();
+      mutableAdapter.createOverlayPrecisionProvider = originalProvider;
+      await app.close();
+    }
+  });
+
+  it("leaves a live matching provider claim intact as ordinary contention", async () => {
+    const root = workspace();
+    const app = new ContextMeshApp(root);
+    const adapter = app.code.indexer.coordinator.adapter("go")!;
+    const mutableAdapter = adapter as {
+      createOverlayPrecisionProvider: NonNullable<typeof adapter.createOverlayPrecisionProvider>;
+    };
+    const originalProvider = mutableAdapter.createOverlayPrecisionProvider;
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      mutableAdapter.createOverlayPrecisionProvider = () => ({
+        id: "contention_fixture", version: "1", capability: "resolved",
+        available: async () => ({ available: true }),
+        analyze: async () => { throw new Error("contended provider must not run"); },
+      });
+      const active = app.database.claimPrecisionProvider({
+        provider: "contention_fixture", providerVersion: "1", language: "go",
+        capability: "resolved", owner: "foreign-worker", leaseMs: 60_000,
+      });
+      expect(active.reason).toBe("acquired");
+      const indexed = await app.indexWorkspace({ mode: "incremental" });
+      expect(indexed.warnings).not.toContainEqual(expect.stringMatching(/PRECISION_PROVIDER_CLAIM_FAILED/));
+      expect(app.database.heartbeatPrecisionProvider(active.claim!, 60_000)).toBe(true);
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "contention_fixture", status: "running",
+      }));
+      expect(app.database.abandonPrecisionProvider(active.claim!, "fixture complete")).toBe(true);
     } finally {
       mutableAdapter.createOverlayPrecisionProvider = originalProvider;
       await app.close();
@@ -1308,9 +1588,13 @@ describe("v0.5 precision overlays and core languages", () => {
 
   it("probes a configured rust-analyzer instead of reporting it permanently unavailable", async () => {
     const root = workspace();
+    const server = path.join(root, "rust-analyzer-probe.mjs");
+    writeFileSync(server, "console.log('rust-analyzer 1.85.0 (4d91de4 2025-02-17)');\n");
     const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
     delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
     process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
     const app = new ContextMeshApp(root);
     try {
       const adapter = app.code.indexer.coordinator.adapter("rust")!;
@@ -1321,6 +1605,8 @@ describe("v0.5 precision overlays and core languages", () => {
     } finally {
       if (priorCommand === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
       else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = priorCommand;
+      if (priorArgs === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorArgs;
       await app.close();
     }
   });
@@ -1328,6 +1614,7 @@ describe("v0.5 precision overlays and core languages", () => {
   it("rejects an invalid configured rust-analyzer for release provenance", async () => {
     const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
     const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
     process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = path.join(os.tmpdir(), "definitely-missing-rust-analyzer");
     delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
     try {
@@ -1346,6 +1633,7 @@ describe("v0.5 precision overlays and core languages", () => {
     writeFileSync(server, "console.log('rust-analyzer 1.85.0 (4d91de4 2025-02-17)');\n");
     const priorCommand = process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
     const priorArgs = process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
     process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
     process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
     try {
@@ -1360,11 +1648,225 @@ describe("v0.5 precision overlays and core languages", () => {
     }
   });
 
+  it("does not spawn rust-analyzer for disabled or invalid policies", async () => {
+    const root = workspace();
+    const marker = path.join(root, "probe-marker.txt");
+    const server = path.join(root, "rust-analyzer-no-probe.mjs");
+    writeFileSync(server, [
+      "import { appendFileSync } from 'node:fs';",
+      `appendFileSync(${JSON.stringify(marker)}, 'spawned\\n');`,
+      "console.log('rust-analyzer 1.85.0 (4d91de4 2025-02-17)');",
+    ].join("\n"));
+    const prior = {
+      disable: process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE,
+      policy: process.env.CONTEXTMESH_RUST_ANALYZER_POLICY,
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+    };
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
+    try {
+      process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE = "1";
+      await expect(probeRustAnalyzerRuntime()).rejects.toThrow(/RUST_ANALYZER_DISABLED/);
+      expect(existsSync(marker)).toBe(false);
+
+      delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+      process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "unexpected";
+      await expect(probeRustAnalyzerRuntime()).rejects.toThrow(/RUST_ANALYZER_POLICY_INVALID/);
+      expect(existsSync(marker)).toBe(false);
+
+      process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "safe";
+      process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = "not-json";
+      await expect(probeRustAnalyzerRuntime()).rejects.toThrow(/RUST_ANALYZER_POLICY_INVALID.*CONFIGURATION_INVALID/);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      for (const [key, value] of Object.entries({
+        CONTEXTMESH_RUST_ANALYZER_DISABLE: prior.disable,
+        CONTEXTMESH_RUST_ANALYZER_POLICY: prior.policy,
+        CONTEXTMESH_RUST_ANALYZER_COMMAND: prior.command,
+        CONTEXTMESH_RUST_ANALYZER_ARGS_JSON: prior.args,
+      })) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("uses the safe configuration snapshot for server requests and reanalyzes when binary identity changes", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "rust", "src", "lib.rs"), [
+      "/* 정의😀 */ pub fn rust_target() -> i32 { 1 }",
+      "pub fn rust_caller() -> i32 { /* 호출한글😀 */ rust_target() }",
+      "",
+    ].join("\n"));
+    const server = path.join(root, "rust-analyzer-policy.mjs");
+    const identity = path.join(root, "identity.txt");
+    const sessions = path.join(root, "sessions.txt");
+    writeFileSync(identity, "rust-analyzer 1.85.0 (4d91de4 2025-02-17)\n");
+    writeFileSync(server, [
+      "import { appendFileSync, readFileSync } from 'node:fs';",
+      "const [identity, sessions] = process.argv.slice(2).filter((item) => item !== '--version');",
+      "if (process.argv.includes('--version')) { process.stdout.write(readFileSync(identity, 'utf8')); process.exit(0); }",
+      "appendFileSync(sessions, 'session\\n');",
+      "let buffer = Buffer.alloc(0); let rootUri = ''; const documents = new Map();",
+      "const safe = { cargo: { noDeps: true, autoreload: false, buildScripts: { enable: false } }, procMacro: { enable: false }, checkOnSave: false };",
+      "function send(value) { const body = Buffer.from(JSON.stringify(value)); process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\\r\\n\\r\\n`), body])); }",
+      "function fail(message) { send({ jsonrpc: '2.0', method: 'experimental/serverStatus', params: { health: 'error', quiescent: false, message } }); }",
+      "function handle(message) {",
+      "  if (message.id === 900 && message.method === undefined) { const r = message.result; if (!Array.isArray(r) || r.length !== 4 || JSON.stringify(r[0]) !== JSON.stringify(safe) || r[1] !== false || r[2] !== null || r[3] !== null) return fail('configuration response mismatch'); send({ jsonrpc: '2.0', id: 901, method: 'window/workDoneProgress/create', params: { token: 'fixture' } }); return; }",
+      "  if (message.id === 901 && message.method === undefined) { if (message.result !== null) return fail('progress response mismatch'); send({ jsonrpc: '2.0', id: 902, method: 'fixture/unsupported', params: {} }); return; }",
+      "  if (message.id === 902 && message.method === undefined) { if (message.error?.code !== -32601) return fail('MethodNotFound response missing'); send({ jsonrpc: '2.0', method: 'experimental/serverStatus', params: { health: 'ok', quiescent: true } }); return; }",
+      "  if (message.method === 'initialized') { send({ jsonrpc: '2.0', id: 900, method: 'workspace/configuration', params: { items: [{ section: 'rust-analyzer', scopeUri: rootUri }, { section: 'rust-analyzer.cargo.buildScripts.enable', scopeUri: rootUri }, { section: 'rust-analyzer.unknown', scopeUri: rootUri }, { section: 'rust-analyzer', scopeUri: 'file:///definitely-outside' }] } }); return; }",
+      "  if (message.method === 'textDocument/didOpen') { documents.set(message.params.textDocument.uri, message.params.textDocument.text); return; }",
+      "  if (message.method === 'exit') process.exit(0);",
+      "  if (message.id === undefined) return;",
+      "  if (message.method === 'initialize') { rootUri = message.params.rootUri; const c = message.params.capabilities; if (JSON.stringify(message.params.initializationOptions) !== JSON.stringify(safe) || message.params.initializationOptions['rust-analyzer'] !== undefined || JSON.stringify(c.general?.positionEncodings) !== JSON.stringify(['utf-8','utf-16']) || c.workspace?.configuration !== true || c.workspace?.workspaceFolders !== true || c.window?.workDoneProgress !== true || process.env.CARGO_NET_OFFLINE !== 'true' || process.env.RUSTC_WRAPPER !== undefined || process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER !== undefined || process.env.RUSTFLAGS !== undefined) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'initialize contract mismatch' } }); return send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { definitionProvider: true, positionEncoding: 'utf-8' } } }); }",
+      "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
+      "  if (message.method === 'textDocument/definition') { const text = documents.get(message.params.textDocument.uri); const lines = text.split(/\\r?\\n/); const callLine = lines[message.params.position.line]; const expected = Buffer.byteLength(callLine.slice(0, callLine.indexOf('rust_target')), 'utf8'); if (message.params.position.character !== expected) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'utf-8 query position mismatch' } }); const line = lines.findIndex((item) => item.includes('pub fn rust_target')); const character = Buffer.byteLength(lines[line].slice(0, lines[line].indexOf('rust_target')), 'utf8'); return send({ jsonrpc: '2.0', id: message.id, result: { targetUri: message.params.textDocument.uri, targetSelectionRange: { start: { line, character }, end: { line, character: character + Buffer.byteLength('rust_target', 'utf8') } } } }); }",
+      "  send({ jsonrpc: '2.0', id: message.id, result: null });",
+      "}",
+      "process.stdin.on('data', (chunk) => { buffer = Buffer.concat([buffer, chunk]); while (true) { const end = buffer.indexOf('\\r\\n\\r\\n'); if (end < 0) break; const length = Number(buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)?.[1]); if (buffer.length < end + 4 + length) break; const body = buffer.subarray(end + 4, end + 4 + length).toString(); buffer = buffer.subarray(end + 4 + length); handle(JSON.parse(body)); } });",
+    ].join("\n"));
+    const prior = {
+      disable: process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE,
+      policy: process.env.CONTEXTMESH_RUST_ANALYZER_POLICY,
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+      go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+      rustcWrapper: process.env.RUSTC_WRAPPER,
+      targetRunner: process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER,
+      rustflags: process.env.RUSTFLAGS,
+    };
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "safe";
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server, identity, sessions]);
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    process.env.RUSTC_WRAPPER = "malicious-wrapper";
+    process.env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER = "malicious-runner";
+    process.env.RUSTFLAGS = "-C linker=malicious-linker";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const firstState = app.database.getPrecisionProviderStates().find((item) => item.provider === "rust_analyzer")!;
+      expect(firstState).toMatchObject({ status: "ready", lastError: null });
+      const caller = await app.searchCode({ query: "rust_caller", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const target = await app.searchCode({ query: "rust_target", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ targetId: target.data.results[0]!.id, status: "resolved" }));
+      expect(readFileSync(sessions, "utf8").trim().split(/\r?\n/)).toHaveLength(1);
+
+      await app.indexWorkspace({ mode: "incremental" });
+      expect(readFileSync(sessions, "utf8").trim().split(/\r?\n/)).toHaveLength(1);
+
+      writeFileSync(identity, "rust-analyzer 1.86.0 (5e02ef5 2025-03-18)\n");
+      await app.indexWorkspace({ mode: "incremental" });
+      const secondState = app.database.getPrecisionProviderStates().find((item) => item.provider === "rust_analyzer")!;
+      expect(secondState.providerVersion).not.toBe(firstState.providerVersion);
+      expect(secondState.status).toBe("ready");
+      expect(readFileSync(sessions, "utf8").trim().split(/\r?\n/)).toHaveLength(2);
+    } finally {
+      for (const [key, value] of Object.entries({
+        CONTEXTMESH_RUST_ANALYZER_DISABLE: prior.disable,
+        CONTEXTMESH_RUST_ANALYZER_POLICY: prior.policy,
+        CONTEXTMESH_RUST_ANALYZER_COMMAND: prior.command,
+        CONTEXTMESH_RUST_ANALYZER_ARGS_JSON: prior.args,
+        CONTEXTMESH_GO_TYPES_DISABLE: prior.go,
+        RUSTC_WRAPPER: prior.rustcWrapper,
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: prior.targetRunner,
+        RUSTFLAGS: prior.rustflags,
+      })) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await app.close();
+    }
+  });
+
+  it("keeps build scripts disabled in safe mode and enables an explicit trusted analysis", async () => {
+    const root = workspace();
+    const marker = path.join(root, "trusted-build-script-marker.txt");
+    writeFileSync(path.join(root, "Cargo.toml"), [
+      "[package]",
+      "name='fixture'",
+      "version='0.1.0'",
+      "edition='2021'",
+      "build='build.rs'",
+      "[lib]",
+      "path='rust/src/lib.rs'",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "build.rs"), [
+      "fn main() {",
+      "    std::fs::write(\"trusted-build-script-marker.txt\", \"executed\").unwrap();",
+      "    println!(\"cargo:rustc-cfg=contextmesh_build\");",
+      "}",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "rust", "src", "lib.rs"), [
+      "#[cfg(contextmesh_build)]",
+      "pub fn generated_target() -> i32 { 1 }",
+      "pub fn generated_caller() -> i32 { generated_target() }",
+      "",
+    ].join("\n"));
+    const prior = {
+      disable: process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE,
+      policy: process.env.CONTEXTMESH_RUST_ANALYZER_POLICY,
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+      go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+    };
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "safe";
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(existsSync(marker)).toBe(false);
+      const caller = await app.searchCode({ query: "generated_caller", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      const target = await app.searchCode({ query: "generated_target", kinds: ["function"] }) as Envelope<{ results: Array<{ id: string }> }>;
+      let trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ targetId: target.data.results[0]!.id, status: "candidate" }));
+
+      process.env.CONTEXTMESH_RUST_ANALYZER_POLICY = "trusted";
+      const trusted = await app.indexWorkspace({ mode: "incremental" }) as Envelope<{ noOp: boolean }>;
+      expect(trusted.data.noOp).toBe(true);
+      expect(existsSync(marker)).toBe(true);
+      trace = await app.traceCode({ symbolId: caller.data.results[0]!.id, direction: "out", edgeKinds: ["CALLS"], depth: 1 }) as Envelope<{
+        edges: Array<{ targetId: string; status: string }>;
+      }>;
+      expect(trace.data.edges).toContainEqual(expect.objectContaining({ targetId: target.data.results[0]!.id, status: "resolved" }));
+    } finally {
+      for (const [key, value] of Object.entries({
+        CONTEXTMESH_RUST_ANALYZER_DISABLE: prior.disable,
+        CONTEXTMESH_RUST_ANALYZER_POLICY: prior.policy,
+        CONTEXTMESH_RUST_ANALYZER_COMMAND: prior.command,
+        CONTEXTMESH_RUST_ANALYZER_ARGS_JSON: prior.args,
+        CONTEXTMESH_GO_TYPES_DISABLE: prior.go,
+      })) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await app.close();
+    }
+  }, 90_000);
+
   it("waits for a quiescent Rust workspace before committing a resolved LSP call", async () => {
     const root = workspace();
+    writeFileSync(path.join(root, "rust", "src", "lib.rs"), [
+      "/* 정의😀 */ pub fn rust_target() -> i32 { 1 }",
+      "pub fn rust_caller() -> i32 { /* 호출한글😀 */ rust_target() }",
+      "",
+    ].join("\n"));
     const server = path.join(root, "fake-rust-analyzer.mjs");
     writeFileSync(server, [
-      "if (process.argv.includes('--version')) { console.log('rust-analyzer fixture'); process.exit(0); }",
+      "if (process.argv.includes('--version')) { console.log('rust-analyzer 1.85.0 (4d91de4 2025-02-17)'); process.exit(0); }",
       "let buffer = Buffer.alloc(0); const documents = new Map(); let workspaceReady = false;",
       "function send(value) { const body = Buffer.from(JSON.stringify(value)); process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\\r\\n\\r\\n`), body])); }",
       "function handle(message) {",
@@ -1376,9 +1878,10 @@ describe("v0.5 precision overlays and core languages", () => {
       "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
       "  if (message.method === 'textDocument/definition') {",
       "    if (!workspaceReady) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'workspace not quiescent' } });",
-      "    const entry = [...documents.entries()].find(([, text]) => text.includes('pub fn rust_target'));",
-      "    const lines = entry[1].split(/\\r?\\n/); const line = lines.findIndex((item) => item.includes('pub fn rust_target'));",
-      "    return send({ jsonrpc: '2.0', id: message.id, result: { uri: entry[0], range: { start: { line, character: 7 }, end: { line, character: 18 } } } });",
+      "    const source = documents.get(message.params.textDocument.uri); const sourceLines = source.split(/\\r?\\n/); const expected = sourceLines[message.params.position.line].indexOf('rust_target');",
+      "    if (message.params.position.character !== expected) return send({ jsonrpc: '2.0', id: message.id, error: { message: 'utf-16 query position mismatch' } });",
+      "    const entry = [...documents.entries()].find(([, text]) => text.includes('pub fn rust_target')); const lines = entry[1].split(/\\r?\\n/); const line = lines.findIndex((item) => item.includes('pub fn rust_target')); const character = lines[line].indexOf('rust_target');",
+      "    return send({ jsonrpc: '2.0', id: message.id, result: [{ uri: 'file:///external/dependency.rs', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } }, { targetUri: entry[0], range: { start: { line: 999, character: 999 }, end: { line: 999, character: 999 } }, targetSelectionRange: { start: { line, character }, end: { line, character: character + 'rust_target'.length } } }] });",
       "  }",
       "  send({ jsonrpc: '2.0', id: message.id, result: null });",
       "}",
@@ -1415,6 +1918,49 @@ describe("v0.5 precision overlays and core languages", () => {
       else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = priorArgs;
       if (priorGoDisable === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
       else process.env.CONTEXTMESH_GO_TYPES_DISABLE = priorGoDisable;
+      await app.close();
+    }
+  });
+
+  it("rejects a server-selected position encoding the client did not offer", async () => {
+    const root = workspace();
+    const server = path.join(root, "rust-analyzer-utf32.mjs");
+    writeFileSync(server, [
+      "if (process.argv.includes('--version')) { console.log('rust-analyzer 1.85.0 (4d91de4 2025-02-17)'); process.exit(0); }",
+      "let buffer = Buffer.alloc(0);",
+      "function send(value) { const body = Buffer.from(JSON.stringify(value)); process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\\r\\n\\r\\n`), body])); }",
+      "function handle(message) {",
+      "  if (message.method === 'exit') process.exit(0);",
+      "  if (message.id === undefined) return;",
+      "  if (message.method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { capabilities: { positionEncoding: 'utf-32' } } });",
+      "  if (message.method === 'shutdown') return send({ jsonrpc: '2.0', id: message.id, result: null });",
+      "  send({ jsonrpc: '2.0', id: message.id, result: null });",
+      "}",
+      "process.stdin.on('data', (chunk) => { buffer = Buffer.concat([buffer, chunk]); while (true) { const end = buffer.indexOf('\\r\\n\\r\\n'); if (end < 0) break; const length = Number(buffer.subarray(0, end).toString().match(/Content-Length:\\s*(\\d+)/i)?.[1]); if (buffer.length < end + 4 + length) break; const body = buffer.subarray(end + 4, end + 4 + length).toString(); buffer = buffer.subarray(end + 4 + length); handle(JSON.parse(body)); } });",
+    ].join("\n"));
+    const prior = {
+      command: process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND,
+      args: process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON,
+      go: process.env.CONTEXTMESH_GO_TYPES_DISABLE,
+    };
+    delete process.env.CONTEXTMESH_RUST_ANALYZER_DISABLE;
+    process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = process.execPath;
+    process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = JSON.stringify([server]);
+    process.env.CONTEXTMESH_GO_TYPES_DISABLE = "1";
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      expect(app.database.getPrecisionProviderStates()).toContainEqual(expect.objectContaining({
+        provider: "rust_analyzer", status: "failed",
+        lastError: expect.stringMatching(/unsupported position encoding utf-32/),
+      }));
+    } finally {
+      if (prior.command === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_COMMAND = prior.command;
+      if (prior.args === undefined) delete process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON;
+      else process.env.CONTEXTMESH_RUST_ANALYZER_ARGS_JSON = prior.args;
+      if (prior.go === undefined) delete process.env.CONTEXTMESH_GO_TYPES_DISABLE;
+      else process.env.CONTEXTMESH_GO_TYPES_DISABLE = prior.go;
       await app.close();
     }
   });

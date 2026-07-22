@@ -72,6 +72,16 @@ function writerLeaseDatabase(): { root: string; databasePath: string } {
   return fixture;
 }
 
+function precisionNodeDatabase(): { root: string; databasePath: string } {
+  const fixture = writerLeaseDatabase();
+  const db = new DatabaseSync(fixture.databasePath);
+  const name = "011_precision_nodes.sql";
+  db.exec(readFileSync(path.join(process.cwd(), "migrations", name), "utf8"));
+  db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(11, name, "2026-01-01T00:00:00.000Z");
+  db.close();
+  return fixture;
+}
+
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("migration 007", () => {
@@ -226,7 +236,7 @@ describe("migration backup and writer-lease migration", () => {
     const restored = new ContextMeshDatabase(fixture.root, fixture.databasePath);
     restored.close();
     const verified = new DatabaseSync(fixture.databasePath, { readOnly: true });
-    expect(verified.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(11);
+    expect(verified.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(12);
     expect(verified.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
     expect(verified.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
     expect(verified.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -240,7 +250,7 @@ describe("migration 011", () => {
     const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
     database.close();
     const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
-    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(11);
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(12);
     expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='precision_nodes'").get()?.value).toBe(1);
     expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
     expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
@@ -258,6 +268,31 @@ describe("migration 011", () => {
     expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='precision_nodes'").get()?.value).toBe(0);
     expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
     expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+});
+
+describe("migration 012", () => {
+  it("adds a monotonic precision-provider transition epoch", () => {
+    const fixture = precisionNodeDatabase();
+    const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+    database.close();
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(12);
+    expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('precision_provider_state') WHERE name='transition_epoch'").get()?.value).toBe(1);
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("rolls migration 012 back atomically when validation fails", () => {
+    const fixture = precisionNodeDatabase();
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      migrationValidationHook: (version) => { if (version === 12) throw new Error("injected transition-epoch migration failure"); },
+    })).toThrow("injected transition-epoch migration failure");
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=12").get()?.value).toBe(0);
+    expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('precision_provider_state') WHERE name='transition_epoch'").get()?.value).toBe(0);
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     raw.close();
   });

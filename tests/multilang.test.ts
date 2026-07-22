@@ -162,9 +162,13 @@ describe("v0.3 multilingual graph", () => {
       expect(noOp.data.noOp).toBe(true);
       expect(noOp.data.adapterStats.map((item) => item.language)).toEqual(["typescript/javascript", "python"]);
       const afterNoOp = await app.workspaceStatus() as Envelope<{
-        adapterStats: Array<{ providerVersions?: Record<string, string>; status?: string; coverage?: number }>;
+        adapterStats: Array<{ language: string; providerVersions?: Record<string, string>; status?: string; coverage?: number }>;
       }>;
-      expect(afterNoOp.data.adapterStats.every((item) => item.status === "ready" && item.coverage === 1)).toBe(true);
+      expect(afterNoOp.data.adapterStats.find((item) => item.language === "typescript/javascript"))
+        .toMatchObject({ status: "ready", coverage: 1 });
+      const python = afterNoOp.data.adapterStats.find((item) => item.language === "python")!;
+      const pythonProvider = app.database.getPrecisionProviderStates().find((item) => item.provider === "contextmesh_python_resolver")!;
+      expect(python).toMatchObject({ status: pythonProvider.status, coverage: pythonProvider.coverage });
       expect(afterNoOp.data.adapterStats.every((item) => Object.keys(item.providerVersions ?? {}).length > 0)).toBe(true);
       const rebuiltSyntax = await app.code.indexer.evaluationGraph("syntax");
       expect(new Set(rebuiltSyntax.nodes.filter((node) => node.language === "typescript").map((node) => node.analysisLevel))).toEqual(new Set(["syntax"]));

@@ -313,7 +313,11 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
   readonly version = "0.5.0";
   readonly capability = "resolved" as const;
 
-  async available(): Promise<{ available: boolean }> { return { available: true }; }
+  async available(): Promise<{ available: boolean; diagnostic?: string }> {
+    return process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE === "1"
+      ? { available: false, diagnostic: "Python resolved precision disabled by policy" }
+      : { available: true };
+  }
 
   async analyze(batch: SyntaxGraphBatch, baseGeneration: number): Promise<PrecisionOverlayBatch> {
     const pythonNodes = batch.nodes.filter((node) => node.language === "python");
@@ -559,7 +563,14 @@ class PythonResolvedProvider implements OverlayPrecisionProvider {
         }
       }
       for (const match of masked.matchAll(/^\s*class\s+(\w+)\s*\(([^)]*)\)/gm)) {
-        const owner = (nodesByFile.get(file.id) ?? []).find((node) => node.kind === "class" && node.name === match[1]);
+        if (match.index === undefined || !match[1]) continue;
+        const nameIndex = match.index + match[0].indexOf(match[1]);
+        const nameByte = Buffer.byteLength(file.content.slice(0, nameIndex), "utf8");
+        const owner = (nodesByFile.get(file.id) ?? [])
+          .filter((node) => node.kind === "class" && node.name === match[1]
+            && node.startByte <= nameByte && nameByte < node.endByte)
+          .sort((left, right) => (left.endByte - left.startByte) - (right.endByte - right.startByte)
+            || left.startByte - right.startByte || left.id.localeCompare(right.id))[0];
         if (!owner) continue;
         for (const rawBase of (match[2] ?? "").split(",").map((item) => item.trim()).filter(Boolean)) {
           eligibleEdges += 1;
@@ -594,9 +605,7 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   readonly extensions = [".py"] as const;
   discoverProject(rootPath: string): ProjectDescriptor { return discoverPythonProject(rootPath); }
   createSyntaxProvider(): SyntaxProvider { return new PythonSyntaxProvider(); }
-  createOverlayPrecisionProvider(): OverlayPrecisionProvider | undefined {
-    return process.env.CONTEXTMESH_PYTHON_PRECISION_DISABLE === "1" ? undefined : new PythonResolvedProvider();
-  }
+  createOverlayPrecisionProvider(): OverlayPrecisionProvider { return new PythonResolvedProvider(); }
 }
 
 function pythonFromImports(source: string): Array<{ module: string; names: string }> {

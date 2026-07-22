@@ -367,6 +367,17 @@ interface ProjectScan extends CachedProjectConfiguration {
   scannedPathKeys: ReadonlySet<string>;
 }
 
+interface PrecisionRunOutcome {
+  language: string;
+  provider: string;
+  providerVersion: string;
+  status: "ready" | "partial" | "not_configured" | "failed" | "stale";
+  analysisLevel: "syntax" | "resolved" | "typed";
+  coverage: number;
+  invoked: boolean;
+  diagnostics: string[];
+}
+
 interface MetadataProjectScan extends CachedProjectConfiguration {
   scan: ReturnType<typeof scanWorkspaceMetadata>;
   files: ScannedFileMetadata[];
@@ -587,10 +598,11 @@ export class CodeIndexer {
             failedFiles: 0,
           };
           renewWriterLease();
+          const precisionDiagnostics = await this.reconcilePrecisionForProject(project, workspace.currentGeneration);
+          const diagnostics = [...new Set([...scan.diagnostics, ...precisionDiagnostics])];
           this.database.completeNoOpRun(
-            handle, stats, scan.diagnostics, project.configHash, this.lastAdapterStats, priorAdapterState,
+            handle, stats, diagnostics, project.configHash, this.lastAdapterStats, this.database.getAdapterState(),
           );
-          await this.reconcilePrecisionForProject(project, workspace.currentGeneration);
           await this.semantic?.reconcileCodeIfNeeded();
           const counts = this.database.getStatus().counts as Record<string, number>;
           result = {
@@ -604,7 +616,7 @@ export class CodeIndexer {
             reinterpretedFiles: 0,
             changedFiles: 0,
             deletedFiles: 0,
-            diagnostics: scan.diagnostics,
+            diagnostics,
             adapterStats: this.lastAdapterStats,
           };
         } else {
@@ -730,22 +742,18 @@ export class CodeIndexer {
             ...(pythonFiles.length > 0 ? [{
               language: "python", ecosystem: "pypi", syntaxProvider: "contextmesh_graph_kernel",
               precisionProvider: pythonPrecisionProvider?.id ?? null,
-              analysisLevel: pythonPrecisionProvider ? "resolved" as const : "syntax" as const,
-              files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: pythonPrecisionProvider ? 1 : 0,
+               analysisLevel: "syntax" as const,
+               files: pythonFiles.length, syntaxInvocations: 1, precisionInvocations: 0,
               filesReparsed: pythonGraph.providerMetrics?.filesParsed ?? pythonFiles.length,
               kernelRssBytes: pythonGraph.providerMetrics?.kernelRssBytes ?? 0,
               configHash: project.pythonProject.configHash,
               providerVersions: {
                 ...PYTHON_PROVIDER_VERSIONS,
                 runtime: pythonGraph.providerMetrics?.providerVersion?.split("/")[0] ?? PYTHON_PROVIDER_VERSIONS.runtime,
-              }, status: pythonPrecisionProvider ? "ready" as const : "not_configured" as const,
-              coverage: pythonPrecisionProvider ? 1 : 0, diagnostics: [
-                { code: "GRAPH_KERNEL_MODE", severity: "info" as const, message: pythonGraph.providerMetrics?.mode ?? "unknown" },
-                ...(!pythonPrecisionProvider ? [{
-                  code: "PYTHON_PRECISION_DISABLED", severity: "info" as const,
-                  message: "Python resolved precision disabled by policy",
-                }] : []),
-                ...project.pythonProject.diagnostics.map((message) => ({
+               }, status: "not_configured" as const,
+               coverage: 0, diagnostics: [
+                 { code: "GRAPH_KERNEL_MODE", severity: "info" as const, message: pythonGraph.providerMetrics?.mode ?? "unknown" },
+                 ...project.pythonProject.diagnostics.map((message) => ({
                   code: "PYTHON_PROJECT_DIAGNOSTIC", severity: "warning" as const, message,
                 })),
               ],
@@ -829,19 +837,10 @@ export class CodeIndexer {
           } finally {
             preparedSemantic?.stopHeartbeat();
           }
+          const precisionOutcomes: PrecisionRunOutcome[] = [];
           if (pythonFiles.length > 0) {
-            if (pythonPrecisionProvider) {
-              await this.runPrecisionOverlay("python", project.pythonProject, pythonGraph, handle.generation);
-            } else {
-              this.database.registerPrecisionProvider({
-                language: "python",
-                provider: "contextmesh_python_resolver",
-                providerVersion: "0.5.0",
-                capability: "resolved",
-                status: "not_configured",
-                lastError: "Python resolved precision disabled by policy",
-              });
-            }
+            const outcome = await this.runPrecisionOverlay("python", project.pythonProject, pythonGraph, handle.generation);
+            if (outcome) precisionOutcomes.push(outcome);
           }
           if (tsPrecisionError && tsPrecisionProvider) {
             this.database.registerPrecisionProvider({
@@ -853,13 +852,14 @@ export class CodeIndexer {
               lastError: tsPrecisionError instanceof Error ? tsPrecisionError.message : String(tsPrecisionError),
             });
           } else if (tsPrecisionGraph) {
-            const committed = await this.runTypeScriptPrecisionOverlay(
+            const tsOutcome = await this.runTypeScriptPrecisionOverlay(
               tsPrecisionGraph,
               handle.generation,
               tsPrecisionProvider?.id,
               tsPrecisionProvider?.version,
             );
-            if (!committed) {
+            graph.diagnostics.push(...tsOutcome.diagnostics);
+            if (!tsOutcome.committed) {
               this.database.backfillSemanticSourceHashes(true);
               await this.semantic?.reconcileCodeIfNeeded();
             }
@@ -874,9 +874,17 @@ export class CodeIndexer {
             });
           }
           const goGraph = coreGraphs[CORE_LANGUAGE_IDS.indexOf("go")];
-          if (goGraph && goGraph.files.length > 0) await this.runPrecisionOverlay("go", project.coreProjects.go, goGraph, handle.generation);
+          if (goGraph && goGraph.files.length > 0) {
+            const outcome = await this.runPrecisionOverlay("go", project.coreProjects.go, goGraph, handle.generation);
+            if (outcome) precisionOutcomes.push(outcome);
+          }
           const rustGraph = coreGraphs[CORE_LANGUAGE_IDS.indexOf("rust")];
-          if (rustGraph && rustGraph.files.length > 0) await this.runPrecisionOverlay("rust", project.coreProjects.rust, rustGraph, handle.generation);
+          if (rustGraph && rustGraph.files.length > 0) {
+            const outcome = await this.runPrecisionOverlay("rust", project.coreProjects.rust, rustGraph, handle.generation);
+            if (outcome) precisionOutcomes.push(outcome);
+          }
+          this.applyPrecisionOutcomes(precisionOutcomes);
+          graph.diagnostics.push(...precisionOutcomes.flatMap((outcome) => outcome.diagnostics));
           result = {
             generation: handle.generation,
             mode,
@@ -889,7 +897,7 @@ export class CodeIndexer {
             changedFiles: stats.changedFiles,
             deletedFiles,
             diagnostics: graph.diagnostics,
-            adapterStats,
+            adapterStats: this.lastAdapterStats,
           };
         }
         } catch (error) {
@@ -915,8 +923,41 @@ export class CodeIndexer {
     });
   }
 
-  private async reconcilePrecisionForProject(project: ProjectScan, generation: number): Promise<void> {
+  private applyPrecisionOutcomes(outcomes: PrecisionRunOutcome[]): void {
+    if (outcomes.length === 0) return;
+    const byLanguage = new Map(outcomes.map((outcome) => [outcome.language, outcome]));
+    this.lastAdapterStats = this.lastAdapterStats.map((stats) => {
+      const outcome = byLanguage.get(stats.language);
+      if (!outcome) return stats;
+      return {
+        ...stats,
+        precisionProvider: outcome.provider,
+        analysisLevel: outcome.analysisLevel,
+        precisionInvocations: outcome.invoked ? 1 : 0,
+        providerVersions: { ...(stats.providerVersions ?? {}), precision: outcome.providerVersion },
+        status: outcome.status,
+        coverage: outcome.coverage,
+        diagnostics: [
+          ...(stats.diagnostics ?? []).filter((item) => item.code !== "PRECISION_PROVIDER_STATUS"),
+          ...outcome.diagnostics.map((message) => ({
+            code: "PRECISION_PROVIDER_STATUS", severity: outcome.status === "failed" ? "error" as const : "info" as const, message,
+          })),
+        ],
+      };
+    });
+    const adapterState = this.database.getAdapterState();
+    for (const stats of this.lastAdapterStats) {
+      const prior = adapterState[stats.language];
+      if (!prior) continue;
+      adapterState[stats.language] = { ...prior, precisionRevision: this.database.getPrecisionRevision(), stats };
+    }
+    this.database.setAdapterState(adapterState);
+  }
+
+  private async reconcilePrecisionForProject(project: ProjectScan, generation: number): Promise<string[]> {
     const workspace = this.database.getWorkspace();
+    const diagnostics: string[] = [];
+    const outcomes: PrecisionRunOutcome[] = [];
     const files = project.files.filter((file) => isTypeScriptLanguage(file.language));
     const tsState = this.database.getPrecisionProviderStates().find((item) => item.provider === "typescript_type_checker");
     if (files.length > 0 && process.env.CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE === "1") {
@@ -939,7 +980,8 @@ export class CodeIndexer {
         if (precision) {
           try {
             const typed = await precision.refine(syntax);
-            await this.runTypeScriptPrecisionOverlay(typed, generation, precision.id, precision.version);
+            const outcome = await this.runTypeScriptPrecisionOverlay(typed, generation, precision.id, precision.version);
+            diagnostics.push(...outcome.diagnostics);
           } catch (error) {
             this.database.registerPrecisionProvider({
               language: "typescript/javascript",
@@ -954,46 +996,79 @@ export class CodeIndexer {
       }
     }
     for (const [language, languageProject] of [["python", project.pythonProject], ["go", project.coreProjects.go], ["rust", project.coreProjects.rust]] as const) {
-      const provider = this.coordinator.adapter(language)?.createOverlayPrecisionProvider?.(languageProject);
-      if (!provider) continue;
       const files = project.files.filter((file) => file.language === language);
       if (files.length === 0) continue;
-      const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
-      if (state?.providerVersion === provider.version && state.baseGeneration === generation && (state.status === "ready" || state.status === "partial")) continue;
-      const graph = await this.coordinator.adapter(language)!.createSyntaxProvider(languageProject)
-        .extract({ workspace, project: languageProject, files, generation, mode: "incremental" });
-      await this.runPrecisionOverlay(language, languageProject, graph, generation);
+      const outcome = await this.runPrecisionOverlay(language, languageProject, async () =>
+        this.coordinator.adapter(language)!.createSyntaxProvider(languageProject)
+          .extract({ workspace, project: languageProject, files, generation, mode: "incremental" }), generation);
+      if (outcome) {
+        outcomes.push(outcome);
+        diagnostics.push(...outcome.diagnostics);
+      }
     }
+    this.applyPrecisionOutcomes(outcomes);
+    return [...new Set(diagnostics)];
   }
 
   private async runPrecisionOverlay(
     language: string,
     project: ProjectDescriptor,
-    graph: SyntaxGraphBatch,
+    graph: SyntaxGraphBatch | (() => Promise<SyntaxGraphBatch>),
     generation: number,
-  ): Promise<void> {
+  ): Promise<PrecisionRunOutcome | null> {
     const provider = this.coordinator.adapter(language)?.createOverlayPrecisionProvider?.(project);
-    if (!provider) return;
+    if (!provider) return null;
+    const outcomeFromState = (invoked: boolean, extraDiagnostics: string[] = []): PrecisionRunOutcome => {
+      const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
+      const status = state && ["ready", "partial", "not_configured", "failed", "stale"].includes(state.status)
+        ? state.status as PrecisionRunOutcome["status"] : "stale";
+      return {
+        language, provider: provider.id, providerVersion: provider.version, status,
+        analysisLevel: status === "ready" || status === "partial" ? provider.capability : "syntax",
+        coverage: status === "ready" || status === "partial" ? (state?.coverage ?? 0) : 0,
+        invoked, diagnostics: [...new Set([...extraDiagnostics, ...(state?.lastError ? [state.lastError] : [])])],
+      };
+    };
+    const transition = (status: "not_configured" | "failed" | "stale", lastError: string | null): string[] => {
+      try {
+        this.database.transitionPrecisionProvider({ language, provider: provider.id, providerVersion: provider.version,
+          capability: provider.capability, status, lastError });
+        return lastError ? [lastError] : [];
+      } catch (error) {
+        return [lastError, `PRECISION_PROVIDER_STATE_FAILED: ${error instanceof Error ? error.message : String(error)}`]
+          .filter((item): item is string => Boolean(item));
+      }
+    };
     let availability: Awaited<ReturnType<typeof provider.available>>;
     try { availability = await provider.available(); }
     catch (error) {
-      this.database.registerPrecisionProvider({ language, provider: provider.id, providerVersion: provider.version,
-        capability: provider.capability, status: "failed",
-        lastError: error instanceof Error ? error.message : String(error) });
-      return;
+      const message = error instanceof Error ? error.message : String(error);
+      return outcomeFromState(false, transition("failed", message));
     }
     if (!availability.available) {
-      this.database.registerPrecisionProvider({ language, provider: provider.id, providerVersion: provider.version,
-        capability: provider.capability, status: "not_configured", lastError: availability.diagnostic ?? null });
-      return;
+      const state = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
+      const message = availability.diagnostic ?? null;
+      if (state?.providerVersion !== provider.version || state.baseGeneration !== generation || state.status !== "not_configured") {
+        return outcomeFromState(false, transition("not_configured", message));
+      }
+      return outcomeFromState(false, message ? [message] : []);
+    }
+    const existing = this.database.getPrecisionProviderStates().find((item) => item.provider === provider.id);
+    if (existing?.providerVersion === provider.version && existing.baseGeneration === generation
+      && (existing.status === "ready" || existing.status === "partial")) return outcomeFromState(false);
+    if (existing && (existing.providerVersion !== provider.version || existing.baseGeneration !== generation)) {
+      transition("stale", "Precision provider configuration changed; previous overlay withdrawn");
     }
     let claimed;
     try {
       claimed = this.database.claimPrecisionProvider({ provider: provider.id, providerVersion: provider.version,
         language, capability: provider.capability, owner: `indexer-${process.pid}-${randomUUID()}`,
         leaseMs: PRECISION_PROVIDER_LEASE_MS });
-    } catch { return; }
-    if (!claimed.claim) return;
+    } catch (error) {
+      const message = `PRECISION_PROVIDER_CLAIM_FAILED: ${error instanceof Error ? error.message : String(error)}`;
+      return outcomeFromState(false, transition("failed", message));
+    }
+    if (!claimed.claim) return null;
     let leaseLost = false;
     const heartbeat = setInterval(() => {
       try {
@@ -1004,7 +1079,8 @@ export class CodeIndexer {
     }, PRECISION_PROVIDER_HEARTBEAT_MS);
     heartbeat.unref?.();
     try {
-      const overlay = await provider.analyze(graph, generation);
+      const resolvedGraph = typeof graph === "function" ? await graph() : graph;
+      const overlay = await provider.analyze(resolvedGraph, generation);
       if (leaseLost || !this.database.commitPrecisionOverlay(claimed.claim, {
         edges: overlay.edges, eligibleEdges: overlay.eligibleEdges, diagnostics: overlay.diagnostics,
         ...(overlay.partial === undefined ? {} : { partial: overlay.partial }),
@@ -1019,6 +1095,7 @@ export class CodeIndexer {
     } finally {
       clearInterval(heartbeat);
     }
+    return outcomeFromState(true);
   }
 
   private async runTypeScriptPrecisionOverlay(
@@ -1026,13 +1103,21 @@ export class CodeIndexer {
     _generation: number,
     provider = "typescript_type_checker",
     providerVersion = ts.version,
-  ): Promise<boolean> {
+  ): Promise<{ committed: boolean; diagnostics: string[] }> {
     let claim;
     try {
       claim = this.database.claimPrecisionProvider({ provider, providerVersion,
         language: "typescript/javascript", capability: "typed", owner: `indexer-${process.pid}-${randomUUID()}` });
-    } catch { return false; }
-    if (!claim.claim) return false;
+    } catch (error) {
+      const message = `PRECISION_PROVIDER_CLAIM_FAILED: ${error instanceof Error ? error.message : String(error)}`;
+      try {
+        this.database.transitionPrecisionProvider({
+          language: "typescript/javascript", provider, providerVersion, capability: "typed", status: "failed", lastError: message,
+        });
+      } catch { /* the original claim failure remains the actionable diagnostic */ }
+      return { committed: false, diagnostics: [message] };
+    }
+    if (!claim.claim) return { committed: false, diagnostics: [] };
     try {
       const nodes = graph.nodes
         .filter((node) => node.analysisLevel === "typed" || node.analysisLevel === "resolved")
@@ -1050,15 +1135,15 @@ export class CodeIndexer {
           evidence: (edge.evidence ?? []).filter((item) => item.source === "type_checker") }));
       if (!this.database.commitPrecisionOverlay(claim.claim, { nodes, edges, eligibleEdges: edges.length, diagnostics: [] })) {
         this.database.abandonPrecisionProvider(claim.claim, "TypeScript precision-provider lease lost before commit");
-        return false;
+        return { committed: false, diagnostics: ["TypeScript precision-provider lease lost before commit"] };
       }
-      return true;
+      return { committed: true, diagnostics: [] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!this.database.failPrecisionProvider(claim.claim, message)) {
         this.database.abandonPrecisionProvider(claim.claim, `TypeScript precision-provider lease lost: ${message}`);
       }
-      return false;
+      return { committed: false, diagnostics: [message] };
     }
   }
 

@@ -72,10 +72,6 @@ function syntaxNodes(root: SyntaxNode, type: string): SyntaxNode[] {
   return result;
 }
 
-function characterOffsetAtByte(source: string, offset: number): number {
-  return Buffer.from(source, "utf8").subarray(0, offset).toString("utf8").length;
-}
-
 interface TreeSitterDeclaration {
   name: string;
   kind: CodeNodeKind;
@@ -126,12 +122,12 @@ function treeSitterDeclarations(
       kind,
       nativeKind: node.type,
       isExported: language === "go" ? /^[A-Z]/.test(nameNode.text) : node.namedChildren.some((child) => child.type === "visibility_modifier"),
-      startIndex: characterOffsetAtByte(source, node.startIndex),
-      endIndex: characterOffsetAtByte(source, node.endIndex),
-      nameStartIndex: characterOffsetAtByte(source, nameNode.startIndex),
-      nameEndIndex: characterOffsetAtByte(source, nameNode.endIndex),
-      startByte: node.startIndex,
-      endByte: node.endIndex,
+      startIndex: node.startIndex,
+      endIndex: node.endIndex,
+      nameStartIndex: nameNode.startIndex,
+      nameEndIndex: nameNode.endIndex,
+      startByte: byteOffset(source, node.startIndex),
+      endByte: byteOffset(source, node.endIndex),
       startLine: node.startPosition.row + 1,
       startColumn: node.startPosition.column + 1,
       endLine: node.endPosition.row + 1,
@@ -149,9 +145,10 @@ interface TreeSitterReference {
   endByte: number;
   line: number;
   column: number;
+  ownerStartByte: number | null;
 }
 
-function treeSitterCalls(source: string, tree: Tree): TreeSitterReference[] {
+function treeSitterCalls(source: string, tree: Tree, language: TreeSitterCoreLanguage): TreeSitterReference[] {
   const references: TreeSitterReference[] = [];
   for (const call of syntaxNodes(tree.rootNode, "call_expression")) {
     const callable = call.childForFieldName("function");
@@ -160,13 +157,19 @@ function treeSitterCalls(source: string, tree: Tree): TreeSitterReference[] {
     const identifiers = callable.descendantsOfType(["identifier", "field_identifier", "type_identifier"]);
     const nameNode = direct ?? (identifiers.at(-1) ?? (["identifier", "field_identifier", "type_identifier"].includes(callable.type) ? callable : null));
     if (!nameNode) continue;
+    const callableTypes = language === "go"
+      ? new Set(["function_declaration", "method_declaration"])
+      : new Set(["function_item"]);
+    let owner = call.parent;
+    while (owner && !callableTypes.has(owner.type)) owner = owner.parent;
     references.push({
       name: nameNode.text,
-      index: characterOffsetAtByte(source, nameNode.startIndex),
-      startByte: nameNode.startIndex,
-      endByte: nameNode.endIndex,
+      index: nameNode.startIndex,
+      startByte: byteOffset(source, nameNode.startIndex),
+      endByte: byteOffset(source, nameNode.endIndex),
       line: nameNode.startPosition.row + 1,
       column: nameNode.startPosition.column + 1,
+      ownerStartByte: owner ? byteOffset(source, owner.startIndex) : null,
     });
   }
   return references;
@@ -296,6 +299,17 @@ function hasLanguageSyntaxError(spec: LanguageSpec, source: string): boolean {
     || /\b(?:fn|struct|enum|trait|type)\s*(?:[({=;]|$)/m.test(masked);
 }
 
+function declarationBodyEnd(masked: string, startIndex: number, headerEndIndex: number): number {
+  const open = masked.indexOf("{", Math.max(startIndex, headerEndIndex - 1));
+  if (open < 0) return headerEndIndex;
+  let depth = 0;
+  for (let index = open; index < masked.length; index += 1) {
+    if (masked[index] === "{") depth += 1;
+    else if (masked[index] === "}" && --depth === 0) return index + 1;
+  }
+  return headerEndIndex;
+}
+
 function manifestDigest(rootPath: string, spec: LanguageSpec): string {
   const names = [...spec.manifests];
   if (spec.language === "csharp") {
@@ -350,7 +364,8 @@ class CoreSyntaxProvider implements SyntaxProvider {
     const declarations = new Map<string, string[]>();
     const modulesByPath = new Map<string, string>();
     const modulesByName = new Map<string, string[]>();
-    const declarationRanges = new Map<string, Array<{ start: number; end: number; id: string }>>();
+    const declarationRanges = new Map<string, Array<{ start: number; end: number; startByte: number; id: string; kind: CodeNodeKind }>>();
+    const declarationNameRanges = new Map<string, Array<{ start: number; end: number }>>();
     const evidence = (confidence: number, sourceSpan?: { startByte: number; endByte: number; line: number; column: number }) => [{
       provider: this.id, providerVersion: this.version, source: "syntax" as const, confidence,
       ...(sourceSpan ? { sourceSpan } : {}),
@@ -374,7 +389,8 @@ class CoreSyntaxProvider implements SyntaxProvider {
       const moduleId = modulesByPath.get(scanned.pathKey)!;
       const file = files.find((item) => item.pathKey === scanned.pathKey)!;
       const masked = maskTrivia(scanned.content);
-      const ranges: Array<{ start: number; end: number; id: string }> = [];
+      const ranges: Array<{ start: number; end: number; startByte: number; id: string; kind: CodeNodeKind }> = [];
+      const nameRanges: Array<{ start: number; end: number }> = [];
       const parsedDeclarations: TreeSitterDeclaration[] = [];
       const syntaxTree = syntaxTrees.get(scanned.pathKey);
       if (syntaxTree && parserLanguage) {
@@ -416,7 +432,8 @@ class CoreSyntaxProvider implements SyntaxProvider {
             const name = match[declaration.nameGroup];
             if (!name || match.index === undefined) continue;
             const nameStartIndex = match.index + match[0].indexOf(name);
-            const endIndex = match.index + match[0].length;
+            const headerEndIndex = match.index + match[0].length;
+            const endIndex = declarationBodyEnd(masked, match.index, headerEndIndex);
             const start = location(scanned.content, match.index);
             const end = location(scanned.content, endIndex);
             parsedDeclarations.push({
@@ -424,7 +441,8 @@ class CoreSyntaxProvider implements SyntaxProvider {
               isExported: /\bpublic\b/.test(match[0]), startIndex: match.index, endIndex,
               nameStartIndex, nameEndIndex: nameStartIndex + name.length,
               startByte: byteOffset(scanned.content, match.index), endByte: byteOffset(scanned.content, endIndex),
-              startLine: start.line, startColumn: start.column, endLine: end.line, endColumn: end.column, text: match[0],
+              startLine: start.line, startColumn: start.column, endLine: end.line, endColumn: end.column,
+              text: scanned.content.slice(match.index, endIndex),
             });
           }
         }
@@ -440,12 +458,15 @@ class CoreSyntaxProvider implements SyntaxProvider {
           contentHash: sha256(declaration.text), generation: input.generation, metadata: { stableLocator: localKey },
           language: this.spec.language, ecosystem: this.spec.ecosystem, nativeKind: declaration.nativeKind, analysisLevel: "syntax" });
         const sameName = declarations.get(declaration.name) ?? []; sameName.push(id); sameName.sort(); declarations.set(declaration.name, sameName);
-        ranges.push({ start: declaration.startIndex, end: declaration.nameEndIndex, id });
+        nameRanges.push({ start: declaration.nameStartIndex, end: declaration.nameEndIndex });
+        ranges.push({ start: declaration.startIndex, end: declaration.endIndex, startByte: declaration.startByte,
+          id, kind: declaration.kind });
         const key = edgeKey(moduleId, id, "CONTAINS");
         edges.set(key, { workspaceId: input.workspace.id, sourceId: moduleId, targetId: id, kind: "CONTAINS", confidence: 1,
           resolutionKind: "exact", generation: input.generation, metadata: {}, status: "resolved", evidence: evidence(1) });
       }
       declarationRanges.set(scanned.pathKey, ranges.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id)));
+      declarationNameRanges.set(scanned.pathKey, nameRanges.sort((a, b) => a.start - b.start || a.end - b.end));
     }
 
     for (const scanned of selected) {
@@ -489,7 +510,7 @@ class CoreSyntaxProvider implements SyntaxProvider {
         }
       }
       const callReferences: TreeSitterReference[] = [];
-      if (syntaxTree && parserLanguage) callReferences.push(...treeSitterCalls(scanned.content, syntaxTree));
+      if (syntaxTree && parserLanguage) callReferences.push(...treeSitterCalls(scanned.content, syntaxTree, parserLanguage));
       else {
         this.spec.callPattern.lastIndex = 0;
         for (const match of masked.matchAll(this.spec.callPattern)) {
@@ -499,15 +520,23 @@ class CoreSyntaxProvider implements SyntaxProvider {
           callReferences.push({
             name, index: match.index, startByte: byteOffset(scanned.content, match.index),
             endByte: byteOffset(scanned.content, match.index + name.length), line: position.line, column: position.column,
+            ownerStartByte: null,
           });
         }
       }
       for (const reference of callReferences) {
         const { name } = reference;
         if (this.spec.callExcludes.has(name)) continue;
-        if ((declarationRanges.get(scanned.pathKey) ?? []).some((item) => reference.index >= item.start && reference.index < item.end)) continue;
+        if ((declarationNameRanges.get(scanned.pathKey) ?? []).some((item) => reference.index >= item.start && reference.index < item.end)) continue;
         const targets = declarations.get(name) ?? [];
-        const owner = [...(declarationRanges.get(scanned.pathKey) ?? [])].reverse().find((item) => item.start < reference.index)?.id ?? moduleId;
+        const ranges = declarationRanges.get(scanned.pathKey) ?? [];
+        const structuralOwner = reference.ownerStartByte === null ? undefined
+          : ranges.find((item) => item.startByte === reference.ownerStartByte && (item.kind === "function" || item.kind === "method"));
+        const owner = structuralOwner?.id ?? ranges
+          .filter((item) => (item.kind === "function" || item.kind === "method")
+            && item.start <= reference.index && reference.index < item.end)
+          .sort((left, right) => (left.end - left.start) - (right.end - right.start) || left.id.localeCompare(right.id))[0]?.id
+          ?? moduleId;
         const referenceEvidence = evidence(0.65, {
           startByte: reference.startByte, endByte: reference.endByte, line: reference.line, column: reference.column,
         });

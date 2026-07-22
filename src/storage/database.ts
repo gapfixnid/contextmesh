@@ -183,6 +183,7 @@ export interface PrecisionClaim {
   language: string;
   capability: "resolved" | "typed";
   baseGeneration: number;
+  transitionEpoch: number;
   token: string;
   owner: string;
 }
@@ -514,18 +515,19 @@ function mapSemanticState(row: SqlRow): SemanticStateRecord {
 function mapPrecisionState(row: SqlRow): PrecisionProviderState {
   const eligibleEdges = numberValue(row.eligible_edges);
   const resolvedEdges = numberValue(row.resolved_edges);
+  const status = stringValue(row.status) as PrecisionProviderState["status"];
   return {
     language: stringValue(row.language),
     provider: stringValue(row.provider),
     providerVersion: stringValue(row.provider_version),
     capability: stringValue(row.capability) as PrecisionProviderState["capability"],
-    status: stringValue(row.status) as PrecisionProviderState["status"],
+    status,
     baseGeneration: numberValue(row.base_generation),
     precisionRevision: numberValue(row.precision_revision),
     eligibleEdges,
     resolvedEdges,
     rejectedEdges: numberValue(row.rejected_edges),
-    coverage: eligibleEdges === 0 ? 1 : resolvedEdges / eligibleEdges,
+    coverage: status === "ready" || status === "partial" ? (eligibleEdges === 0 ? 1 : resolvedEdges / eligibleEdges) : 0,
     lastError: nullableString(row.last_error),
     leaseExpiresAt: row.lease_expires_epoch === null ? null : new Date(numberValue(row.lease_expires_epoch)).toISOString(),
     updatedAt: stringValue(row.updated_at),
@@ -559,9 +561,11 @@ export interface ContextMeshStorage {
   getIndexedFileBaseline(): IndexedFileBaseline[];
   getIndexConfigHash(): string | null;
   getAdapterState(): AdapterStateMap;
+  setAdapterState(state: AdapterStateMap): void;
   getPrecisionRevision(): number;
   getPrecisionProviderStates(): PrecisionProviderState[];
   registerPrecisionProvider(input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null }): void;
+  transitionPrecisionProvider(input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null }): void;
   claimPrecisionProvider(input: { provider: string; providerVersion: string; language: string; capability: "resolved" | "typed"; owner: string; leaseMs?: number }): PrecisionClaimResult;
   heartbeatPrecisionProvider(claim: PrecisionClaim, leaseMs?: number): boolean;
   commitPrecisionOverlay(claim: PrecisionClaim, commit: PrecisionCommit): boolean;
@@ -1218,6 +1222,11 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     return parseJson<AdapterStateMap>(row?.adapter_state_json, {});
   }
 
+  setAdapterState(state: AdapterStateMap): void {
+    this.db.prepare("UPDATE workspaces SET adapter_state_json=?,updated_at=? WHERE id=?")
+      .run(JSON.stringify(state), this.nowIso(), this.workspace.id);
+  }
+
   private precisionNodeIds(provider: string): string[] {
     return this.db.prepare(
       "SELECT node_id FROM precision_nodes WHERE workspace_id=? AND provider=? ORDER BY node_id",
@@ -1395,6 +1404,36 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     });
   }
 
+  transitionPrecisionProvider(
+    input: Omit<PrecisionProviderState, "baseGeneration" | "precisionRevision" | "eligibleEdges" | "resolvedEdges" | "rejectedEdges" | "coverage" | "lastError" | "leaseExpiresAt" | "updatedAt"> & { lastError?: string | null },
+  ): void {
+    this.transaction(() => {
+      const affectedNodes = this.precisionNodeIds(input.provider);
+      const overlayWasVisible = this.hasVisiblePrecisionOverlay(input.provider);
+      const currentRevision = this.getPrecisionRevision();
+      const nextRevision = overlayWasVisible ? currentRevision + 1 : currentRevision;
+      const timestamp = this.nowIso();
+      this.db.prepare(
+        `INSERT INTO precision_provider_state(
+           workspace_id,language,provider,provider_version,capability,status,base_generation,
+           precision_revision,last_error,lease_owner,lease_token,lease_expires_epoch,transition_epoch,updated_at
+         ) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,1,?)
+         ON CONFLICT(workspace_id,provider) DO UPDATE SET
+           language=excluded.language,provider_version=excluded.provider_version,capability=excluded.capability,
+           status=excluded.status,base_generation=excluded.base_generation,
+           precision_revision=excluded.precision_revision,last_error=excluded.last_error,
+           lease_owner=NULL,lease_token=NULL,lease_expires_epoch=NULL,
+           transition_epoch=precision_provider_state.transition_epoch+1,updated_at=excluded.updated_at`,
+      ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability, input.status,
+        this.getWorkspace().currentGeneration, nextRevision, input.lastError ?? null, timestamp);
+      if (overlayWasVisible) {
+        this.db.prepare("UPDATE workspaces SET precision_revision=?,updated_at=? WHERE id=?")
+          .run(nextRevision, timestamp, this.workspace.id);
+      }
+      this.refreshEffectiveNodeMaterializations(affectedNodes);
+    });
+  }
+
   claimPrecisionProvider(input: {
     provider: string; providerVersion: string; language: string; capability: "resolved" | "typed"; owner: string; leaseMs?: number;
   }): PrecisionClaimResult {
@@ -1413,20 +1452,24 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       this.db.prepare(
         `INSERT INTO precision_provider_state(
            workspace_id,language,provider,provider_version,capability,status,base_generation,
-           lease_owner,lease_token,lease_expires_epoch,updated_at
-         ) VALUES (?,?,?,?,?,'running',?,?,?,?,?)
+           lease_owner,lease_token,lease_expires_epoch,transition_epoch,updated_at
+         ) VALUES (?,?,?,?,?,'running',?,?,?,?,1,?)
          ON CONFLICT(workspace_id,provider) DO UPDATE SET
            language=excluded.language,provider_version=excluded.provider_version,capability=excluded.capability,
            status='running',base_generation=excluded.base_generation,last_error=NULL,
            lease_owner=excluded.lease_owner,lease_token=excluded.lease_token,
-           lease_expires_epoch=excluded.lease_expires_epoch,updated_at=excluded.updated_at`,
+           lease_expires_epoch=excluded.lease_expires_epoch,
+           transition_epoch=precision_provider_state.transition_epoch+1,updated_at=excluded.updated_at`,
       ).run(this.workspace.id, input.language, input.provider, input.providerVersion, input.capability,
         workspace.currentGeneration, input.owner, token, leaseExpiry, this.nowIso());
       this.refreshEffectiveNodeMaterializations(affectedNodes);
       acquired = true;
     });
+    const transitionEpoch = acquired ? numberValue(this.db.prepare(
+      "SELECT transition_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+    ).get(this.workspace.id, input.provider)?.transition_epoch) : 0;
     return acquired ? { claim: { provider: input.provider, providerVersion: input.providerVersion, language: input.language,
-      capability: input.capability, baseGeneration: workspace.currentGeneration, token, owner: input.owner }, reason: "acquired" }
+      capability: input.capability, baseGeneration: workspace.currentGeneration, transitionEpoch, token, owner: input.owner }, reason: "acquired" }
       : { claim: null, reason: "leased" };
   }
 
@@ -1436,9 +1479,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     const expiry = now + leaseMs;
     const result = this.db.prepare(
       `UPDATE precision_provider_state SET lease_expires_epoch=?,updated_at=?
-       WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=? AND base_generation=?
-         AND lease_expires_epoch>?`,
-    ).run(expiry, nowIso, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration, now);
+       WHERE workspace_id=? AND provider=? AND provider_version=? AND status='running'
+         AND lease_token=? AND lease_owner=? AND base_generation=? AND transition_epoch=? AND lease_expires_epoch>?`,
+    ).run(expiry, nowIso, this.workspace.id, claim.provider, claim.providerVersion, claim.token, claim.owner,
+      claim.baseGeneration, claim.transitionEpoch, now);
     return Number(result.changes) === 1;
   }
 
@@ -1447,19 +1491,23 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     this.transaction(() => {
       const current = this.getWorkspace().currentGeneration;
       const state = this.db.prepare(
-        "SELECT status,lease_token,lease_owner,base_generation,lease_expires_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
+        "SELECT status,provider_version,lease_token,lease_owner,base_generation,precision_revision,lease_expires_epoch,transition_epoch FROM precision_provider_state WHERE workspace_id=? AND provider=?",
       ).get(this.workspace.id, claim.provider);
       if (current !== claim.baseGeneration || !state || stringValue(state.status) !== "running" ||
+          stringValue(state.provider_version) !== claim.providerVersion ||
           stringValue(state.lease_token) !== claim.token || stringValue(state.lease_owner) !== claim.owner ||
           numberValue(state.base_generation) !== claim.baseGeneration ||
+          numberValue(state.transition_epoch) !== claim.transitionEpoch ||
           numberValue(state.lease_expires_epoch) <= Date.parse(this.nowIso())) return;
       const rejectCommit = (reason: string): void => {
         const overlayWasVisible = this.hasVisiblePrecisionOverlay(claim.provider);
         const result = this.db.prepare(
           `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
              lease_expires_epoch=NULL,updated_at=?
-           WHERE workspace_id=? AND provider=? AND status='running' AND lease_token=? AND lease_owner=?`,
-        ).run(`PRECISION_OVERLAY_INVALID: ${reason}`, this.nowIso(), this.workspace.id, claim.provider, claim.token, claim.owner);
+           WHERE workspace_id=? AND provider=? AND provider_version=? AND status='running'
+             AND lease_token=? AND lease_owner=? AND base_generation=? AND transition_epoch=?`,
+        ).run(`PRECISION_OVERLAY_INVALID: ${reason}`, this.nowIso(), this.workspace.id, claim.provider,
+          claim.providerVersion, claim.token, claim.owner, claim.baseGeneration, claim.transitionEpoch);
         if (overlayWasVisible && Number(result.changes) === 1) {
           const affectedNodes = this.precisionNodeIds(claim.provider);
           this.fencePrecisionOverlayWithdrawal(claim.provider);
@@ -1538,47 +1586,79 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         rejectCommit("rejected edge has no current base candidate");
         return;
       }
-      const revision = this.getPrecisionRevision() + 1;
+      const currentRevision = this.getPrecisionRevision();
+      const priorEdges = this.db.prepare(
+        `SELECT source_id,target_id,kind,status,confidence,resolution_kind,evidence_json
+         FROM precision_edges WHERE workspace_id=? AND provider=? AND base_generation=? AND precision_revision=?
+         ORDER BY kind,source_id,target_id`,
+      ).all(this.workspace.id, claim.provider, claim.baseGeneration, numberValue(state.precision_revision));
+      const priorNodes = this.db.prepare(
+        `SELECT node_id,analysis_level,signature,doc,content_hash,metadata_json
+         FROM precision_nodes WHERE workspace_id=? AND provider=? AND base_generation=? AND precision_revision=?
+         ORDER BY node_id`,
+      ).all(this.workspace.id, claim.provider, claim.baseGeneration, numberValue(state.precision_revision));
+      const desiredEdges = sorted.map((edge) => ({
+        source_id: edge.sourceId, target_id: edge.targetId, kind: edge.kind, status: edge.status,
+        confidence: edge.confidence, resolution_kind: edge.resolutionKind, evidence_json: JSON.stringify(edge.evidence),
+      }));
+      const desiredNodes = sortedNodes.map((node) => ({
+        node_id: node.nodeId, analysis_level: node.analysisLevel, signature: node.signature, doc: node.doc,
+        content_hash: node.contentHash, metadata_json: JSON.stringify(node.metadata),
+      }));
+      const graphChanged = JSON.stringify(priorEdges) !== JSON.stringify(desiredEdges) ||
+        JSON.stringify(priorNodes) !== JSON.stringify(desiredNodes);
+      const revision = graphChanged ? currentRevision + 1 : currentRevision;
       const affectedNodes = new Set(this.precisionNodeIds(claim.provider));
-      this.db.prepare("DELETE FROM precision_edges WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
-      this.db.prepare("DELETE FROM precision_nodes WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
+      if (graphChanged) {
+        this.db.prepare("DELETE FROM precision_edges WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
+        this.db.prepare("DELETE FROM precision_nodes WHERE workspace_id=? AND provider=?").run(this.workspace.id, claim.provider);
+      }
       const insert = this.db.prepare(
         `INSERT INTO precision_edges(workspace_id,provider,source_id,target_id,kind,status,confidence,resolution_kind,evidence_json,base_generation,precision_revision)
          VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       );
-      for (const edge of sorted) insert.run(this.workspace.id, claim.provider, edge.sourceId, edge.targetId, edge.kind,
-        edge.status, edge.confidence, edge.resolutionKind, JSON.stringify(edge.evidence), claim.baseGeneration, revision);
+      if (graphChanged) {
+        for (const edge of sorted) insert.run(this.workspace.id, claim.provider, edge.sourceId, edge.targetId, edge.kind,
+          edge.status, edge.confidence, edge.resolutionKind, JSON.stringify(edge.evidence), claim.baseGeneration, revision);
+      }
       const insertNode = this.db.prepare(
         `INSERT INTO precision_nodes(
            workspace_id,provider,node_id,analysis_level,signature,doc,content_hash,metadata_json,
            base_generation,precision_revision
          ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
       );
-      for (const node of sortedNodes) {
-        insertNode.run(
-          this.workspace.id,
-          claim.provider,
-          node.nodeId,
-          node.analysisLevel,
-          node.signature,
-          node.doc,
-          node.contentHash,
-          JSON.stringify(node.metadata),
-          claim.baseGeneration,
-          revision,
-        );
-        affectedNodes.add(node.nodeId);
+      if (graphChanged) {
+        for (const node of sortedNodes) {
+          insertNode.run(
+            this.workspace.id,
+            claim.provider,
+            node.nodeId,
+            node.analysisLevel,
+            node.signature,
+            node.doc,
+            node.contentHash,
+            JSON.stringify(node.metadata),
+            claim.baseGeneration,
+            revision,
+          );
+          affectedNodes.add(node.nodeId);
+        }
       }
       const resolved = sorted.filter((edge) => edge.status === "resolved").length;
       const rejected = sorted.filter((edge) => edge.status === "rejected").length;
-      this.db.prepare("UPDATE workspaces SET precision_revision=?,updated_at=? WHERE id=?")
-        .run(revision, this.nowIso(), this.workspace.id);
-      this.db.prepare(
+      if (graphChanged) {
+        this.db.prepare("UPDATE workspaces SET precision_revision=?,updated_at=? WHERE id=?")
+          .run(revision, this.nowIso(), this.workspace.id);
+      }
+      const stateUpdate = this.db.prepare(
         `UPDATE precision_provider_state SET status=?,precision_revision=?,eligible_edges=?,resolved_edges=?,rejected_edges=?,
          last_error=?,lease_owner=NULL,lease_token=NULL,lease_expires_epoch=NULL,updated_at=?
-         WHERE workspace_id=? AND provider=?`,
+         WHERE workspace_id=? AND provider=? AND provider_version=? AND status='running'
+           AND lease_token=? AND lease_owner=? AND base_generation=? AND transition_epoch=?`,
       ).run(commit.partial ? "partial" : "ready", revision, commit.eligibleEdges, resolved, rejected,
-        commit.diagnostics.length > 0 ? commit.diagnostics.join("; ") : null, this.nowIso(), this.workspace.id, claim.provider);
+        commit.diagnostics.length > 0 ? commit.diagnostics.join("; ") : null, this.nowIso(), this.workspace.id, claim.provider,
+        claim.providerVersion, claim.token, claim.owner, claim.baseGeneration, claim.transitionEpoch);
+      if (Number(stateUpdate.changes) !== 1) return;
       this.refreshEffectiveNodeMaterializations(affectedNodes);
       committed = true;
     });
@@ -1594,8 +1674,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const result = this.db.prepare(
         `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
          lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
-         AND lease_token=? AND lease_owner=? AND base_generation=? AND lease_expires_epoch>?`,
-      ).run(error, nowIso, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration, now);
+         AND provider_version=? AND lease_token=? AND lease_owner=? AND base_generation=?
+         AND transition_epoch=? AND lease_expires_epoch>?`,
+      ).run(error, nowIso, this.workspace.id, claim.provider, claim.providerVersion, claim.token, claim.owner,
+        claim.baseGeneration, claim.transitionEpoch, now);
       if (Number(result.changes) === 1) {
         if (overlayWasVisible) this.fencePrecisionOverlayWithdrawal(claim.provider);
         this.refreshEffectiveNodeMaterializations(affectedNodes);
@@ -1612,8 +1694,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const result = this.db.prepare(
         `UPDATE precision_provider_state SET status='failed',last_error=?,lease_owner=NULL,lease_token=NULL,
          lease_expires_epoch=NULL,updated_at=? WHERE workspace_id=? AND provider=? AND status='running'
-         AND lease_token=? AND lease_owner=? AND base_generation=?`,
-      ).run(error, timestamp, this.workspace.id, claim.provider, claim.token, claim.owner, claim.baseGeneration);
+         AND provider_version=? AND lease_token=? AND lease_owner=? AND base_generation=? AND transition_epoch=?`,
+      ).run(error, timestamp, this.workspace.id, claim.provider, claim.providerVersion, claim.token, claim.owner,
+        claim.baseGeneration, claim.transitionEpoch);
       if (Number(result.changes) === 1) {
         if (overlayWasVisible) this.fencePrecisionOverlayWithdrawal(claim.provider);
         this.refreshEffectiveNodeMaterializations(affectedNodes);
