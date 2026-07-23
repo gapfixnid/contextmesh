@@ -54,5 +54,16 @@ jobs:
           path: v06-lint.log
           if-no-files-found: error
       - run: npm run build:native
-      - run: npx vitest run tests/v06-boundary.test.ts
+      - name: Run boundary tests
+        shell: pwsh
+        run: |
+          npx vitest run tests/v06-boundary.test.ts *>&1 | Tee-Object -FilePath v06-boundary-test.log
+          $code = $LASTEXITCODE
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v06-boundary-test-${{ runner.os }}-${{ github.sha }}
+          path: v06-boundary-test.log
+          if-no-files-found: error
       - run: npm run build
