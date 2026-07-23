@@ -1,6 +1,6 @@
-# Multilanguage providers (v0.5)
+# Multilanguage providers (v0.5–v0.6)
 
-ContextMesh 0.5 indexes TypeScript/JavaScript, Python, Go, Rust, Java, and C# into one base graph generation. Syntax extraction always completes independently of optional precision tooling. Precision results are committed later under a separate `precisionRevision`; a provider failure or missing executable never removes the last committed base graph.
+ContextMesh indexes TypeScript/JavaScript, Python, Go, Rust, Java, and C# into one base graph generation. Syntax extraction always completes independently of optional precision tooling. Precision results are committed later under a separate `precisionRevision`; a provider failure or missing executable never removes the last committed base graph.
 
 | Language | Syntax provider | Precision provider | Capability |
 | --- | --- | --- | --- |
@@ -19,15 +19,35 @@ Every edge carries provider/version/source/confidence evidence. Syntax candidate
 
 Provider updates do not advance `graphGeneration`. A base commit marks prior overlays stale, deletes generation-bound edge and node rows through foreign keys, and then allows each provider to refresh independently. Migration 011 keeps typed/resolved signatures, documentation, metadata, FTS terms, and semantic source hashes in the effective precision view without overwriting the syntax base. Cache keys include both graph generation and precision revision, and public reads retry once if either changes.
 
-ContextMesh never confirms an edge across language families based on a name match. HTTP/RPC/queue/DB boundary linking remains v0.6 scope.
+ContextMesh never confirms an edge across language families based on a name match.
 
-## v0.6 HTTP boundary slice
+## v0.6 deterministic boundary linking
 
-The first v0.6 slice adds deterministic HTTP boundary linking for TypeScript/JavaScript, Python, Go, and Rust. It recognizes a bounded set of framework client/server forms only when the HTTP method and path are static string literals. A unique server endpoint in a different language creates a resolved `CALLS` edge with `contextmesh_http_boundary@http-literal-v1` resolver evidence containing the normalized method/path, both languages, both files, and source spans.
+Boundary links are generated during graph merging and commit atomically with the base generation. A source edit therefore adds, replaces, or withdraws boundary evidence in the same graph replacement. Boundary-provider versions participate in the global index configuration hash, so an unchanged v0.5 workspace performs one full reinterpretation after upgrading.
 
-A missing or duplicate cross-language server endpoint is not selected by symbol name. The client remains an `HTTP_BOUNDARY_CALL` unresolved reference with zero or multiple candidates. Dynamic/template/parameterized paths and handlers that cannot be bound uniquely are not confirmed. Comment text is masked before matching. Boundary edges are generated during graph merging and commit atomically with the base generation, so an incremental route change withdraws the previous link in the same graph replacement.
+### HTTP
 
-RPC, queue, database boundaries and the dedicated impact-analysis response remain later v0.6 slices.
+`contextmesh_http_boundary@http-literal-v1` recognizes a bounded set of TypeScript/JavaScript, Python, Go, and Rust client/server forms only when the HTTP method and relative path are static string literals. A unique server endpoint in a different language creates a resolved `CALLS` edge. Missing or duplicate endpoints remain `HTTP_BOUNDARY_CALL` unresolved references. External URLs, protocol-relative URLs, composed strings, templates, parameterized paths, comments, and cross-file name-only handler binding are not confirmed.
+
+### RPC
+
+`contextmesh_protocol_boundary@rpc-queue-db-literal-v1` recognizes explicitly RPC-named `call`/`request`/`invoke` clients and `register`/`handle`/`method` servers. The literal RPC method name must match exactly and one cross-language server owner must be bound locally. Missing or duplicate handlers remain `RPC_BOUNDARY_CALL` unresolved references.
+
+### Queue
+
+The same provider recognizes explicitly queue/broker/producer `publish`/`send`/`emit` operations and queue/broker/consumer `subscribe`/`consume` handlers. A static topic can intentionally fan out to multiple exact cross-language consumers, producing one resolved `CALLS` edge per consumer. A topic without a consumer remains `QUEUE_BOUNDARY_PUBLISH` unresolved.
+
+### Database
+
+Simple single-statement SQL literals are recognized for `INSERT INTO`, `UPDATE`, `DELETE FROM`, and `SELECT ... FROM`. Writers connect to every exact cross-language reader of the same normalized table through resolved `REFERENCES` edges. Multi-statement, dynamic, composed, query-builder, join-derived, or identifier-interpolated SQL is not claimed. A writer with no reader remains `DATABASE_BOUNDARY_WRITE` unresolved.
+
+All boundary evidence records the protocol, operation/resource, source and target roles, languages, files, and source spans. The generation graph cache restores cross-language edges that do not fit one language partition without changing the underlying partition or precision-overlay contracts.
+
+## v0.6 impact analysis
+
+`impact_code` reuses one `trace_code` generation/precision snapshot. It reports bounded upstream or downstream affected symbols, minimum depth, relation status, confidence, cross-language classification, normalized boundary evidence, unresolved paths, and strict token-budget truncation. Rejected edges are never affected targets. Every response states that static graph reachability does not prove runtime reachability; candidate or unresolved paths carry an explicit verification warning.
+
+The immutable `contextmesh-v06-boundary-impact-v1` fixture covers resolved HTTP/RPC/database links, queue fan-out, ambiguous HTTP/RPC endpoints, missing queue/database targets, impact confirmation, exact-path precision/recall, and repeated normalized signatures. `npm run evaluate:v06` generates source-bound evidence and `npm run verify:v06-artifact` rejects changed fixture bytes, source bytes, run counts, signatures, outcomes, or metrics. The checked artifact is generated only after the v0.6 source scope is frozen.
 
 ## Conformance and supply chain
 
