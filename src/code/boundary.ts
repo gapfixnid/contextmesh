@@ -4,9 +4,14 @@ import type {
   IndexedSourceFile,
   UnresolvedReferenceRecord,
 } from "../contracts.js";
+import {
+  boundaryResourceEdge,
+  boundaryResourceNode,
+} from "./boundary-resource.js";
+import { executableMatches, lexicalSource } from "./source-lexical.js";
 
 export const HTTP_BOUNDARY_PROVIDER = "contextmesh_http_boundary";
-export const HTTP_BOUNDARY_PROVIDER_VERSION = "http-literal-v1";
+export const HTTP_BOUNDARY_PROVIDER_VERSION = "http-resource-v2";
 
 const CALLABLE_KINDS = new Set(["function", "method"]);
 const HTTP_METHOD = "(?:get|post|put|patch|delete|options|head)";
@@ -28,73 +33,10 @@ interface HttpEndpoint extends SourcePosition {
 }
 
 export interface HttpBoundaryResult {
+  nodes: CodeNodeRecord[];
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
   diagnostics: string[];
-}
-
-function maskComments(source: string, language: IndexedSourceFile["language"]): string {
-  const output = source.split("");
-  const python = language === "python";
-  let quote: "'" | "\"" | "`" | "'''" | "\"\"\"" | null = null;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index]!;
-    const next = source[index + 1] ?? "";
-    if (lineComment) {
-      if (character === "\n" || character === "\r") lineComment = false;
-      else output[index] = " ";
-      continue;
-    }
-    if (blockComment) {
-      output[index] = character === "\n" || character === "\r" ? character : " ";
-      if (character === "*" && next === "/") {
-        output[index + 1] = " ";
-        blockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (quote) {
-      if (source.startsWith(quote, index)) {
-        index += quote.length - 1;
-        quote = null;
-      } else if (quote.length === 1 && character === "\\") {
-        index += 1;
-      }
-      continue;
-    }
-    if (python && (source.startsWith("'''", index) || source.startsWith("\"\"\"", index))) {
-      quote = source.startsWith("'''", index) ? "'''" : "\"\"\"";
-      index += 2;
-      continue;
-    }
-    if (character === "'" || character === "\"" || character === "`") {
-      quote = character;
-      continue;
-    }
-    if (python && character === "#") {
-      output[index] = " ";
-      lineComment = true;
-      continue;
-    }
-    if (!python && character === "/" && next === "/") {
-      output[index] = " ";
-      output[index + 1] = " ";
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-    if (!python && character === "/" && next === "*") {
-      output[index] = " ";
-      output[index + 1] = " ";
-      blockComment = true;
-      index += 1;
-    }
-  }
-  return output.join("");
 }
 
 function sourcePosition(source: string, start: number, end: number): SourcePosition {
@@ -196,6 +138,7 @@ function extractJavaScript(
   file: IndexedSourceFile,
   nodes: CodeNodeRecord[],
   masked: string,
+  executable: readonly boolean[],
   clients: HttpEndpoint[],
   servers: HttpEndpoint[],
   diagnostics: string[],
@@ -204,7 +147,7 @@ function extractJavaScript(
     `\\b(?:app|router|server|fastify)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2\\s*,\\s*([A-Za-z_$][\\w$]*)`,
     "gi",
   );
-  for (const match of masked.matchAll(server)) {
+  for (const match of executableMatches(masked, server, executable)) {
     const owner = namedOwner(file, nodes, match[4]!);
     if (!addEndpoint(servers, "server", match[1]!, match[3]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
       reportMissingHandler(diagnostics, file, match[4]!, match[3]!, owner);
@@ -212,7 +155,7 @@ function extractJavaScript(
   }
 
   const fetchCall = /\bfetch\s*\(\s*(["'])([^"'\\\r\n]+)\1/gi;
-  for (const match of masked.matchAll(fetchCall)) {
+  for (const match of executableMatches(masked, fetchCall, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     const method = callWindow(masked, match.index!).match(/\bmethod\s*:\s*["'](get|post|put|patch|delete|options|head)["']/i)?.[1] ?? "GET";
     addEndpoint(clients, "client", method, match[2]!, file,
@@ -223,7 +166,7 @@ function extractJavaScript(
     `\\b(?:axios|ky)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2`,
     "gi",
   );
-  for (const match of masked.matchAll(axiosCall)) {
+  for (const match of executableMatches(masked, axiosCall, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addEndpoint(clients, "client", match[1]!, match[3]!, file,
       containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
@@ -234,6 +177,7 @@ function extractPython(
   file: IndexedSourceFile,
   nodes: CodeNodeRecord[],
   masked: string,
+  executable: readonly boolean[],
   clients: HttpEndpoint[],
   servers: HttpEndpoint[],
   diagnostics: string[],
@@ -242,7 +186,7 @@ function extractPython(
     `@(?:app|router|blueprint)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2[^\\r\\n]*\\)\\s*\\r?\\n[ \\t]*(?:async[ \\t]+)?def[ \\t]+([A-Za-z_]\\w*)`,
     "gi",
   );
-  for (const match of masked.matchAll(decorator)) {
+  for (const match of executableMatches(masked, decorator, executable)) {
     const owner = namedOwner(file, nodes, match[4]!);
     if (!addEndpoint(servers, "server", match[1]!, match[3]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
       reportMissingHandler(diagnostics, file, match[4]!, match[3]!, owner);
@@ -250,7 +194,7 @@ function extractPython(
   }
 
   const route = /@(?:app|router|blueprint)\s*\.\s*route\s*\(\s*(["'])([^"'\\\r\n]+)\1([^\r\n]*)\)\s*\r?\n[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)/gi;
-  for (const match of masked.matchAll(route)) {
+  for (const match of executableMatches(masked, route, executable)) {
     const methodsSource = match[3]?.match(/methods\s*=\s*\[([^\]]*)\]/i)?.[1] ?? "";
     const methods = [...methodsSource.matchAll(/["']([A-Za-z]+)["']/g)].map((item) => item[1]!);
     const owner = namedOwner(file, nodes, match[4]!);
@@ -265,7 +209,7 @@ function extractPython(
     `\\b(?:requests|httpx)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2`,
     "gi",
   );
-  for (const match of masked.matchAll(client)) {
+  for (const match of executableMatches(masked, client, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addEndpoint(clients, "client", match[1]!, match[3]!, file,
       containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
@@ -276,12 +220,13 @@ function extractGo(
   file: IndexedSourceFile,
   nodes: CodeNodeRecord[],
   masked: string,
+  executable: readonly boolean[],
   clients: HttpEndpoint[],
   servers: HttpEndpoint[],
   diagnostics: string[],
 ): void {
   const handle = /\b(?:http\.)?HandleFunc\s*\(\s*"([^"\\\r\n]+)"\s*,\s*([A-Za-z_]\w*)/g;
-  for (const match of masked.matchAll(handle)) {
+  for (const match of executableMatches(masked, handle, executable)) {
     const owner = namedOwner(file, nodes, match[2]!);
     if (!addEndpoint(servers, "server", "ANY", match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
       reportMissingHandler(diagnostics, file, match[2]!, match[1]!, owner);
@@ -289,14 +234,14 @@ function extractGo(
   }
 
   const client = /\bhttp\.(Get|Post|Head)\s*\(\s*"([^"\\\r\n]+)"/g;
-  for (const match of masked.matchAll(client)) {
+  for (const match of executableMatches(masked, client, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addEndpoint(clients, "client", match[1]!, match[2]!, file,
       containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
   }
 
   const request = /\bhttp\.NewRequest(?:WithContext)?\s*\(\s*"([A-Za-z]+)"\s*,\s*"([^"\\\r\n]+)"/g;
-  for (const match of masked.matchAll(request)) {
+  for (const match of executableMatches(masked, request, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addEndpoint(clients, "client", match[1]!, match[2]!, file,
       containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
@@ -307,6 +252,7 @@ function extractRust(
   file: IndexedSourceFile,
   nodes: CodeNodeRecord[],
   masked: string,
+  executable: readonly boolean[],
   clients: HttpEndpoint[],
   servers: HttpEndpoint[],
   diagnostics: string[],
@@ -315,7 +261,7 @@ function extractRust(
     `\\.route\\s*\\(\\s*"([^"\\\\\\r\\n]+)"\\s*,\\s*(${HTTP_METHOD})\\s*\\(\\s*([A-Za-z_]\\w*)\\s*\\)`,
     "gi",
   );
-  for (const match of masked.matchAll(route)) {
+  for (const match of executableMatches(masked, route, executable)) {
     const owner = namedOwner(file, nodes, match[3]!);
     if (!addEndpoint(servers, "server", match[2]!, match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
       reportMissingHandler(diagnostics, file, match[3]!, match[1]!, owner);
@@ -326,7 +272,7 @@ function extractRust(
     `#\\[(${HTTP_METHOD})\\s*\\(\\s*"([^"\\\\\\r\\n]+)"\\s*\\)\\]\\s*(?:pub\\s+)?(?:async\\s+)?fn\\s+([A-Za-z_]\\w*)`,
     "gi",
   );
-  for (const match of masked.matchAll(actix)) {
+  for (const match of executableMatches(masked, actix, executable)) {
     const owner = namedOwner(file, nodes, match[3]!);
     if (!addEndpoint(servers, "server", match[1]!, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
       reportMissingHandler(diagnostics, file, match[3]!, match[2]!, owner);
@@ -334,7 +280,7 @@ function extractRust(
   }
 
   const client = /\breqwest::get\s*\(\s*"([^"\\\r\n]+)"/g;
-  for (const match of masked.matchAll(client)) {
+  for (const match of executableMatches(masked, client, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addEndpoint(clients, "client", "GET", match[1]!, file,
       containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
@@ -350,15 +296,16 @@ function extractEndpoints(files: IndexedSourceFile[], nodes: CodeNodeRecord[]): 
   const servers: HttpEndpoint[] = [];
   const diagnostics: string[] = [];
   for (const file of [...files].sort((left, right) => left.pathKey.localeCompare(right.pathKey))) {
-    const masked = maskComments(file.content, file.language);
+    const lexical = lexicalSource(file.content, file.language);
+    const masked = lexical.masked;
     if (["typescript", "tsx", "javascript", "jsx", "mjs", "cjs"].includes(file.language)) {
-      extractJavaScript(file, nodes, masked, clients, servers, diagnostics);
+      extractJavaScript(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
     } else if (file.language === "python") {
-      extractPython(file, nodes, masked, clients, servers, diagnostics);
+      extractPython(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
     } else if (file.language === "go") {
-      extractGo(file, nodes, masked, clients, servers, diagnostics);
+      extractGo(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
     } else if (file.language === "rust") {
-      extractRust(file, nodes, masked, clients, servers, diagnostics);
+      extractRust(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
     }
   }
   const key = (item: HttpEndpoint): string =>
@@ -412,6 +359,8 @@ export function linkHttpBoundaries(
   nodes: CodeNodeRecord[],
 ): HttpBoundaryResult {
   const extracted = extractEndpoints(files, nodes);
+  const resources = new Map<string, CodeNodeRecord>();
+  const edges = new Map<string, CodeEdgeRecord>();
   const pairs = new Map<string, {
     client: HttpEndpoint;
     server: HttpEndpoint;
@@ -427,7 +376,14 @@ export function linkHttpBoundaries(
     const candidates = new Map((exact.length > 0 ? exact : fallback).map((server) => [server.owner.id, server]));
     if (candidates.size === 1) {
       const server = [...candidates.values()][0]!;
-      const key = `${client.owner.id}\0${server.owner.id}`;
+      const identity = { protocol: "http" as const, operation: client.method, resource: client.path };
+      const resource = boundaryResourceNode(
+        { id: client.file.workspaceId },
+        client.file.generation,
+        identity,
+      );
+      resources.set(resource.id, resource);
+      const key = `${client.owner.id}\0${resource.id}\0${server.owner.id}`;
       const item = boundaryEvidence(client, server);
       const prior = pairs.get(key);
       if (prior) {
@@ -474,25 +430,41 @@ export function linkHttpBoundaries(
     });
   }
 
-  const edges = [...pairs.values()].map(({ client, server, evidence }) => ({
-    workspaceId: client.file.workspaceId,
-    sourceId: client.owner.id,
-    targetId: server.owner.id,
-    kind: "CALLS" as const,
-    confidence: 1,
-    resolutionKind: "exact" as const,
-    generation: client.file.generation,
-    metadata: {
-      boundaryProtocol: "http",
-      boundaries: evidence.map((item) => item.details).filter(Boolean),
-    },
-    status: "resolved" as const,
-    evidence,
-  })).sort((left, right) =>
-    `${left.sourceId}\0${left.targetId}`.localeCompare(`${right.sourceId}\0${right.targetId}`));
+  for (const { client, server, evidence } of pairs.values()) {
+    const identity = { protocol: "http" as const, operation: client.method, resource: client.path };
+    const resource = boundaryResourceNode({ id: client.file.workspaceId }, client.file.generation, identity);
+    for (const edge of [
+      boundaryResourceEdge({
+        workspaceId: client.file.workspaceId,
+        sourceId: client.owner.id,
+        targetId: resource.id,
+        kind: "REQUESTS",
+        generation: client.file.generation,
+        evidence,
+        identity,
+      }),
+      boundaryResourceEdge({
+        workspaceId: client.file.workspaceId,
+        sourceId: resource.id,
+        targetId: server.owner.id,
+        kind: "HANDLED_BY",
+        generation: client.file.generation,
+        evidence,
+        identity,
+      }),
+    ]) edges.set(`${edge.sourceId}\0${edge.targetId}\0${edge.kind}`, edge);
+  }
 
   const unresolvedKey = (item: UnresolvedReferenceRecord): string =>
     `${item.fileId}\0${item.sourceNodeId ?? ""}\0${item.rawName}\0${item.line}\0${item.column}`;
   unresolvedReferences.sort((left, right) => unresolvedKey(left).localeCompare(unresolvedKey(right)));
-  return { edges, unresolvedReferences, diagnostics: extracted.diagnostics };
+  return {
+    nodes: [...resources.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    edges: [...edges.values()].sort((left, right) =>
+      `${left.sourceId}\0${left.targetId}\0${left.kind}`.localeCompare(
+        `${right.sourceId}\0${right.targetId}\0${right.kind}`,
+      )),
+    unresolvedReferences,
+    diagnostics: extracted.diagnostics,
+  };
 }

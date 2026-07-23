@@ -42,8 +42,8 @@ describe("v0.6 boundary impact evaluation", () => {
       deterministic: true,
       passed: true,
       fixture: {
-        caseCount: 8,
-        digest: "2dba90b9741989283ca665e39bda94f67a650a056372b4976df41a8a07fe8779",
+        caseCount: 11,
+        digest: "dbb39a2900f5730ed1d13c5967648fed7e11ab1ffd818c0a8bdd5f99d7ac134f",
       },
       metrics: { precision: 1, recall: 1, falsePositive: 0 },
     });

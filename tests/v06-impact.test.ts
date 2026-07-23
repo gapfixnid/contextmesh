@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import type { Envelope } from "../src/contracts.js";
-import type { ImpactData } from "../src/code/impact.js";
+import { buildImpactEnvelope, type ImpactData } from "../src/code/impact.js";
+import type { TraceResult } from "../src/storage/database.js";
 import { createMcpServer } from "../src/mcp/server.js";
 
 const roots: string[] = [];
@@ -51,6 +52,91 @@ async function linkedClient(app: ContextMeshApp): Promise<{
 }
 
 describe("v0.6 impact_code", () => {
+  it("does not mark a downstream target confirmed when every path contains a candidate edge", () => {
+    const node = (id: string) => ({
+      id,
+      workspaceId: "ws",
+      fileId: null,
+      kind: "function" as const,
+      name: id,
+      qualifiedName: id,
+      localKey: id,
+      signature: "",
+      doc: "",
+      isExported: true,
+      startByte: 0,
+      endByte: 0,
+      startLine: 1,
+      startColumn: 1,
+      endLine: 1,
+      endColumn: 1,
+      contentHash: id,
+      generation: 1,
+      metadata: {},
+      relativePath: null,
+      fileContentHash: null,
+      score: 1,
+      language: "typescript" as const,
+    });
+    const start = node("A");
+    const middle = node("B");
+    const downstream = node("C");
+    const trace: Envelope<TraceResult> = {
+      schemaVersion: 1,
+      workspaceId: "ws",
+      generation: 1,
+      data: {
+        start,
+        nodes: [start, middle, downstream],
+        edges: [
+          {
+            sourceId: "A",
+            targetId: "B",
+            kind: "CALLS",
+            confidence: 0.5,
+            resolutionKind: "heuristic",
+            depth: 1,
+            status: "candidate",
+            evidence: [],
+          },
+          {
+            sourceId: "B",
+            targetId: "C",
+            kind: "CALLS",
+            confidence: 1,
+            resolutionKind: "exact",
+            depth: 2,
+            status: "resolved",
+            evidence: [],
+          },
+        ],
+        unresolved: [],
+        truncated: false,
+      },
+      warnings: [],
+      truncated: false,
+      estimatedTokens: 1,
+    };
+    const impact = buildImpactEnvelope(trace, {
+      symbolId: "A",
+      direction: "out",
+      edgeKinds: ["CALLS"],
+      depth: 2,
+      limit: 20,
+      tokenBudget: 4000,
+    });
+    expect(impact.data.affected.find((item) => item.id === "B")).toMatchObject({
+      confirmed: false,
+      verificationRequired: true,
+      confidence: 0.5,
+    });
+    expect(impact.data.affected.find((item) => item.id === "C")).toMatchObject({
+      confirmed: false,
+      verificationRequired: true,
+      confidence: 0.5,
+    });
+  });
+
   it("summarizes a resolved cross-language HTTP impact deterministically", async () => {
     const root = workspace();
     writeFileSync(path.join(root, "client.ts"), [
@@ -79,8 +165,8 @@ describe("v0.6 impact_code", () => {
       const argumentsValue = {
         symbolId: clientSymbol,
         direction: "out",
-        edgeKinds: ["CALLS"],
-        depth: 1,
+        edgeKinds: ["REQUESTS", "HANDLED_BY"],
+        depth: 2,
         limit: 20,
         tokenBudget: 4000,
       };
@@ -99,8 +185,8 @@ describe("v0.6 impact_code", () => {
         confirmed: true,
         verificationRequired: false,
         crossLanguage: true,
-        minDepth: 1,
-        relationKinds: ["CALLS"],
+        minDepth: 2,
+        relationKinds: ["HANDLED_BY"],
       });
       expect(target?.boundaries).toContainEqual(expect.objectContaining({
         protocol: "http",
@@ -151,8 +237,8 @@ describe("v0.6 impact_code", () => {
         arguments: {
           symbolId: clientSymbol,
           direction: "out",
-          edgeKinds: ["CALLS"],
-          depth: 1,
+          edgeKinds: ["REQUESTS", "HANDLED_BY"],
+          depth: 2,
           limit: 20,
           tokenBudget: 4000,
         },

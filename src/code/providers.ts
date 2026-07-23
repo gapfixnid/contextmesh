@@ -168,6 +168,7 @@ export function mergeGraphBatches(
     linkProtocolBoundaries([...files.values()], [...nodes.values()]),
   ];
   for (const boundary of boundaryResults) {
+    for (const node of boundary.nodes) nodes.set(node.id, node);
     for (const edge of boundary.edges) {
       const key = edgeKey(edge);
       const prior = edges.get(key);

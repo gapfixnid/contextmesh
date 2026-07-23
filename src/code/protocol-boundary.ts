@@ -5,9 +5,15 @@ import type {
   IndexedSourceFile,
   UnresolvedReferenceRecord,
 } from "../contracts.js";
+import {
+  boundaryResourceEdge,
+  boundaryResourceNode,
+  type BoundaryResourceIdentity,
+} from "./boundary-resource.js";
+import { executableMatches, lexicalSource } from "./source-lexical.js";
 
 export const PROTOCOL_BOUNDARY_PROVIDER = "contextmesh_protocol_boundary";
-export const PROTOCOL_BOUNDARY_PROVIDER_VERSION = "rpc-queue-db-literal-v1";
+export const PROTOCOL_BOUNDARY_PROVIDER_VERSION = "rpc-queue-db-resource-v2";
 
 const CALLABLE_KINDS = new Set(["function", "method"]);
 const MAX_DIAGNOSTICS = 100;
@@ -32,72 +38,10 @@ interface Endpoint extends SourcePosition {
 }
 
 export interface ProtocolBoundaryResult {
+  nodes: CodeNodeRecord[];
   edges: CodeEdgeRecord[];
   unresolvedReferences: UnresolvedReferenceRecord[];
   diagnostics: string[];
-}
-
-function maskComments(source: string, language: IndexedSourceFile["language"]): string {
-  const output = source.split("");
-  const python = language === "python";
-  let quote: "'" | "\"" | "`" | "'''" | "\"\"\"" | null = null;
-  let lineComment = false;
-  let blockComment = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index]!;
-    const next = source[index + 1] ?? "";
-    if (lineComment) {
-      if (character === "\n" || character === "\r") lineComment = false;
-      else output[index] = " ";
-      continue;
-    }
-    if (blockComment) {
-      output[index] = character === "\n" || character === "\r" ? character : " ";
-      if (character === "*" && next === "/") {
-        output[index + 1] = " ";
-        blockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (quote) {
-      if (source.startsWith(quote, index)) {
-        index += quote.length - 1;
-        quote = null;
-      } else if (quote.length === 1 && character === "\\") {
-        index += 1;
-      }
-      continue;
-    }
-    if (python && (source.startsWith("'''", index) || source.startsWith("\"\"\"", index))) {
-      quote = source.startsWith("'''", index) ? "'''" : "\"\"\"";
-      index += 2;
-      continue;
-    }
-    if (character === "'" || character === "\"" || character === "`") {
-      quote = character;
-      continue;
-    }
-    if (python && character === "#") {
-      output[index] = " ";
-      lineComment = true;
-      continue;
-    }
-    if (!python && character === "/" && next === "/") {
-      output[index] = " ";
-      output[index + 1] = " ";
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-    if (!python && character === "/" && next === "*") {
-      output[index] = " ";
-      output[index + 1] = " ";
-      blockComment = true;
-      index += 1;
-    }
-  }
-  return output.join("");
 }
 
 function sourcePosition(source: string, start: number, end: number): SourcePosition {
@@ -192,11 +136,12 @@ function extractNamedEndpoints(
   file: IndexedSourceFile,
   nodes: CodeNodeRecord[],
   masked: string,
+  executable: readonly boolean[],
   endpoints: Endpoint[],
   diagnostics: string[],
 ): void {
   const rpcServer = /\b(?:rpc|rpcServer|rpc_server)\s*\.\s*(?:register|handle|method|registerMethod)\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*,\s*([A-Za-z_$][\w$]*)/gi;
-  for (const match of masked.matchAll(rpcServer)) {
+  for (const match of executableMatches(masked, rpcServer, executable)) {
     const owner = namedOwner(file, nodes, match[3]!);
     if (!addNamedEndpoint(endpoints, "rpc", "server", "handle", match[2]!, file, owner,
       file.content, match.index!, match.index! + match[0].length, false)) {
@@ -204,7 +149,7 @@ function extractNamedEndpoints(
     }
   }
   const rpcDecorator = /@(?:rpc|rpc_server)\s*\.\s*(?:method|handler)\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*\)\s*\r?\n[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)/gi;
-  for (const match of masked.matchAll(rpcDecorator)) {
+  for (const match of executableMatches(masked, rpcDecorator, executable)) {
     const owner = namedOwner(file, nodes, match[3]!);
     if (!addNamedEndpoint(endpoints, "rpc", "server", "handle", match[2]!, file, owner,
       file.content, match.index!, match.index! + match[0].length, false)) {
@@ -212,7 +157,7 @@ function extractNamedEndpoints(
     }
   }
   const rpcClient = /\b(?:rpc|rpcClient|rpc_client)\s*\.\s*(?:call|request|invoke)\s*\(\s*(["'])([^"'\\\r\n]+)\1/gi;
-  for (const match of masked.matchAll(rpcClient)) {
+  for (const match of executableMatches(masked, rpcClient, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addNamedEndpoint(endpoints, "rpc", "client", "call", match[2]!, file,
       containingOwner(file, nodes, position.startByte), file.content,
@@ -220,7 +165,7 @@ function extractNamedEndpoints(
   }
 
   const queueConsumer = /\b(?:queue|broker|consumer)\s*\.\s*(?:subscribe|consume|handle|on)\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*,\s*([A-Za-z_$][\w$]*)/gi;
-  for (const match of masked.matchAll(queueConsumer)) {
+  for (const match of executableMatches(masked, queueConsumer, executable)) {
     const owner = namedOwner(file, nodes, match[3]!);
     if (!addNamedEndpoint(endpoints, "queue", "consumer", "consume", match[2]!, file, owner,
       file.content, match.index!, match.index! + match[0].length, false)) {
@@ -228,7 +173,7 @@ function extractNamedEndpoints(
     }
   }
   const queueDecorator = /@(?:queue|broker)\s*\.\s*(?:consumer|subscribe|handler)\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*\)\s*\r?\n[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)/gi;
-  for (const match of masked.matchAll(queueDecorator)) {
+  for (const match of executableMatches(masked, queueDecorator, executable)) {
     const owner = namedOwner(file, nodes, match[3]!);
     if (!addNamedEndpoint(endpoints, "queue", "consumer", "consume", match[2]!, file, owner,
       file.content, match.index!, match.index! + match[0].length, false)) {
@@ -236,7 +181,7 @@ function extractNamedEndpoints(
     }
   }
   const queueProducer = /\b(?:queue|broker|producer)\s*\.\s*(?:publish|send|emit|produce)\s*\(\s*(["'])([^"'\\\r\n]+)\1/gi;
-  for (const match of masked.matchAll(queueProducer)) {
+  for (const match of executableMatches(masked, queueProducer, executable)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
     addNamedEndpoint(endpoints, "queue", "producer", "publish", match[2]!, file,
       containingOwner(file, nodes, position.startByte), file.content,
@@ -272,14 +217,21 @@ function classifySql(value: string): { role: "writer" | "reader"; operation: str
   return null;
 }
 
-function extractSqlEndpoints(file: IndexedSourceFile, nodes: CodeNodeRecord[], masked: string, endpoints: Endpoint[]): void {
+function extractSqlEndpoints(
+  file: IndexedSourceFile,
+  nodes: CodeNodeRecord[],
+  masked: string,
+  executable: readonly boolean[],
+  endpoints: Endpoint[],
+): void {
   const patterns = [
-    /'([^'\\\r\n]{1,4000})'/g,
-    /"([^"\\\r\n]{1,4000})"/g,
-    /`([^`\\]{1,4000})`/g,
+    /\b(?:db|client|pool|connection|cursor|session)\s*\.\s*(?:query|execute|exec|run|all|get)\s*\(\s*'([^'\\\r\n]{1,4000})'/gi,
+    /\b(?:db|client|pool|connection|cursor|session)\s*\.\s*(?:query|execute|exec|run|all|get)\s*\(\s*"([^"\\\r\n]{1,4000})"/gi,
+    /\b(?:db|client|pool|connection|cursor|session)\s*\.\s*(?:query|execute|exec|run|all|get)\s*\(\s*`([^`\\]{1,4000})`/gi,
+    /\b(?:sqlx::query(?:_as)?|diesel::sql_query)\s*\(\s*"([^"\\\r\n]{1,4000})"/gi,
   ];
   for (const pattern of patterns) {
-    for (const match of masked.matchAll(pattern)) {
+    for (const match of executableMatches(masked, pattern, executable)) {
       const classified = classifySql(match[1]!);
       if (!classified) continue;
       const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
@@ -318,9 +270,9 @@ function extractEndpoints(files: IndexedSourceFile[], nodes: CodeNodeRecord[]): 
   const diagnostics: string[] = [];
   for (const file of [...files].sort((left, right) => left.pathKey.localeCompare(right.pathKey))) {
     if (!["typescript", "tsx", "javascript", "jsx", "mjs", "cjs", "python", "go", "rust"].includes(file.language)) continue;
-    const masked = maskComments(file.content, file.language);
-    extractNamedEndpoints(file, nodes, masked, endpoints, diagnostics);
-    extractSqlEndpoints(file, nodes, masked, endpoints);
+    const lexical = lexicalSource(file.content, file.language);
+    extractNamedEndpoints(file, nodes, lexical.masked, lexical.executable, endpoints, diagnostics);
+    extractSqlEndpoints(file, nodes, lexical.masked, lexical.executable, endpoints);
   }
   const unique = new Map(endpoints.map((item) => [endpointKey(item), item]));
   return {
@@ -429,6 +381,8 @@ export function linkProtocolBoundaries(
   nodes: CodeNodeRecord[],
 ): ProtocolBoundaryResult {
   const extracted = extractEndpoints(files, nodes);
+  const resources = new Map<string, CodeNodeRecord>();
+  const edges = new Map<string, CodeEdgeRecord>();
   const pairs = new Map<string, {
     source: Endpoint;
     target: Endpoint;
@@ -443,7 +397,7 @@ export function linkProtocolBoundaries(
     const candidates = rpcServers.filter((server) =>
       server.resource === client.resource && server.file.language !== client.file.language);
     const uniqueTargets = new Map(candidates.map((item) => [item.owner.id, item]));
-    if (uniqueTargets.size === 1) addPair(pairs, client, [...uniqueTargets.values()][0]!, "CALLS");
+    if (uniqueTargets.size === 1) addPair(pairs, client, [...uniqueTargets.values()][0]!, "REQUESTS");
     else unresolvedReferences.push(unresolved(client, "RPC_BOUNDARY_CALL", [...uniqueTargets.values()]));
   }
 
@@ -454,7 +408,7 @@ export function linkProtocolBoundaries(
       .filter((consumer) => consumer.resource === producer.resource && consumer.file.language !== producer.file.language)
       .map((item) => [item.owner.id, item]));
     if (targets.size === 0) unresolvedReferences.push(unresolved(producer, "QUEUE_BOUNDARY_PUBLISH", []));
-    else for (const target of targets.values()) addPair(pairs, producer, target, "CALLS");
+    else for (const target of targets.values()) addPair(pairs, producer, target, "PUBLISHES");
   }
 
   const writers = extracted.endpoints.filter((item) => item.protocol === "database" && item.role === "writer");
@@ -464,28 +418,63 @@ export function linkProtocolBoundaries(
       .filter((reader) => reader.resource === writer.resource && reader.file.language !== writer.file.language)
       .map((item) => [item.owner.id, item]));
     if (targets.size === 0) unresolvedReferences.push(unresolved(writer, "DATABASE_BOUNDARY_WRITE", []));
-    else for (const target of targets.values()) addPair(pairs, writer, target, "REFERENCES");
+    else for (const target of targets.values()) addPair(pairs, writer, target, "WRITES_TO");
   }
 
-  const edges = [...pairs.values()].map(({ source, target, kind, evidence }) => ({
-    workspaceId: source.file.workspaceId,
-    sourceId: source.owner.id,
-    targetId: target.owner.id,
-    kind,
-    confidence: 1,
-    resolutionKind: "exact" as const,
-    generation: source.file.generation,
-    metadata: {
-      boundaryProtocol: source.protocol,
-      boundaries: evidence.map((item) => item.details).filter(Boolean),
-    },
-    status: "resolved" as const,
-    evidence,
-  })).sort((left, right) =>
-    `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`));
+  for (const { source, target, evidence } of pairs.values()) {
+    const identity: BoundaryResourceIdentity = {
+      protocol: source.protocol,
+      operation: source.protocol === "database"
+        ? "table"
+        : source.protocol === "queue"
+          ? "topic"
+          : "method",
+      resource: source.resource,
+    };
+    const resource = boundaryResourceNode({ id: source.file.workspaceId }, source.file.generation, identity);
+    resources.set(resource.id, resource);
+    const sourceKind: CodeEdgeKind = source.protocol === "rpc"
+      ? "REQUESTS"
+      : source.protocol === "queue"
+        ? "PUBLISHES"
+        : "WRITES_TO";
+    const targetKind: CodeEdgeKind = source.protocol === "rpc"
+      ? "HANDLED_BY"
+      : source.protocol === "queue"
+        ? "CONSUMES"
+        : "READS_FROM";
+    for (const edge of [
+      boundaryResourceEdge({
+        workspaceId: source.file.workspaceId,
+        sourceId: source.owner.id,
+        targetId: resource.id,
+        kind: sourceKind,
+        generation: source.file.generation,
+        evidence,
+        identity,
+      }),
+      boundaryResourceEdge({
+        workspaceId: source.file.workspaceId,
+        sourceId: resource.id,
+        targetId: target.owner.id,
+        kind: targetKind,
+        generation: source.file.generation,
+        evidence,
+        identity,
+      }),
+    ]) edges.set(`${edge.sourceId}\0${edge.targetId}\0${edge.kind}`, edge);
+  }
 
   const unresolvedKey = (item: UnresolvedReferenceRecord): string =>
     `${item.fileId}\0${item.sourceNodeId ?? ""}\0${item.kind}\0${item.rawName}\0${item.line}\0${item.column}`;
   unresolvedReferences.sort((left, right) => unresolvedKey(left).localeCompare(unresolvedKey(right)));
-  return { edges, unresolvedReferences, diagnostics: extracted.diagnostics };
+  return {
+    nodes: [...resources.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    edges: [...edges.values()].sort((left, right) =>
+      `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(
+        `${right.kind}\0${right.sourceId}\0${right.targetId}`,
+      )),
+    unresolvedReferences,
+    diagnostics: extracted.diagnostics,
+  };
 }

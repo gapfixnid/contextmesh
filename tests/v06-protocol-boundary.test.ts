@@ -48,7 +48,7 @@ async function trace(
     symbolId: symbol,
     direction: "out",
     edgeKinds,
-    depth: 1,
+    depth: 2,
     limit: 50,
   }) as Promise<Envelope<TraceData>>;
 }
@@ -79,10 +79,13 @@ describe("v0.6 literal protocol boundaries", () => {
       await app.indexWorkspace({ mode: "full" });
       const client = await symbolId(app, "loadUser", "typescript");
       const server = await symbolId(app, "get_user", "python");
-      const result = await trace(app, client, ["CALLS"]);
+      const result = await trace(app, client, ["REQUESTS", "HANDLED_BY"]);
+      const request = result.data.edges.find((edge) =>
+        edge.sourceId === client && edge.kind === "REQUESTS" && protocolEvidence(edge, "rpc"));
       const boundary = result.data.edges.find((edge) =>
-        edge.sourceId === client && edge.targetId === server && protocolEvidence(edge, "rpc"));
-      expect(boundary).toMatchObject({ kind: "CALLS", status: "resolved" });
+        edge.sourceId === request?.targetId && edge.targetId === server && protocolEvidence(edge, "rpc"));
+      expect(request).toMatchObject({ kind: "REQUESTS", status: "resolved" });
+      expect(boundary).toMatchObject({ kind: "HANDLED_BY", status: "resolved" });
       expect(boundary?.evidence).toContainEqual(expect.objectContaining({
         provider: "contextmesh_protocol_boundary",
         details: expect.objectContaining({
@@ -124,9 +127,12 @@ describe("v0.6 literal protocol boundaries", () => {
       const producer = await symbolId(app, "publish_order", "python");
       const tsConsumer = await symbolId(app, "handleOrder", "typescript");
       const rustConsumer = await symbolId(app, "handle_order", "rust");
-      const result = await trace(app, producer, ["CALLS"]);
+      const result = await trace(app, producer, ["PUBLISHES", "CONSUMES"]);
+      const publication = result.data.edges.find((edge) =>
+        edge.sourceId === producer && edge.kind === "PUBLISHES" && protocolEvidence(edge, "queue"));
       const targets = result.data.edges
-        .filter((edge) => edge.sourceId === producer && protocolEvidence(edge, "queue"))
+        .filter((edge) =>
+          edge.sourceId === publication?.targetId && edge.kind === "CONSUMES" && protocolEvidence(edge, "queue"))
         .map((edge) => edge.targetId)
         .sort();
       expect(targets).toEqual([tsConsumer, rustConsumer].sort());
@@ -155,10 +161,13 @@ describe("v0.6 literal protocol boundaries", () => {
       await app.indexWorkspace({ mode: "full" });
       const writer = await symbolId(app, "SaveUser", "go");
       const reader = await symbolId(app, "read_users", "python");
-      const result = await trace(app, writer, ["REFERENCES"]);
+      const result = await trace(app, writer, ["WRITES_TO", "READS_FROM"]);
+      const write = result.data.edges.find((edge) =>
+        edge.sourceId === writer && edge.kind === "WRITES_TO" && protocolEvidence(edge, "database"));
       const boundary = result.data.edges.find((edge) =>
-        edge.sourceId === writer && edge.targetId === reader && protocolEvidence(edge, "database"));
-      expect(boundary).toMatchObject({ kind: "REFERENCES", status: "resolved" });
+        edge.sourceId === write?.targetId && edge.targetId === reader && protocolEvidence(edge, "database"));
+      expect(write).toMatchObject({ kind: "WRITES_TO", status: "resolved" });
+      expect(boundary).toMatchObject({ kind: "READS_FROM", status: "resolved" });
       expect(boundary?.evidence).toContainEqual(expect.objectContaining({
         details: expect.objectContaining({
           boundaryProtocol: "database",
@@ -194,7 +203,7 @@ describe("v0.6 literal protocol boundaries", () => {
     try {
       await app.indexWorkspace({ mode: "full" });
       const client = await symbolId(app, "loadUser", "typescript");
-      const result = await trace(app, client, ["CALLS"]);
+      const result = await trace(app, client, ["REQUESTS", "HANDLED_BY"]);
       expect(result.data.edges.some((edge) => protocolEvidence(edge, "rpc"))).toBe(false);
       expect(result.data.unresolved).toContainEqual(expect.objectContaining({
         sourceNodeId: client,
@@ -226,11 +235,54 @@ describe("v0.6 literal protocol boundaries", () => {
       await app.indexWorkspace({ mode: "full" });
       for (const name of ["dynamicRpc", "dynamicQueue"]) {
         const symbol = await symbolId(app, name, "typescript");
-        const result = await trace(app, symbol, ["CALLS"]);
+        const result = await trace(app, symbol, ["REQUESTS", "HANDLED_BY", "PUBLISHES", "CONSUMES"]);
         expect(result.data.edges.some((edge) =>
           edge.evidence?.some((item) => item.provider === "contextmesh_protocol_boundary"))).toBe(false);
         expect(result.data.unresolved.some((item) =>
           item.kind === "RPC_BOUNDARY_CALL" || item.kind === "QUEUE_BOUNDARY_PUBLISH")).toBe(false);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("ignores protocol examples and standalone SQL text that are not executable boundary calls", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "notes.ts"), [
+      "export function protocolNotes() {",
+      "  const rpcExample = \"rpc.call('users.get', {})\";",
+      "  const queueExample = \"queue.publish('orders.created', {})\";",
+      "  return rpcExample + queueExample;",
+      "}",
+      "export function migrationNotes() {",
+      "  return 'INSERT INTO users (id) VALUES (1)';",
+      "}",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "reader.py"), [
+      "def test_expectation():",
+      "    return 'SELECT id FROM users'",
+      "@rpc.method('users.get')",
+      "def get_user(): return {}",
+      "@queue.consumer('orders.created')",
+      "def consume_order(): return None",
+      "",
+    ].join("\n"));
+
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      for (const name of ["protocolNotes", "migrationNotes"]) {
+        const symbol = await symbolId(app, name, "typescript");
+        const result = await trace(app, symbol, [
+          "REQUESTS", "HANDLED_BY", "PUBLISHES", "CONSUMES", "WRITES_TO", "READS_FROM",
+        ]);
+        expect(result.data.edges.some((edge) =>
+          edge.evidence?.some((item) => item.provider === "contextmesh_protocol_boundary"))).toBe(false);
+        expect(result.data.unresolved.some((item) =>
+          item.kind === "RPC_BOUNDARY_CALL" ||
+          item.kind === "QUEUE_BOUNDARY_PUBLISH" ||
+          item.kind === "DATABASE_BOUNDARY_WRITE")).toBe(false);
       }
     } finally {
       await app.close();

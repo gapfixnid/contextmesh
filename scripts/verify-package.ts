@@ -246,6 +246,7 @@ try {
     "explore_context",
     "forget",
     "get_context",
+    "impact_analysis",
     "impact_code",
     "index_workspace",
     "recall",

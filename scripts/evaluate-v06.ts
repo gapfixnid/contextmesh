@@ -34,7 +34,7 @@ interface FixtureCase {
 }
 
 interface Fixture {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   immutable: true;
   description: string;
@@ -76,8 +76,16 @@ interface CaseResult {
   passed: boolean;
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v06-boundary-impact-v1.json");
-const PINNED_FIXTURE_DIGEST = "2dba90b9741989283ca665e39bda94f67a650a056372b4976df41a8a07fe8779";
+const FIXTURE_PATH = path.join(process.cwd(), "evaluation", "fixtures", "v06-boundary-impact-v2.json");
+const PINNED_FIXTURE_DIGEST = "dbb39a2900f5730ed1d13c5967648fed7e11ab1ffd818c0a8bdd5f99d7ac134f";
+const BOUNDARY_EDGE_KINDS = [
+  "REQUESTS",
+  "HANDLED_BY",
+  "PUBLISHES",
+  "CONSUMES",
+  "READS_FROM",
+  "WRITES_TO",
+] as const satisfies readonly CodeEdgeKind[];
 
 function digest(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
@@ -115,8 +123,8 @@ function sourceEvidence(): V04SourceEvidence {
 function loadFixture(): Fixture {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
   if (
-    fixture.schemaVersion !== 1 ||
-    fixture.id !== "contextmesh-v06-boundary-impact-v1" ||
+    fixture.schemaVersion !== 2 ||
+    fixture.id !== "contextmesh-v06-boundary-impact-v2" ||
     fixture.immutable !== true ||
     !fixture.provenance?.origin ||
     !fixture.provenance.authoredAgainst ||
@@ -135,6 +143,17 @@ function loadFixture(): Fixture {
   }
   if (!fixture.cases.some((item) => item.id === "queue-fanout" && item.expectedTargets.length >= 2)) {
     throw new Error("V06_FIXTURE_INVALID: queue fan-out case is required");
+  }
+  if (!fixture.cases.some((item) =>
+    item.id === "typescript-python-go-flow" &&
+    item.expectedTargets.some((target) => target.protocol === "http") &&
+    item.expectedTargets.some((target) => target.protocol === "queue"))) {
+    throw new Error("V06_FIXTURE_INVALID: TypeScript to Python to Go flow is required");
+  }
+  for (const id of ["negative-document-string", "negative-standalone-sql"]) {
+    if (!fixture.cases.some((item) => item.id === id && item.expectedTargets.length === 0)) {
+      throw new Error(`V06_FIXTURE_INVALID: missing false-positive case ${id}`);
+    }
   }
   for (const kind of ["HTTP_BOUNDARY_CALL", "RPC_BOUNDARY_CALL", "QUEUE_BOUNDARY_PUBLISH", "DATABASE_BOUNDARY_WRITE"]) {
     if (!fixture.cases.some((item) => item.expectedUnresolved?.kind === kind)) {
@@ -203,15 +222,15 @@ async function evaluateOnce(fixture: Fixture): Promise<CaseResult[]> {
       const traceEnvelope = await app.traceCode({
         symbolId: source.id,
         direction: "out",
-        edgeKinds: [fixtureCase.edgeKind],
-        depth: 1,
+        edgeKinds: [...BOUNDARY_EDGE_KINDS],
+        depth: 5,
         limit: 100,
       }) as Envelope<TraceResult>;
       const actualByKey = new Map<string, ActualTarget>();
       for (const edge of traceEnvelope.data.edges) {
-        if (edge.sourceId !== source.id || edge.kind !== fixtureCase.edgeKind || edge.status === "rejected") continue;
+        if (edge.status === "rejected") continue;
         const target = nodeById.get(edge.targetId);
-        if (!target) continue;
+        if (!target || target.kind === "resource") continue;
         for (const item of edge.evidence ?? []) {
           if (!item.details) continue;
           const boundary = boundaryDetails(item.details);
@@ -241,13 +260,13 @@ async function evaluateOnce(fixture: Fixture): Promise<CaseResult[]> {
       const impact = buildImpactEnvelope(traceEnvelope, {
         symbolId: source.id,
         direction: "out",
-        edgeKinds: [fixtureCase.edgeKind],
-        depth: 1,
+        edgeKinds: [...BOUNDARY_EDGE_KINDS],
+        depth: 5,
         limit: 100,
         tokenBudget: 8000,
       });
       const impactConfirmedTargets = impact.data.affected
-        .filter((item) => item.confirmed && item.boundaries.length > 0)
+        .filter((item) => item.kind !== "resource" && item.confirmed && item.boundaries.length > 0)
         .map((item) => item.qualifiedName)
         .sort();
       const expectedQualifiedNames = fixtureCase.expectedTargets.map((item) => item.qualifiedName).sort();

@@ -31,6 +31,7 @@ describe("MCP protocol", () => {
           "forget",
           "explore_context",
           "get_context",
+          "impact_analysis",
           "impact_code",
           "index_workspace",
           "recall",
@@ -46,6 +47,7 @@ describe("MCP protocol", () => {
       expect(rememberProperties?.anchor).toBeDefined();
       expect(rememberProperties?.isAnchor).toBeUndefined();
       const impactTool = tools.tools.find((tool) => tool.name === "impact_code");
+      expect(tools.tools.find((tool) => tool.name === "impact_analysis")).toBeDefined();
       const impactProperties = (impactTool?.inputSchema as { properties?: Record<string, unknown> }).properties;
       expect(impactProperties?.direction).toBeDefined();
       expect(impactProperties?.tokenBudget).toBeDefined();
@@ -94,7 +96,7 @@ describe("MCP protocol", () => {
       try {
         await client.connect(transport);
         const tools = await client.listTools();
-        expect(tools.tools).toHaveLength(11);
+        expect(tools.tools).toHaveLength(12);
         const status = await client.callTool({ name: "workspace_status", arguments: {} });
         expect(status.isError).not.toBe(true);
       } finally {

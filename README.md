@@ -88,7 +88,7 @@ Omit `--semantic-model` for the Phase 1–3 lexical/graph behavior. When supplie
 
 ## Indexing model
 
-ContextMesh reads `tsconfig.json` or `jsconfig.json` when available and otherwise creates a synthetic TypeScript project. It supports the TypeScript/JavaScript family plus `.py`, `.go`, `.rs`, `.java`, and `.cs`. The graph contains modules, external modules, functions, classes, methods, interfaces, type aliases, enums, and variables, connected by `CONTAINS`, `IMPORTS`, `EXPORTS`, `CALLS`, `EXTENDS`, and `IMPLEMENTS` edges.
+ContextMesh reads `tsconfig.json` or `jsconfig.json` when available and otherwise creates a synthetic TypeScript project. It supports the TypeScript/JavaScript family plus `.py`, `.go`, `.rs`, `.java`, and `.cs`. The graph contains modules, external modules, functions, classes, methods, interfaces, type aliases, enums, variables, and cross-language resource nodes. Code relations use `CONTAINS`, `IMPORTS`, `EXPORTS`, `CALLS`, `EXTENDS`, `IMPLEMENTS`, and `REFERENCES`; boundary roles use `REQUESTS`, `HANDLED_BY`, `PUBLISHES`, `CONSUMES`, `READS_FROM`, and `WRITES_TO`.
 
 Syntax candidates are always available. Go and Rust syntax use pinned Tree-sitter WASM grammars, while Java and C# remain deterministic syntax prototypes. TypeScript TypeChecker, the Python local-package resolver, optional Go `go/types`, and optional Rust `rust-analyzer` results are stored as independently fenced precision overlays. `workspace_status` reports provider capability and failure state; missing Go/Rust tooling does not prevent base indexing. `CONTEXTMESH_TYPESCRIPT_PRECISION_DISABLE=1`, `CONTEXTMESH_PYTHON_PRECISION_DISABLE=1`, `CONTEXTMESH_GO_TYPES_DISABLE=1`, and `CONTEXTMESH_RUST_ANALYZER_DISABLE=1` exercise the base-only policies. Rust precision defaults to `CONTEXTMESH_RUST_ANALYZER_POLICY=safe`; this disables known automatic Cargo execution paths but is not a security sandbox. Build scripts and proc macros require the explicit `trusted` policy.
 
@@ -109,7 +109,7 @@ Fast freshness compares the configured path set, size, and modification time, th
 
 ## Library API in 0.6.0
 
-Configure semantic retrieval and the additive watcher through the constructor. Version 0.6.0 adds deterministic HTTP/RPC/queue/database boundary evidence and the additive `impact_code` MCP tool without changing existing tool input schemas.
+Configure semantic retrieval and the additive watcher through the constructor. Version 0.6.0 adds deterministic HTTP/RPC/queue/database resource evidence and the `impact_analysis` MCP tool. `impact_code` remains a compatibility alias with the same input and output contract.
 
 ```ts
 import { ContextMeshApp } from "contextmesh";

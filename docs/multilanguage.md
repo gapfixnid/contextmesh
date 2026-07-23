@@ -27,27 +27,27 @@ Boundary links are generated during graph merging and commit atomically with the
 
 ### HTTP
 
-`contextmesh_http_boundary@http-literal-v1` recognizes a bounded set of TypeScript/JavaScript, Python, Go, and Rust client/server forms only when the HTTP method and relative path are static string literals. A unique server endpoint in a different language creates a resolved `CALLS` edge. Missing or duplicate endpoints remain `HTTP_BOUNDARY_CALL` unresolved references. External URLs, protocol-relative URLs, composed strings, templates, parameterized paths, comments, and cross-file name-only handler binding are not confirmed.
+`contextmesh_http_boundary@http-resource-v2` recognizes a bounded set of TypeScript/JavaScript, Python, Go, and Rust client/server forms only when the HTTP method and relative path are static string literals. A unique server endpoint in a different language creates a stable HTTP resource node with `REQUESTS` and `HANDLED_BY` edges. Missing or duplicate endpoints remain `HTTP_BOUNDARY_CALL` unresolved references. External URLs, protocol-relative URLs, composed strings, templates, parameterized paths, comments, code examples embedded in strings, and cross-file name-only handler binding are not confirmed.
 
 ### RPC
 
-`contextmesh_protocol_boundary@rpc-queue-db-literal-v1` recognizes explicitly RPC-named `call`/`request`/`invoke` clients and `register`/`handle`/`method` servers. The literal RPC method name must match exactly and one cross-language server owner must be bound locally. Missing or duplicate handlers remain `RPC_BOUNDARY_CALL` unresolved references.
+`contextmesh_protocol_boundary@rpc-queue-db-resource-v2` recognizes explicitly RPC-named `call`/`request`/`invoke` clients and `register`/`handle`/`method` servers. The literal RPC method name must match exactly and one cross-language server owner must be bound locally. The caller uses `REQUESTS` and the server uses `HANDLED_BY` around one RPC resource. Missing or duplicate handlers remain `RPC_BOUNDARY_CALL` unresolved references.
 
 ### Queue
 
-The same provider recognizes explicitly queue/broker/producer `publish`/`send`/`emit` operations and queue/broker/consumer `subscribe`/`consume` handlers. A static topic can intentionally fan out to multiple exact cross-language consumers, producing one resolved `CALLS` edge per consumer. A topic without a consumer remains `QUEUE_BOUNDARY_PUBLISH` unresolved.
+The same provider recognizes explicitly queue/broker/producer `publish`/`send`/`emit` operations and queue/broker/consumer `subscribe`/`consume` handlers. A static topic can intentionally fan out to multiple exact cross-language consumers through one topic resource using `PUBLISHES` and `CONSUMES`. A topic without a consumer remains `QUEUE_BOUNDARY_PUBLISH` unresolved.
 
 ### Database
 
-Simple single-statement SQL literals are recognized for `INSERT INTO`, `UPDATE`, `DELETE FROM`, and `SELECT ... FROM`. Writers connect to every exact cross-language reader of the same normalized table through resolved `REFERENCES` edges. Multi-statement, dynamic, composed, query-builder, join-derived, or identifier-interpolated SQL is not claimed. A writer with no reader remains `DATABASE_BOUNDARY_WRITE` unresolved.
+Simple single-statement SQL literals are recognized for `INSERT INTO`, `UPDATE`, `DELETE FROM`, and `SELECT ... FROM` only when passed as the first argument to a bounded DB execution API. Writers and readers connect through one normalized table resource with `WRITES_TO` and `READS_FROM`. Standalone SQL text, multi-statement, dynamic, composed, query-builder, join-derived, or identifier-interpolated SQL is not claimed. A writer with no reader remains `DATABASE_BOUNDARY_WRITE` unresolved.
 
 All boundary evidence records the protocol, operation/resource, source and target roles, languages, files, and source spans. The generation graph cache restores cross-language edges that do not fit one language partition without changing the underlying partition or precision-overlay contracts.
 
 ## v0.6 impact analysis
 
-`impact_code` reuses one `trace_code` generation/precision snapshot. It reports bounded upstream or downstream affected symbols, minimum depth, relation status, confidence, cross-language classification, normalized boundary evidence, unresolved paths, and strict token-budget truncation. Rejected edges are never affected targets. Every response states that static graph reachability does not prove runtime reachability; candidate or unresolved paths carry an explicit verification warning.
+`impact_analysis` (and the `impact_code` compatibility alias) reuses one `trace_code` generation/precision snapshot. It reports bounded upstream or downstream affected nodes, minimum depth, path confidence, cross-language classification, normalized boundary evidence, unresolved paths, and strict token-budget truncation. A target is confirmed only if at least one complete path is resolved at confidence 0.9 or above on every edge. Rejected edges are never affected targets. Every response states that static graph reachability does not prove runtime reachability; candidate or unresolved paths carry an explicit verification warning.
 
-The immutable `contextmesh-v06-boundary-impact-v1` fixture covers resolved HTTP/RPC/database links, queue fan-out, ambiguous HTTP/RPC endpoints, missing queue/database targets, impact confirmation, exact-path precision/recall, and repeated normalized signatures. `npm run evaluate:v06` generates source-bound evidence and `npm run verify:v06-artifact` rejects changed fixture bytes, source bytes, run counts, signatures, outcomes, or metrics. The checked artifact is generated only after the v0.6 source scope is frozen.
+The immutable `contextmesh-v06-boundary-impact-v2` fixture covers resolved HTTP/RPC/database resources, queue fan-out, ambiguous HTTP/RPC endpoints, missing queue/database targets, embedded-code and standalone-SQL negatives, a TypeScript → Python → Go flow, path-level impact confirmation, exact precision/recall, and repeated normalized signatures. `npm run evaluate:v06` generates source-bound evidence and `npm run verify:v06-artifact` rejects changed fixture bytes, source bytes, run counts, signatures, outcomes, or metrics. The checked artifact is generated only after the v0.6 source scope is frozen.
 
 ## Conformance and supply chain
 

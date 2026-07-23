@@ -434,6 +434,8 @@ function mapWorkspace(row: SqlRow): WorkspaceRecord {
 }
 
 function mapCodeNode(row: SqlRow): CodeSearchResult {
+  const language = nullableString(row.language) as CodeNodeRecord["language"] | null;
+  const ecosystem = nullableString(row.ecosystem) as CodeNodeRecord["ecosystem"] | null;
   return {
     id: stringValue(row.id),
     workspaceId: stringValue(row.workspace_id),
@@ -454,8 +456,8 @@ function mapCodeNode(row: SqlRow): CodeSearchResult {
     contentHash: stringValue(row.content_hash),
     generation: numberValue(row.generation),
     metadata: parseJson<Record<string, unknown>>(row.metadata_json, {}),
-    language: stringValue(row.language) as NonNullable<CodeNodeRecord["language"]>,
-    ecosystem: stringValue(row.ecosystem) as NonNullable<CodeNodeRecord["ecosystem"]>,
+    ...(language ? { language } : {}),
+    ...(ecosystem ? { ecosystem } : {}),
     nativeKind: stringValue(row.native_kind),
     analysisLevel: stringValue(row.analysis_level) as NonNullable<CodeNodeRecord["analysisLevel"]>,
     relativePath: nullableString(row.relative_path),
@@ -1715,11 +1717,17 @@ export class ContextMeshDatabase implements ContextMeshStorage {
   }
 
   getStoredGraphPartition(language: "python" | "non-python", includePrecision = true): StoredGraphPartition {
-    const comparison = language === "python" ? "=" : "<>";
+    const nodeLanguage = language === "python"
+      ? "n.language = 'python'"
+      : "(n.language <> 'python' OR n.language IS NULL)";
+    const edgeLanguage = language === "python"
+      ? "source.language = 'python' AND target.language = 'python'"
+      : "(source.language <> 'python' OR source.language IS NULL) AND (target.language <> 'python' OR target.language IS NULL)";
+    const fileLanguage = language === "python" ? "=" : "<>";
     const nodeRows = this.db.prepare(
       `SELECT n.*, f.relative_path, f.content_hash AS file_content_hash, 0 AS score
        FROM code_nodes n LEFT JOIN source_files f ON f.id=n.file_id
-       WHERE n.workspace_id=? AND n.language ${comparison} 'python' ORDER BY n.id`,
+       WHERE n.workspace_id=? AND ${nodeLanguage} ORDER BY n.id`,
     ).all(this.workspace.id);
     const baseNodes = nodeRows.map(mapCodeNode);
     const nodes = includePrecision ? this.applyPrecisionNodeOverlays(baseNodes) : baseNodes;
@@ -1728,7 +1736,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       `SELECT edge.* FROM code_edges edge
        JOIN code_nodes source ON source.id=edge.source_id
        JOIN code_nodes target ON target.id=edge.target_id
-       WHERE edge.workspace_id=? AND source.language ${comparison} 'python' AND target.language ${comparison} 'python'
+       WHERE edge.workspace_id=? AND ${edgeLanguage}
        ORDER BY edge.kind,edge.source_id,edge.target_id`,
     ).all(this.workspace.id);
     const precisionRows = this.db.prepare(
@@ -1740,12 +1748,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
          AND state.base_generation=edge.base_generation
          AND state.precision_revision=edge.precision_revision
          AND state.status IN ('ready','partial','running')
-         AND source.language ${comparison} 'python' AND target.language ${comparison} 'python'
+         AND ${edgeLanguage}
        ORDER BY edge.kind,edge.source_id,edge.target_id,edge.provider`,
     ).all(this.workspace.id, this.getWorkspace().currentGeneration);
     const unresolvedRows = this.db.prepare(
       `SELECT reference.* FROM unresolved_refs reference JOIN source_files file ON file.id=reference.file_id
-       WHERE reference.workspace_id=? AND file.language ${comparison} 'python'
+       WHERE reference.workspace_id=? AND file.language ${fileLanguage} 'python'
        ORDER BY reference.file_id,reference.line,reference.column`,
     ).all(this.workspace.id);
     const baseEdges: CodeEdgeRecord[] = edgeRows.filter((row) => ids.has(stringValue(row.source_id)) && ids.has(stringValue(row.target_id))).map((row) => ({
@@ -2727,8 +2735,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           handle.generation,
           JSON.stringify(node.metadata),
           semanticSourceHashByNodeId?.get(node.id) ?? semanticDocument.sourceHash,
-          node.language ?? (node.metadata.language as string | undefined) ?? "typescript",
-          node.ecosystem ?? "npm",
+          node.kind === "resource"
+            ? null
+            : node.language ?? (node.metadata.language as string | undefined) ?? "typescript",
+          node.kind === "resource" ? null : node.ecosystem ?? "npm",
           node.nativeKind ?? (node.metadata.syntaxKind as string | undefined) ?? node.kind,
           node.analysisLevel ?? "typed",
         );

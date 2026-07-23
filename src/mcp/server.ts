@@ -60,6 +60,32 @@ function failure(error: unknown) {
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
   const server = new McpServer({ name: "contextmesh", version: "0.6.0" });
+  const registerImpactTool = (name: "impact_analysis" | "impact_code", title: string): void => {
+    server.registerTool(
+      name,
+      {
+        title,
+        description: "Summarize bounded upstream or downstream graph impact, including resource nodes, cross-language boundary evidence, and verification requirements.",
+        inputSchema: impactCodeSchema,
+        outputSchema: envelopeOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (input) => {
+        try {
+          const traced = await app.traceCode({
+            symbolId: input.symbolId,
+            direction: input.direction,
+            edgeKinds: input.edgeKinds,
+            depth: input.depth,
+            limit: input.limit,
+          }) as Envelope<TraceResult>;
+          return success(buildImpactEnvelope(traced, input));
+        } catch (error) {
+          return failure(error);
+        }
+      },
+    );
+  };
 
   server.registerTool(
     "index_workspace",
@@ -133,30 +159,8 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     },
   );
 
-  server.registerTool(
-    "impact_code",
-    {
-      title: "Analyze code impact",
-      description: "Summarize bounded upstream or downstream graph impact, including cross-language boundary evidence and verification requirements.",
-      inputSchema: impactCodeSchema,
-      outputSchema: envelopeOutputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (input) => {
-      try {
-        const traced = await app.traceCode({
-          symbolId: input.symbolId,
-          direction: input.direction,
-          edgeKinds: input.edgeKinds,
-          depth: input.depth,
-          limit: input.limit,
-        }) as Envelope<TraceResult>;
-        return success(buildImpactEnvelope(traced, input));
-      } catch (error) {
-        return failure(error);
-      }
-    },
-  );
+  registerImpactTool("impact_analysis", "Analyze impact");
+  registerImpactTool("impact_code", "Analyze code impact (compatibility alias)");
 
   server.registerTool(
     "remember",

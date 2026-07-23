@@ -25,6 +25,12 @@ const DEFAULT_IMPACT_EDGE_KINDS = [
   "IMPORTS",
   "EXTENDS",
   "IMPLEMENTS",
+  "REQUESTS",
+  "HANDLED_BY",
+  "PUBLISHES",
+  "CONSUMES",
+  "READS_FROM",
+  "WRITES_TO",
 ] as const satisfies readonly CodeEdgeKind[];
 
 export const impactCodeSchema = z.object({
@@ -114,10 +120,14 @@ interface MutableTarget {
   node: CodeSearchResult;
   minDepth: number;
   confidence: number;
-  confirmed: boolean;
   statuses: Set<EdgeStatus>;
   relationKinds: Set<CodeEdgeKind>;
   boundaries: Map<string, ImpactBoundary>;
+}
+
+interface PathState {
+  confirmed: boolean;
+  confidence: number;
 }
 
 function stringDetail(details: Record<string, unknown>, key: string): string | null {
@@ -228,24 +238,43 @@ function collectImpact(trace: TraceResult, input: ImpactCodeInput): {
     .map(relation)
     .sort((left, right) => relationKey(left).localeCompare(relationKey(right)));
 
-  for (const edge of trace.edges) {
+  const pathState = new Map<string, PathState>([
+    [trace.start.id, { confirmed: true, confidence: 1 }],
+  ]);
+  const orderedEdges = [...trace.edges].sort((left, right) =>
+    left.depth - right.depth ||
+    `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(
+      `${right.kind}\0${right.sourceId}\0${right.targetId}`,
+    ));
+  for (const edge of orderedEdges) {
     if (edge.status === "rejected") continue;
+    const predecessorId = input.direction === "in" ? edge.targetId : edge.sourceId;
     const id = targetId(edge, input.direction);
     if (id === trace.start.id) continue;
     const node = nodeById.get(id);
     if (!node) continue;
+    const predecessor = pathState.get(predecessorId);
+    const edgeConfirmed = edge.status === "resolved" && edge.confidence >= 0.9;
+    const candidatePath: PathState = {
+      confirmed: Boolean(predecessor?.confirmed && edgeConfirmed),
+      confidence: Math.min(predecessor?.confidence ?? 0, edge.confidence),
+    };
+    const priorPath = pathState.get(id);
+    if (
+      !priorPath ||
+      (candidatePath.confirmed && !priorPath.confirmed) ||
+      candidatePath.confirmed === priorPath.confirmed && candidatePath.confidence > priorPath.confidence
+    ) pathState.set(id, candidatePath);
     const current = targets.get(id) ?? {
       node,
       minDepth: edge.depth,
       confidence: 0,
-      confirmed: false,
       statuses: new Set<EdgeStatus>(),
       relationKinds: new Set<CodeEdgeKind>(),
       boundaries: new Map<string, ImpactBoundary>(),
     };
     current.minDepth = Math.min(current.minDepth, edge.depth);
-    current.confidence = Math.max(current.confidence, edge.confidence);
-    current.confirmed ||= edge.status === "resolved" && edge.confidence >= 0.9;
+    current.confidence = Math.max(current.confidence, candidatePath.confidence);
     current.statuses.add(edge.status);
     current.relationKinds.add(edge.kind);
     for (const boundary of boundaryEvidence(edge.evidence)) {
@@ -254,12 +283,12 @@ function collectImpact(trace: TraceResult, input: ImpactCodeInput): {
     targets.set(id, current);
   }
 
-  const affected = [...targets.values()].map((target): ImpactTarget => ({
+  const affected = [...targets.entries()].map(([id, target]): ImpactTarget => ({
     ...impactNode(target.node),
     minDepth: target.minDepth,
     confidence: target.confidence,
-    confirmed: target.confirmed,
-    verificationRequired: !target.confirmed,
+    confirmed: pathState.get(id)?.confirmed ?? false,
+    verificationRequired: !(pathState.get(id)?.confirmed ?? false),
     crossLanguage: Boolean(
       trace.start.language && target.node.language && trace.start.language !== target.node.language,
     ),

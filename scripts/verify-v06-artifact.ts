@@ -39,7 +39,7 @@ interface Artifact {
   passed: boolean;
 }
 
-const PINNED_FIXTURE_DIGEST = "2dba90b9741989283ca665e39bda94f67a650a056372b4976df41a8a07fe8779";
+const PINNED_FIXTURE_DIGEST = "dbb39a2900f5730ed1d13c5967648fed7e11ab1ffd818c0a8bdd5f99d7ac134f";
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -80,11 +80,11 @@ const requiredRuns = minimumRuns(artifact);
 if (
   artifact.schemaVersion !== 1 ||
   artifact.release !== "v0.6" ||
-  artifact.fixture?.id !== "contextmesh-v06-boundary-impact-v1" ||
+  artifact.fixture?.id !== "contextmesh-v06-boundary-impact-v2" ||
   artifact.fixture?.digest !== PINNED_FIXTURE_DIGEST ||
   artifact.fixture?.immutable !== true ||
   !Number.isSafeInteger(artifact.fixture.caseCount) ||
-  artifact.fixture.caseCount < 8 ||
+  artifact.fixture.caseCount < 11 ||
   artifact.caseResults.length !== artifact.fixture.caseCount ||
   new Set(artifact.caseResults.map((item) => item.id)).size !== artifact.caseResults.length ||
   artifact.caseResults.some((item) => item.passed !== true) ||

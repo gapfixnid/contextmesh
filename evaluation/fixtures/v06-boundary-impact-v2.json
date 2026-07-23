@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
-  "id": "contextmesh-v06-boundary-impact-v1",
+  "schemaVersion": 2,
+  "id": "contextmesh-v06-boundary-impact-v2",
   "immutable": true,
   "description": "Deterministic cross-language boundary and impact-analysis acceptance cases for HTTP, RPC, queue, and database protocols.",
   "provenance": {
     "origin": "ContextMesh v0.6 product scope and release acceptance criteria",
-    "authoredAgainst": "literal boundary providers http-literal-v1 and rpc-queue-db-literal-v1",
+    "authoredAgainst": "resource boundary providers http-resource-v2 and rpc-queue-db-resource-v2",
     "frozenAt": "2026-07-23",
     "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold."
   },
   "thresholds": {
-    "minimumCases": 8,
+    "minimumCases": 11,
     "deterministicRuns": 5,
     "resolvedPrecision": 1,
     "resolvedRecall": 1
@@ -75,6 +75,26 @@
     {
       "path": "db-reader.py",
       "content": "def read_audit():\n    return db.execute('SELECT id FROM audit_events')\n"
+    },
+    {
+      "path": "negative-doc.ts",
+      "content": "export function documentationOnly() {\n  return \"fetch('/api/users') and rpc.call('users.get', {})\";\n}\n"
+    },
+    {
+      "path": "negative-sql.py",
+      "content": "def migration_notes():\n    return 'INSERT INTO audit_events (id) VALUES (2)'\n\ndef query_expectation():\n    return 'SELECT id FROM audit_events'\n"
+    },
+    {
+      "path": "flow-client.ts",
+      "content": "export function startOrder() {\n  return fetch('/api/orders');\n}\n"
+    },
+    {
+      "path": "flow-service.py",
+      "content": "@app.get('/api/orders')\ndef accept_order():\n    return queue.publish('orders.accepted', {'id': 1})\n"
+    },
+    {
+      "path": "flow-worker.go",
+      "content": "package worker\nfunc process_order() {}\nfunc register() { queue.subscribe(\"orders.accepted\", process_order) }\n"
     }
   ],
   "cases": [
@@ -183,6 +203,40 @@
         "rawName": "INSERT orphan_table",
         "minimumCandidates": 0
       }
+    },
+    {
+      "id": "negative-document-string",
+      "sourceQualifiedName": "negative-doc.ts#documentationOnly",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "negative-standalone-sql",
+      "sourceQualifiedName": "negative-sql.py#migration_notes",
+      "edgeKind": "WRITES_TO",
+      "expectedTargets": [],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "typescript-python-go-flow",
+      "sourceQualifiedName": "flow-client.ts#startOrder",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "flow-service.py#accept_order",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/orders"
+        },
+        {
+          "qualifiedName": "flow-worker.go#process_order",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.accepted"
+        }
+      ],
+      "expectedUnresolved": null
     }
   ]
 }
