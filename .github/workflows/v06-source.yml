@@ -29,7 +29,18 @@ jobs:
       - run: npm ci
       - run: go test ./...
         working-directory: native/go-provider
-      - run: npm run typecheck
+      - name: Run typecheck
+        shell: pwsh
+        run: |
+          npm run typecheck *>&1 | Tee-Object -FilePath v06-typecheck.log
+          $code = $LASTEXITCODE
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v06-typecheck-${{ runner.os }}-${{ github.sha }}
+          path: v06-typecheck.log
+          if-no-files-found: error
       - run: npm run lint
       - run: npm run build:native
       - run: npx vitest run tests/v06-boundary.test.ts
