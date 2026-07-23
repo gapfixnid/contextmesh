@@ -2,6 +2,7 @@ import type { CodeEdgeKind, CodeEdgeRecord, UnresolvedReferenceRecord } from "..
 import type { ContextMeshStorage, TraceResult } from "../storage/database.js";
 import type { CodeSearchResult } from "../storage/database.js";
 import { HTTP_BOUNDARY_PROVIDER, HTTP_BOUNDARY_PROVIDER_VERSION } from "./boundary.js";
+import { PROTOCOL_BOUNDARY_PROVIDER, PROTOCOL_BOUNDARY_PROVIDER_VERSION } from "./protocol-boundary.js";
 
 interface CacheEntry<T> { value: T; used: number }
 
@@ -14,10 +15,21 @@ function boundaryEvidence(edge: CodeEdgeRecord): NonNullable<CodeEdgeRecord["evi
   return values.flatMap((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
     const details = value as Record<string, unknown>;
-    const sourceSpan = details.clientSourceSpan;
+    const protocol = typeof details.boundaryProtocol === "string" ? details.boundaryProtocol : "";
+    const provider = typeof details.boundaryProvider === "string"
+      ? details.boundaryProvider
+      : protocol === "http"
+        ? HTTP_BOUNDARY_PROVIDER
+        : PROTOCOL_BOUNDARY_PROVIDER;
+    const providerVersion = typeof details.boundaryProviderVersion === "string"
+      ? details.boundaryProviderVersion
+      : protocol === "http"
+        ? HTTP_BOUNDARY_PROVIDER_VERSION
+        : PROTOCOL_BOUNDARY_PROVIDER_VERSION;
+    const sourceSpan = details.clientSourceSpan ?? details.sourceSpan;
     return [{
-      provider: HTTP_BOUNDARY_PROVIDER,
-      providerVersion: HTTP_BOUNDARY_PROVIDER_VERSION,
+      provider,
+      providerVersion,
       source: "resolver" as const,
       confidence: 1,
       ...(sourceSpan && typeof sourceSpan === "object" && !Array.isArray(sourceSpan)
@@ -30,7 +42,7 @@ function boundaryEvidence(edge: CodeEdgeRecord): NonNullable<CodeEdgeRecord["evi
 
 function crossLanguageBoundaryEdges(database: ContextMeshStorage): CodeEdgeRecord[] {
   return database.getExistingRelations().edges.flatMap(({ edge }) => {
-    if (edge.metadata.boundaryProtocol !== "http" || !Array.isArray(edge.metadata.boundaries)) return [];
+    if (!Array.isArray(edge.metadata.boundaries) || edge.metadata.boundaries.length === 0) return [];
     return [{
       ...edge,
       status: "resolved" as const,
