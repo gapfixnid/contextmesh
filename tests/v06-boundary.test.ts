@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
 import { linkHttpBoundaries } from "../src/code/boundary.js";
-import type { Envelope } from "../src/contracts.js";
+import type { CodeEcosystem, CodeLanguage, Envelope, IndexedSourceFile } from "../src/contracts.js";
+import { sha256 } from "../src/utils.js";
 
 const roots: string[] = [];
 
@@ -56,6 +57,52 @@ function hasBoundaryEdge(trace: TraceData): boolean {
     edge.evidence?.some((item) => item.provider === "contextmesh_http_boundary"));
 }
 
+function ecosystemFor(language: CodeLanguage): CodeEcosystem {
+  if (language === "python") return "pypi";
+  if (language === "go") return "go";
+  if (language === "rust") return "cargo";
+  if (language === "java") return "maven";
+  if (language === "csharp") return "nuget";
+  return "npm";
+}
+
+function linkerInputs(app: ContextMeshApp, root: string): {
+  files: IndexedSourceFile[];
+  nodes: ReturnType<typeof app.database.getStoredGraphPartition>["nodes"];
+} {
+  const workspaceRecord = app.database.getWorkspace();
+  const generation = workspaceRecord.currentGeneration;
+  const files = app.database.getIndexedFileBaseline()
+    .filter((item): item is typeof item & { language: CodeLanguage } => item.language !== null)
+    .map((item): IndexedSourceFile => {
+      const absolutePath = path.join(root, item.relativePath);
+      const status = statSync(absolutePath);
+      return {
+        id: sha256(`${workspaceRecord.id}\0${item.pathKey}`),
+        workspaceId: workspaceRecord.id,
+        relativePath: item.relativePath,
+        pathKey: item.pathKey,
+        absolutePath,
+        language: item.language,
+        ecosystem: item.ecosystem as CodeEcosystem | undefined ?? ecosystemFor(item.language),
+        sourceRoot: item.sourceRoot,
+        adapterConfigHash: item.adapterConfigHash,
+        content: readFileSync(absolutePath, "utf8"),
+        contentHash: item.contentHash,
+        sizeBytes: item.sizeBytes,
+        mtimeMs: status.mtimeMs,
+        parseStatus: item.parseStatus,
+        diagnosticCount: item.diagnosticCount,
+        generation,
+      };
+    });
+  const partitions = [
+    app.database.getStoredGraphPartition("non-python", false),
+    app.database.getStoredGraphPartition("python", false),
+  ];
+  return { files, nodes: partitions.flatMap((partition) => partition.nodes) };
+}
+
 describe("v0.6 literal HTTP boundaries", () => {
   it("links a TypeScript fetch call to a Python route without a cross-language name match", async () => {
     const root = workspace();
@@ -80,8 +127,8 @@ describe("v0.6 literal HTTP boundaries", () => {
       await app.indexWorkspace({ mode: "full" });
       const client = await symbolId(app, "loadUsers", "typescript");
       const server = await symbolId(app, "list_users", "python");
-      const base = app.database.getStoredGraphPartition("all", false);
-      const linked = linkHttpBoundaries(base.files, base.nodes);
+      const inputs = linkerInputs(app, root);
+      const linked = linkHttpBoundaries(inputs.files, inputs.nodes);
       expect(linked.edges).toContainEqual(expect.objectContaining({
         sourceId: client,
         targetId: server,
