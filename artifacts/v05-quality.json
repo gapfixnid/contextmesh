@@ -757,26 +757,26 @@
     "identical": true,
     "runs": 20,
     "signatures": [
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a"
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6",
+      "fff79ed8807e0ab6939862f0739872948bb7584c2013c4a396b2d1de45df4ad6"
     ]
   },
   "fixture": {
@@ -950,7 +950,7 @@
   "providerConformance": [
     {
       "actualStatus": "ready",
-      "actualVersion": "0.5.0",
+      "actualVersion": "0.6.0",
       "diagnosticsMatch": true,
       "passed": true,
       "provider": "contextmesh_python_resolver",
@@ -991,7 +991,7 @@
       "lastError": null,
       "precisionRevision": 77,
       "provider": "contextmesh_python_resolver",
-      "providerVersion": "0.5.0",
+      "providerVersion": "0.6.0",
       "rejectedEdges": 2,
       "resolvedEdges": 10,
       "status": "ready"
@@ -1265,10 +1265,10 @@
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
-    "files": 175,
-    "headCommit": "e98f3c49d40cc8f5a7ffcef6684bdf83f2814218",
-    "headTreeDigest": "435f6fc52c5c166d4ce7904e99ebc384a789b7b4eef169b2968609836295ed2d",
-    "treeDigest": "435f6fc52c5c166d4ce7904e99ebc384a789b7b4eef169b2968609836295ed2d"
+    "files": 187,
+    "headCommit": "f6dd50e44f86cd73da6a8b5116986bd1755d220c",
+    "headTreeDigest": "0362d18c6c2e5663dec939c35c9d3b8abf9866fdcd7da27530520feb2d2961c9",
+    "treeDigest": "0362d18c6c2e5663dec939c35c9d3b8abf9866fdcd7da27530520feb2d2961c9"
   },
   "statusCoverage": [
     "candidate",

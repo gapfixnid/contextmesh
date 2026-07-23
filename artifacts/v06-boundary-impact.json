@@ -1,0 +1,286 @@
+{
+  "schemaVersion": 1,
+  "release": "v0.6",
+  "fixture": {
+    "id": "contextmesh-v06-boundary-impact-v1",
+    "digest": "2dba90b9741989283ca665e39bda94f67a650a056372b4976df41a8a07fe8779",
+    "caseCount": 8,
+    "immutable": true,
+    "provenance": {
+      "origin": "ContextMesh v0.6 product scope and release acceptance criteria",
+      "authoredAgainst": "literal boundary providers http-literal-v1 and rpc-queue-db-literal-v1",
+      "frozenAt": "2026-07-23",
+      "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold."
+    }
+  },
+  "source": {
+    "contract": "git-source-snapshot-lf-v3",
+    "treeDigest": "0362d18c6c2e5663dec939c35c9d3b8abf9866fdcd7da27530520feb2d2961c9",
+    "files": 187,
+    "headCommit": "f6dd50e44f86cd73da6a8b5116986bd1755d220c",
+    "headTreeDigest": "0362d18c6c2e5663dec939c35c9d3b8abf9866fdcd7da27530520feb2d2961c9",
+    "dirty": false
+  },
+  "runner": {
+    "node": "v24.18.0",
+    "platform": "win32-x64"
+  },
+  "runs": 5,
+  "deterministic": true,
+  "signatures": [
+    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
+    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
+    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
+    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
+    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68"
+  ],
+  "metrics": {
+    "expectedResolved": 5,
+    "actualResolved": 5,
+    "truePositive": 5,
+    "falsePositive": 0,
+    "falseNegative": 0,
+    "precision": 1,
+    "recall": 1
+  },
+  "thresholds": {
+    "minimumCases": 8,
+    "deterministicRuns": 5,
+    "resolvedPrecision": 1,
+    "resolvedRecall": 1
+  },
+  "caseResults": [
+    {
+      "id": "http-resolved",
+      "sourceQualifiedName": "http-client.ts#loadUsers",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "http-service.py#list_users",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/users"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "http-service.py#list_users",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/users",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "http-service.py#list_users"
+      ],
+      "passed": true
+    },
+    {
+      "id": "http-ambiguous",
+      "sourceQualifiedName": "http-ambiguous-client.ts#loadAmbiguous",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "HTTP_BOUNDARY_CALL",
+          "rawName": "GET /api/ambiguous",
+          "minimumCandidates": 2
+        },
+        "observed": true,
+        "candidateCount": 2
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "rpc-resolved",
+      "sourceQualifiedName": "rpc-client.ts#loadRpcUser",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "rpc-service.py#get_rpc_user",
+          "protocol": "rpc",
+          "operation": "call",
+          "resource": "users.get"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "rpc-service.py#get_rpc_user",
+          "protocol": "rpc",
+          "operation": "call",
+          "resource": "users.get",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "rpc-service.py#get_rpc_user"
+      ],
+      "passed": true
+    },
+    {
+      "id": "rpc-ambiguous",
+      "sourceQualifiedName": "rpc-ambiguous-client.ts#loadRpcAmbiguous",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "RPC_BOUNDARY_CALL",
+          "rawName": "CALL users.ambiguous",
+          "minimumCandidates": 2
+        },
+        "observed": true,
+        "candidateCount": 2
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "queue-fanout",
+      "sourceQualifiedName": "queue-producer.ts#publishOrder",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "queue-one.py#first_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created"
+        },
+        {
+          "qualifiedName": "queue-two.py#second_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "queue-one.py#first_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created",
+          "status": "resolved",
+          "confirmed": true
+        },
+        {
+          "qualifiedName": "queue-two.py#second_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "queue-one.py#first_consumer",
+        "queue-two.py#second_consumer"
+      ],
+      "passed": true
+    },
+    {
+      "id": "queue-missing",
+      "sourceQualifiedName": "queue-producer.ts#publishMissing",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "QUEUE_BOUNDARY_PUBLISH",
+          "rawName": "PUBLISH orders.missing",
+          "minimumCandidates": 0
+        },
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "database-resolved",
+      "sourceQualifiedName": "db-writer.ts#writeAudit",
+      "edgeKind": "REFERENCES",
+      "expectedTargets": [
+        {
+          "qualifiedName": "db-reader.py#read_audit",
+          "protocol": "database",
+          "operation": "insert_to_read",
+          "resource": "audit_events"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "db-reader.py#read_audit",
+          "protocol": "database",
+          "operation": "insert_to_read",
+          "resource": "audit_events",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "db-reader.py#read_audit"
+      ],
+      "passed": true
+    },
+    {
+      "id": "database-missing",
+      "sourceQualifiedName": "db-writer.ts#writeMissing",
+      "edgeKind": "REFERENCES",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "DATABASE_BOUNDARY_WRITE",
+          "rawName": "INSERT orphan_table",
+          "minimumCandidates": 0
+        },
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    }
+  ],
+  "passed": true
+}
