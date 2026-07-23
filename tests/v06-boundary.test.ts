@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ContextMeshApp } from "../src/app.js";
+import { linkHttpBoundaries } from "../src/code/boundary.js";
 import type { Envelope } from "../src/contracts.js";
 
 const roots: string[] = [];
@@ -79,12 +80,20 @@ describe("v0.6 literal HTTP boundaries", () => {
       await app.indexWorkspace({ mode: "full" });
       const client = await symbolId(app, "loadUsers", "typescript");
       const server = await symbolId(app, "list_users", "python");
-      const trace = await traceCalls(app, client);
+      const base = app.database.getStoredGraphPartition("all", false);
+      const linked = linkHttpBoundaries(base.files, base.nodes);
+      expect(linked.edges).toContainEqual(expect.objectContaining({
+        sourceId: client,
+        targetId: server,
+        kind: "CALLS",
+        status: "resolved",
+      }));
 
+      const trace = await traceCalls(app, client);
       const boundary = trace.edges.find((edge) =>
         edge.sourceId === client && edge.targetId === server &&
         edge.evidence?.some((item) => item.provider === "contextmesh_http_boundary"));
-      expect(boundary).toMatchObject({ kind: "CALLS", status: "resolved" });
+      expect(boundary, JSON.stringify({ trace, linked }, null, 2)).toMatchObject({ kind: "CALLS", status: "resolved" });
       expect(boundary?.evidence).toContainEqual(expect.objectContaining({
         provider: "contextmesh_http_boundary",
         details: expect.objectContaining({
