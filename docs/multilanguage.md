@@ -21,6 +21,14 @@ Provider updates do not advance `graphGeneration`. A base commit marks prior ove
 
 ContextMesh never confirms an edge across language families based on a name match. HTTP/RPC/queue/DB boundary linking remains v0.6 scope.
 
+## v0.6 HTTP boundary slice
+
+The first v0.6 slice adds deterministic HTTP boundary linking for TypeScript/JavaScript, Python, Go, and Rust. It recognizes a bounded set of framework client/server forms only when the HTTP method and path are static string literals. A unique server endpoint in a different language creates a resolved `CALLS` edge with `contextmesh_http_boundary@http-literal-v1` resolver evidence containing the normalized method/path, both languages, both files, and source spans.
+
+A missing or duplicate cross-language server endpoint is not selected by symbol name. The client remains an `HTTP_BOUNDARY_CALL` unresolved reference with zero or multiple candidates. Dynamic/template/parameterized paths and handlers that cannot be bound uniquely are not confirmed. Comment text is masked before matching. Boundary edges are generated during graph merging and commit atomically with the base generation, so an incremental route change withdraws the previous link in the same graph replacement.
+
+RPC, queue, database boundaries and the dedicated impact-analysis response remain later v0.6 slices.
+
 ## Conformance and supply chain
 
 All adapters share scanner ignore/secret/symlink/size policy, deterministic IDs and ordering, UTF-8 byte spans, partial-parse diagnostics, unresolved evidence, and language-specific gold fixtures. `npm run evaluate:v05` enforces Tier 1 resolved-edge precision/recall, exact base-only graph fingerprints, provider health/toolchain provenance, generation independence, Python binding semantics, Go receiver and test-file behavior, and twenty-run graph determinism. The Go helper forces local-toolchain and offline module policy (`GOTOOLCHAIN=local`, `GOPROXY=off`, `GOSUMDB=off`, `GOVCS=*:off`) and records the exact local Go version. CI installs Go 1.23, compiles/tests the standard-library helper, evaluates schema 4 evidence, and verifies the artifact against the exact source before the release gate can pass.
