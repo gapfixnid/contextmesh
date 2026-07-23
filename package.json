@@ -32,6 +32,7 @@
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js serve",
     "test": "npm run build:native && vitest run",
+    "test:source": "vitest run --config vitest.source.config.ts",
     "test:watch": "vitest",
     "benchmark": "tsx scripts/benchmark.ts",
     "benchmark:semantic": "node --expose-gc --import tsx scripts/benchmark-semantic.ts",
@@ -55,6 +56,7 @@
     "audit:production": "tsx scripts/audit-production.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.check.json --noEmit",
     "lint": "eslint src tests scripts --max-warnings=0",
+    "check:source": "npm run typecheck && npm run lint && npm run build:native && npm run test:source && npm run build",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "keywords": [
