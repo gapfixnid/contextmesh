@@ -43,7 +43,6 @@ function maskComments(source: string, language: IndexedSourceFile["language"]): 
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index]!;
     const next = source[index + 1] ?? "";
-
     if (lineComment) {
       if (character === "\n" || character === "\r") lineComment = false;
       else output[index] = " ";
@@ -62,12 +61,11 @@ function maskComments(source: string, language: IndexedSourceFile["language"]): 
       if (source.startsWith(quote, index)) {
         index += quote.length - 1;
         quote = null;
-        continue;
+      } else if (quote.length === 1 && character === "\\") {
+        index += 1;
       }
-      if (quote.length === 1 && character === "\\") index += 1;
       continue;
     }
-
     if (python && (source.startsWith("'''", index) || source.startsWith("\"\"\"", index))) {
       quote = source.startsWith("'''", index) ? "'''" : "\"\"\"";
       index += 2;
@@ -100,36 +98,35 @@ function maskComments(source: string, language: IndexedSourceFile["language"]): 
 }
 
 function sourcePosition(source: string, start: number, end: number): SourcePosition {
-  const lineStart = Math.max(source.lastIndexOf("\n", Math.max(0, start - 1)), source.lastIndexOf("\r", Math.max(0, start - 1))) + 1;
-  const line = source.slice(0, start).split(/\r\n|\r|\n/).length;
+  const before = source.slice(0, start);
+  const lineStart = Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r")) + 1;
   return {
-    startByte: Buffer.byteLength(source.slice(0, start), "utf8"),
+    startByte: Buffer.byteLength(before, "utf8"),
     endByte: Buffer.byteLength(source.slice(0, end), "utf8"),
-    line,
+    line: before.split(/\r\n|\r|\n/).length,
     column: Buffer.byteLength(source.slice(lineStart, start), "utf8") + 1,
   };
 }
 
 function normalizeStaticPath(value: string): string | null {
-  if (!value || value.includes("\\") || /\$\{|[{}<>*]/.test(value)) return null;
   let normalized = value.trim();
-  if (/^https?:\/\//i.test(normalized)) {
-    try {
-      normalized = new URL(normalized).pathname;
-    } catch {
-      return null;
-    }
-  } else {
-    normalized = normalized.split(/[?#]/, 1)[0] ?? "";
-  }
-  if (!normalized.startsWith("/") || /(^|\/)[:][^/]+/.test(normalized)) return null;
+  if (
+    !normalized ||
+    normalized.startsWith("//") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalized) ||
+    normalized.includes("\\") ||
+    /\$\{|[{}<>*]/.test(normalized)
+  ) return null;
+  normalized = normalized.split(/[?#]/, 1)[0] ?? "";
+  if (!normalized.startsWith("/") || /(^|\/):[^/]+/.test(normalized)) return null;
   normalized = normalized.replace(/\/{2,}/g, "/");
   if (normalized.length > 1) normalized = normalized.replace(/\/+$/, "");
   return normalized || "/";
 }
 
-function normalizeMethod(value: string): string {
-  return value.toUpperCase();
+function clientLiteralIsComplete(source: string, end: number): boolean {
+  const suffix = source.slice(end, Math.min(source.length, end + 64)).trimStart();
+  return suffix.startsWith(")") || suffix.startsWith(",");
 }
 
 function callableNodes(file: IndexedSourceFile, nodes: CodeNodeRecord[]): CodeNodeRecord[] {
@@ -148,21 +145,9 @@ function containingOwner(file: IndexedSourceFile, nodes: CodeNodeRecord[], byteO
     .sort((left, right) => left.id.localeCompare(right.id))[0] ?? null;
 }
 
-function namedOwner(
-  file: IndexedSourceFile,
-  nodes: CodeNodeRecord[],
-  name: string,
-): CodeNodeRecord | null {
+function namedOwner(file: IndexedSourceFile, nodes: CodeNodeRecord[], name: string): CodeNodeRecord | null {
   const local = callableNodes(file, nodes).filter((node) => node.name === name);
-  if (local.length === 1) return local[0]!;
-  if (local.length > 1) return null;
-  const sameLanguage = nodes.filter((node) =>
-    CALLABLE_KINDS.has(node.kind) && node.name === name && node.language === file.language);
-  return sameLanguage.length === 1 ? sameLanguage[0]! : null;
-}
-
-function literalPath(value: string): string | null {
-  return value.includes("\\") ? null : normalizeStaticPath(value);
+  return local.length === 1 ? local[0]! : null;
 }
 
 function addEndpoint(
@@ -176,9 +161,16 @@ function addEndpoint(
   start: number,
   end: number,
 ): boolean {
-  const path = literalPath(rawPath);
-  if (!path || !owner) return false;
-  target.push({ role, method: normalizeMethod(method), path, file, owner, ...sourcePosition(source, start, end) });
+  const path = normalizeStaticPath(rawPath);
+  if (!path || !owner || (role === "client" && !clientLiteralIsComplete(source, end))) return false;
+  target.push({
+    role,
+    method: method.toUpperCase(),
+    path,
+    file,
+    owner,
+    ...sourcePosition(source, start, end),
+  });
   return true;
 }
 
@@ -186,6 +178,18 @@ function callWindow(source: string, start: number, maximum = 400): string {
   const bounded = source.slice(start, Math.min(source.length, start + maximum));
   const close = bounded.indexOf(")");
   return close >= 0 ? bounded.slice(0, close + 1) : bounded;
+}
+
+function reportMissingHandler(
+  diagnostics: string[],
+  file: IndexedSourceFile,
+  handler: string,
+  rawPath: string,
+  owner: CodeNodeRecord | null,
+): void {
+  if (diagnostics.length < MAX_DIAGNOSTICS && normalizeStaticPath(rawPath) && !owner) {
+    diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${handler}`);
+  }
 }
 
 function extractJavaScript(
@@ -203,18 +207,16 @@ function extractJavaScript(
   for (const match of masked.matchAll(server)) {
     const owner = namedOwner(file, nodes, match[4]!);
     if (!addEndpoint(servers, "server", match[1]!, match[3]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
-      if (diagnostics.length < MAX_DIAGNOSTICS && literalPath(match[3]!) && !owner) {
-        diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${match[4]}`);
-      }
+      reportMissingHandler(diagnostics, file, match[4]!, match[3]!, owner);
     }
   }
 
   const fetchCall = /\bfetch\s*\(\s*(["'])([^"'\\\r\n]+)\1/gi;
   for (const match of masked.matchAll(fetchCall)) {
     const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
-    const owner = containingOwner(file, nodes, position.startByte);
     const method = callWindow(masked, match.index!).match(/\bmethod\s*:\s*["'](get|post|put|patch|delete|options|head)["']/i)?.[1] ?? "GET";
-    addEndpoint(clients, "client", method, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length);
+    addEndpoint(clients, "client", method, match[2]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
   }
 
   const axiosCall = new RegExp(
@@ -243,9 +245,7 @@ function extractPython(
   for (const match of masked.matchAll(decorator)) {
     const owner = namedOwner(file, nodes, match[4]!);
     if (!addEndpoint(servers, "server", match[1]!, match[3]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
-      if (diagnostics.length < MAX_DIAGNOSTICS && literalPath(match[3]!) && !owner) {
-        diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${match[4]}`);
-      }
+      reportMissingHandler(diagnostics, file, match[4]!, match[3]!, owner);
     }
   }
 
@@ -255,9 +255,8 @@ function extractPython(
     const methods = [...methodsSource.matchAll(/["']([A-Za-z]+)["']/g)].map((item) => item[1]!);
     const owner = namedOwner(file, nodes, match[4]!);
     for (const method of methods.length > 0 ? methods : ["ANY"]) {
-      if (!addEndpoint(servers, "server", method, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length) &&
-          diagnostics.length < MAX_DIAGNOSTICS && literalPath(match[2]!) && !owner) {
-        diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${match[4]}`);
+      if (!addEndpoint(servers, "server", method, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+        reportMissingHandler(diagnostics, file, match[4]!, match[2]!, owner);
       }
     }
   }
@@ -284,9 +283,8 @@ function extractGo(
   const handle = /\b(?:http\.)?HandleFunc\s*\(\s*"([^"\\\r\n]+)"\s*,\s*([A-Za-z_]\w*)/g;
   for (const match of masked.matchAll(handle)) {
     const owner = namedOwner(file, nodes, match[2]!);
-    if (!addEndpoint(servers, "server", "ANY", match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length) &&
-        diagnostics.length < MAX_DIAGNOSTICS && literalPath(match[1]!) && !owner) {
-      diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${match[2]}`);
+    if (!addEndpoint(servers, "server", "ANY", match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[2]!, match[1]!, owner);
     }
   }
 
@@ -319,9 +317,8 @@ function extractRust(
   );
   for (const match of masked.matchAll(route)) {
     const owner = namedOwner(file, nodes, match[3]!);
-    if (!addEndpoint(servers, "server", match[2]!, match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length) &&
-        diagnostics.length < MAX_DIAGNOSTICS && literalPath(match[1]!) && !owner) {
-      diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${match[3]}`);
+    if (!addEndpoint(servers, "server", match[2]!, match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[3]!, match[1]!, owner);
     }
   }
 
@@ -331,9 +328,8 @@ function extractRust(
   );
   for (const match of masked.matchAll(actix)) {
     const owner = namedOwner(file, nodes, match[3]!);
-    if (!addEndpoint(servers, "server", match[1]!, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length) &&
-        diagnostics.length < MAX_DIAGNOSTICS && literalPath(match[2]!) && !owner) {
-      diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${match[3]}`);
+    if (!addEndpoint(servers, "server", match[1]!, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[3]!, match[2]!, owner);
     }
   }
 
@@ -345,7 +341,7 @@ function extractRust(
   }
 }
 
-function endpoints(files: IndexedSourceFile[], nodes: CodeNodeRecord[]): {
+function extractEndpoints(files: IndexedSourceFile[], nodes: CodeNodeRecord[]): {
   clients: HttpEndpoint[];
   servers: HttpEndpoint[];
   diagnostics: string[];
@@ -365,14 +361,19 @@ function endpoints(files: IndexedSourceFile[], nodes: CodeNodeRecord[]): {
       extractRust(file, nodes, masked, clients, servers, diagnostics);
     }
   }
-  const endpointKey = (item: HttpEndpoint): string =>
+  const key = (item: HttpEndpoint): string =>
     `${item.role}\0${item.method}\0${item.path}\0${item.file.pathKey}\0${item.startByte}\0${item.owner.id}`;
-  clients.sort((left, right) => endpointKey(left).localeCompare(endpointKey(right)));
-  servers.sort((left, right) => endpointKey(left).localeCompare(endpointKey(right)));
-  return { clients, servers, diagnostics: [...new Set(diagnostics)] };
+  return {
+    clients: clients.sort((left, right) => key(left).localeCompare(key(right))),
+    servers: servers.sort((left, right) => key(left).localeCompare(key(right))),
+    diagnostics: [...new Set(diagnostics)],
+  };
 }
 
-function evidence(client: HttpEndpoint, server: HttpEndpoint): NonNullable<CodeEdgeRecord["evidence"]>[number] {
+function boundaryEvidence(
+  client: HttpEndpoint,
+  server: HttpEndpoint,
+): NonNullable<CodeEdgeRecord["evidence"]>[number] {
   return {
     provider: HTTP_BOUNDARY_PROVIDER,
     providerVersion: HTTP_BOUNDARY_PROVIDER_VERSION,
@@ -402,12 +403,20 @@ function evidence(client: HttpEndpoint, server: HttpEndpoint): NonNullable<CodeE
   };
 }
 
+function evidenceKey(item: NonNullable<CodeEdgeRecord["evidence"]>[number]): string {
+  return `${item.provider}\0${item.providerVersion}\0${JSON.stringify(item.sourceSpan)}\0${JSON.stringify(item.details)}`;
+}
+
 export function linkHttpBoundaries(
   files: IndexedSourceFile[],
   nodes: CodeNodeRecord[],
 ): HttpBoundaryResult {
-  const extracted = endpoints(files, nodes);
-  const pairs = new Map<string, { client: HttpEndpoint; server: HttpEndpoint; evidence: NonNullable<CodeEdgeRecord["evidence"]> }>();
+  const extracted = extractEndpoints(files, nodes);
+  const pairs = new Map<string, {
+    client: HttpEndpoint;
+    server: HttpEndpoint;
+    evidence: NonNullable<CodeEdgeRecord["evidence"]>;
+  }>();
   const unresolvedReferences: UnresolvedReferenceRecord[] = [];
 
   for (const client of extracted.clients) {
@@ -419,15 +428,13 @@ export function linkHttpBoundaries(
     if (candidates.size === 1) {
       const server = [...candidates.values()][0]!;
       const key = `${client.owner.id}\0${server.owner.id}`;
+      const item = boundaryEvidence(client, server);
       const prior = pairs.get(key);
-      const itemEvidence = evidence(client, server);
       if (prior) {
-        const keyFor = (item: NonNullable<CodeEdgeRecord["evidence"]>[number]): string =>
-          `${item.provider}\0${item.providerVersion}\0${JSON.stringify(item.sourceSpan)}\0${JSON.stringify(item.details)}`;
-        prior.evidence = [...new Map([...prior.evidence, itemEvidence].map((item) => [keyFor(item), item])).values()]
-          .sort((left, right) => keyFor(left).localeCompare(keyFor(right)));
+        prior.evidence = [...new Map([...prior.evidence, item].map((entry) => [evidenceKey(entry), entry])).values()]
+          .sort((left, right) => evidenceKey(left).localeCompare(evidenceKey(right)));
       } else {
-        pairs.set(key, { client, server, evidence: [itemEvidence] });
+        pairs.set(key, { client, server, evidence: [item] });
       }
       continue;
     }
@@ -467,7 +474,7 @@ export function linkHttpBoundaries(
     });
   }
 
-  const edges = [...pairs.values()].map(({ client, server, evidence: edgeEvidence }) => ({
+  const edges = [...pairs.values()].map(({ client, server, evidence }) => ({
     workspaceId: client.file.workspaceId,
     sourceId: client.owner.id,
     targetId: server.owner.id,
@@ -477,10 +484,10 @@ export function linkHttpBoundaries(
     generation: client.file.generation,
     metadata: {
       boundaryProtocol: "http",
-      boundaries: edgeEvidence.map((item) => item.details).filter(Boolean),
+      boundaries: evidence.map((item) => item.details).filter(Boolean),
     },
     status: "resolved" as const,
-    evidence: edgeEvidence,
+    evidence,
   })).sort((left, right) =>
     `${left.sourceId}\0${left.targetId}`.localeCompare(`${right.sourceId}\0${right.targetId}`));
 
