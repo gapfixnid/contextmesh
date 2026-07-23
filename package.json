@@ -1,6 +1,6 @@
 {
   "name": "contextmesh",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Local-first MCP code intelligence and long-term memory server",
   "type": "module",
   "bin": {

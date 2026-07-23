@@ -107,9 +107,9 @@ Fast freshness compares the configured path set, size, and modification time, th
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 
-## Library API in 0.5.0
+## Library API in 0.6.0
 
-Configure semantic retrieval and the additive watcher through the constructor; the original nine MCP tool input schemas are unchanged.
+Configure semantic retrieval and the additive watcher through the constructor. Version 0.6.0 adds deterministic HTTP/RPC/queue/database boundary evidence and the additive `impact_code` MCP tool without changing existing tool input schemas.
 
 ```ts
 import { ContextMeshApp } from "contextmesh";
@@ -125,4 +125,4 @@ await app.reflect(reflection);
 await app.close();
 ```
 
-`remember`, `recall`, `reflect`, and `close` remain asynchronous. Version 0.5.0 adds independent precision revisions, provider leases, Python alias/package resolution, Go/Rust syntax, optional Go `go/types`, and Java/C# syntax prototypes without changing schemaVersion 1 or existing MCP tool inputs. See [multilanguage provider support](docs/multilanguage.md).
+`remember`, `recall`, `reflect`, and `close` remain asynchronous. The v0.5 precision revisions, provider leases, Python alias/package resolution, Go/Rust syntax, optional Go `go/types`, and Java/C# syntax prototypes remain compatible. See [multilanguage provider support](docs/multilanguage.md).

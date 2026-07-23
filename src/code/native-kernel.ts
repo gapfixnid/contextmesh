@@ -11,7 +11,7 @@ import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 import type { ScannedFile } from "./scanner.js";
 
 export const GRAPH_KERNEL_PROTOCOL = "contextmesh.graph-kernel/v1";
-export const GRAPH_KERNEL_VERSION = "0.5.0";
+export const GRAPH_KERNEL_VERSION = "0.6.0";
 export type GraphKernelPolicy = "native-required" | "portable";
 
 const DEFAULT_KERNEL_TIMEOUT_MS = 30_000;

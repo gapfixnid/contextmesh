@@ -59,7 +59,7 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
-  const server = new McpServer({ name: "contextmesh", version: "0.5.0" });
+  const server = new McpServer({ name: "contextmesh", version: "0.6.0" });
 
   server.registerTool(
     "index_workspace",
