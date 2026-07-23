@@ -201,7 +201,7 @@ function extractJavaScript(
   diagnostics: string[],
 ): void {
   const server = new RegExp(
-    `\\b(?:app|router|server|fastify)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*([\"'])([^\"'\\\\\\r\\n]+)\\2\\s*,\\s*([A-Za-z_$][\\w$]*)`,
+    `\\b(?:app|router|server|fastify)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2\\s*,\\s*([A-Za-z_$][\\w$]*)`,
     "gi",
   );
   for (const match of masked.matchAll(server)) {
@@ -220,7 +220,7 @@ function extractJavaScript(
   }
 
   const axiosCall = new RegExp(
-    `\\b(?:axios|ky)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*([\"'])([^\"'\\\\\\r\\n]+)\\2`,
+    `\\b(?:axios|ky)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2`,
     "gi",
   );
   for (const match of masked.matchAll(axiosCall)) {
@@ -239,7 +239,7 @@ function extractPython(
   diagnostics: string[],
 ): void {
   const decorator = new RegExp(
-    `@(?:app|router|blueprint)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*([\"'])([^\"'\\\\\\r\\n]+)\\2[^\\r\\n]*\\)\\s*\\r?\\n[ \\t]*(?:async[ \\t]+)?def[ \\t]+([A-Za-z_]\\w*)`,
+    `@(?:app|router|blueprint)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2[^\\r\\n]*\\)\\s*\\r?\\n[ \\t]*(?:async[ \\t]+)?def[ \\t]+([A-Za-z_]\\w*)`,
     "gi",
   );
   for (const match of masked.matchAll(decorator)) {
@@ -262,7 +262,7 @@ function extractPython(
   }
 
   const client = new RegExp(
-    `\\b(?:requests|httpx)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*([\"'])([^\"'\\\\\\r\\n]+)\\2`,
+    `\\b(?:requests|httpx)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2`,
     "gi",
   );
   for (const match of masked.matchAll(client)) {
@@ -312,7 +312,7 @@ function extractRust(
   diagnostics: string[],
 ): void {
   const route = new RegExp(
-    `\\.route\\s*\\(\\s*\"([^\"\\\\\\r\\n]+)\"\\s*,\\s*(${HTTP_METHOD})\\s*\\(\\s*([A-Za-z_]\\w*)\\s*\\)`,
+    `\\.route\\s*\\(\\s*"([^"\\\\\\r\\n]+)"\\s*,\\s*(${HTTP_METHOD})\\s*\\(\\s*([A-Za-z_]\\w*)\\s*\\)`,
     "gi",
   );
   for (const match of masked.matchAll(route)) {
@@ -323,7 +323,7 @@ function extractRust(
   }
 
   const actix = new RegExp(
-    `#\\[(${HTTP_METHOD})\\s*\\(\\s*\"([^\"\\\\\\r\\n]+)\"\\s*\\)\\]\\s*(?:pub\\s+)?(?:async\\s+)?fn\\s+([A-Za-z_]\\w*)`,
+    `#\\[(${HTTP_METHOD})\\s*\\(\\s*"([^"\\\\\\r\\n]+)"\\s*\\)\\]\\s*(?:pub\\s+)?(?:async\\s+)?fn\\s+([A-Za-z_]\\w*)`,
     "gi",
   );
   for (const match of masked.matchAll(actix)) {
