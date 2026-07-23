@@ -159,6 +159,34 @@ export function v04CanonicalSourceEvidence(root = process.cwd()): V04SourceEvide
   };
 }
 
+export function v04CanonicalSourceEvidenceOrArchive(root = process.cwd()): V04SourceEvidence {
+  if (existsSync(path.join(root, ".git"))) return v04CanonicalSourceEvidence(root);
+  const evidencePath = path.join(root, "SOURCE_EVIDENCE.json");
+  const sourceCommitPath = path.join(root, "SOURCE_COMMIT");
+  const manifestPath = path.join(root, "SOURCE_MANIFEST.json");
+  if (![evidencePath, sourceCommitPath, manifestPath].every((file) => existsSync(file))) {
+    throw new Error("SOURCE_PROVENANCE_MISSING: git metadata or verified source archive evidence is required");
+  }
+  const sourceText = readFileSync(evidencePath, "utf8");
+  const evidence = JSON.parse(sourceText) as V04SourceEvidence;
+  const sourceCommit = readFileSync(sourceCommitPath, "utf8");
+  if (
+    sourceText !== stableStringify(evidence) ||
+    evidence.contract !== V04_SOURCE_CONTRACT ||
+    !/^[0-9a-f]{64}$/.test(evidence.treeDigest) ||
+    !/^[0-9a-f]{40}$/.test(evidence.headCommit) ||
+    evidence.headTreeDigest !== evidence.treeDigest ||
+    !Number.isSafeInteger(evidence.files) ||
+    evidence.files < 1 ||
+    evidence.dirty !== false ||
+    sourceCommit !== evidence.headCommit
+  ) {
+    throw new Error("SOURCE_PROVENANCE_INVALID: source archive evidence is not canonical");
+  }
+  verifyV04ArchiveSourceManifest(evidence, root);
+  return evidence;
+}
+
 export function verifyV04ArchiveSourceManifest(
   expected: Pick<V04SourceEvidence, "treeDigest" | "files">,
   root = process.cwd(),

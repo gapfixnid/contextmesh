@@ -2,11 +2,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   v04CanonicalSourceEvidence,
+  v04CanonicalSourceEvidenceOrArchive,
   v04SourceDifferencePaths,
   v04SourceEvidence,
 } from "../scripts/v04-artifact-contract.js";
@@ -117,6 +119,34 @@ describe("v0.4 performance artifact verifier", () => {
     git("commit", "-m", "source two");
     expect(v04CanonicalSourceEvidence(root)).toMatchObject({ headCommit: git("rev-parse", "HEAD"), dirty: false });
   });
+
+  it("accepts canonical archive evidence without Git and rejects changed source bytes", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "contextmesh-source-archive-contract-"));
+    roots.push(root);
+    const source = "export const source = true;\n";
+    writeFileSync(path.join(root, "source.ts"), source, "utf8");
+    const manifest = [{
+      path: "source.ts",
+      sha256: createHash("sha256").update(source).digest("hex"),
+    }];
+    const treeDigest = createHash("sha256").update(stableStringify(manifest)).digest("hex");
+    const evidence = {
+      contract: "git-source-snapshot-lf-v3" as const,
+      treeDigest,
+      files: 1,
+      headCommit: "a".repeat(40),
+      headTreeDigest: treeDigest,
+      dirty: false,
+    };
+    writeFileSync(path.join(root, "SOURCE_MANIFEST.json"), `${stableStringify(manifest)}\n`, "utf8");
+    writeFileSync(path.join(root, "SOURCE_EVIDENCE.json"), stableStringify(evidence), "utf8");
+    writeFileSync(path.join(root, "SOURCE_COMMIT"), evidence.headCommit, "utf8");
+
+    expect(v04CanonicalSourceEvidenceOrArchive(root)).toEqual(evidence);
+    writeFileSync(path.join(root, "source.ts"), "export const source = false;\n", "utf8");
+    expect(() => v04CanonicalSourceEvidenceOrArchive(root)).toThrow("archive source file does not match manifest");
+  });
+
   it("accepts the checked artifact across generated-artifact-only commits", () => {
     const npmCli = process.env.npm_execpath;
     if (!npmCli) throw new Error("npm_execpath is required for the artifact verifier contract test");

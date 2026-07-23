@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,9 +9,8 @@ import type { CodeEdgeKind, Envelope } from "../src/contracts.js";
 import type { TraceResult } from "../src/storage/database.js";
 import {
   stableStringify,
-  v04CanonicalSourceEvidence,
+  v04CanonicalSourceEvidenceOrArchive,
   v04SourceDifferencePaths,
-  verifyV04ArchiveSourceManifest,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
 
@@ -106,34 +105,7 @@ function outputPath(): string | null {
 
 function sourceEvidence(): V04SourceEvidence {
   const root = process.cwd();
-  const gitMetadata = path.join(root, ".git");
-  if (!existsSync(gitMetadata)) {
-    const evidencePath = path.join(root, "SOURCE_EVIDENCE.json");
-    const sourceCommitPath = path.join(root, "SOURCE_COMMIT");
-    const manifestPath = path.join(root, "SOURCE_MANIFEST.json");
-    if (![evidencePath, sourceCommitPath, manifestPath].every((file) => existsSync(file))) {
-      throw new Error("V06_SOURCE_PROVENANCE_MISSING: git metadata or verified source archive evidence is required");
-    }
-    const sourceText = readFileSync(evidencePath, "utf8");
-    const evidence = JSON.parse(sourceText) as V04SourceEvidence;
-    const sourceCommit = readFileSync(sourceCommitPath, "utf8");
-    if (
-      sourceText !== stableStringify(evidence) ||
-      evidence.contract !== "git-source-snapshot-lf-v3" ||
-      !/^[0-9a-f]{64}$/.test(evidence.treeDigest) ||
-      !/^[0-9a-f]{40}$/.test(evidence.headCommit) ||
-      evidence.headTreeDigest !== evidence.treeDigest ||
-      !Number.isSafeInteger(evidence.files) ||
-      evidence.files < 1 ||
-      evidence.dirty !== false ||
-      sourceCommit !== evidence.headCommit
-    ) {
-      throw new Error("V06_SOURCE_PROVENANCE_INVALID: source archive evidence is not canonical");
-    }
-    verifyV04ArchiveSourceManifest(evidence, root);
-    return evidence;
-  }
-  const evidence = v04CanonicalSourceEvidence(root);
+  const evidence = v04CanonicalSourceEvidenceOrArchive(root);
   if (evidence.dirty) {
     throw new Error(`V06_SOURCE_WORKTREE_DIRTY: ${v04SourceDifferencePaths(root).join(", ") || "unknown difference"}`);
   }

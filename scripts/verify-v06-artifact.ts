@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
-  v04CanonicalSourceEvidence,
+  v04CanonicalSourceEvidenceOrArchive,
   v04SourceDifferencePaths,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
@@ -115,7 +115,7 @@ if (
 ) {
   throw new Error("V06_ARTIFACT_INVALID: exact resolved-boundary precision/recall gate failed");
 }
-const current = v04CanonicalSourceEvidence(process.cwd());
+const current = v04CanonicalSourceEvidenceOrArchive(process.cwd());
 if (current.dirty) {
   throw new Error(`V06_SOURCE_WORKTREE_DIRTY: ${v04SourceDifferencePaths(process.cwd()).join(", ") || "unknown difference"}`);
 }
