@@ -9,7 +9,7 @@ function edgeKey(edge: Pick<CodeEdgeRecord, "sourceId" | "targetId" | "kind">): 
   return `${edge.kind}\0${edge.sourceId}\0${edge.targetId}`;
 }
 
-function boundaryEvidence(edge: CodeEdgeRecord): CodeEdgeRecord["evidence"] {
+function boundaryEvidence(edge: CodeEdgeRecord): NonNullable<CodeEdgeRecord["evidence"]> {
   const values = Array.isArray(edge.metadata.boundaries) ? edge.metadata.boundaries : [];
   return values.flatMap((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
@@ -132,7 +132,7 @@ export class GenerationGraphCache {
   private cached<T>(entries: Map<string, CacheEntry<T>>, key: string, load: () => T): T {
     const existing = entries.get(key);
     if (existing) { existing.used = ++this.tick; return structuredClone(existing.value); }
-    const value = load(); entries.set(key, { value: structuredClone(value), used: ++this.tick });
+    const value = load(); entries.set(key, { value: structuredClone(value) });
     if (entries.size > this.capacity) {
       const oldest = [...entries].sort((a, b) => a[1].used - b[1].used || a[0].localeCompare(b[0]))[0];
       if (oldest) entries.delete(oldest[0]);
