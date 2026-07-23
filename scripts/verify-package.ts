@@ -241,7 +241,21 @@ const client = new Client({ name: "contextmesh-package-stdio-smoke", version: "1
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  if (tools.tools.length !== 10) process.exitCode = 4;
+  const actualTools = tools.tools.map((tool) => tool.name).sort();
+  const expectedTools = [
+    "explore_context",
+    "forget",
+    "get_context",
+    "impact_code",
+    "index_workspace",
+    "recall",
+    "reflect",
+    "remember",
+    "search_code",
+    "trace_code",
+    "workspace_status",
+  ].sort();
+  if (JSON.stringify(actualTools) !== JSON.stringify(expectedTools)) process.exitCode = 4;
   const status = await client.callTool({ name: "workspace_status", arguments: {} });
   if (status.isError) process.exitCode = 5;
 } finally { await client.close(); }
