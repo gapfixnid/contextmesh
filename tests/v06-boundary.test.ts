@@ -39,6 +39,22 @@ interface TraceData {
   unresolved: Array<{ sourceNodeId: string | null; kind: string; rawName: string; candidates?: string[] }>;
 }
 
+async function traceCalls(app: ContextMeshApp, symbolId: string): Promise<TraceData> {
+  const response = await app.traceCode({
+    symbolId,
+    direction: "out",
+    edgeKinds: ["CALLS"],
+    depth: 1,
+    limit: 50,
+  }) as Envelope<TraceData>;
+  return response.data;
+}
+
+function hasBoundaryEdge(trace: TraceData): boolean {
+  return trace.edges.some((edge) =>
+    edge.evidence?.some((item) => item.provider === "contextmesh_http_boundary"));
+}
+
 describe("v0.6 literal HTTP boundaries", () => {
   it("links a TypeScript fetch call to a Python route without a cross-language name match", async () => {
     const root = workspace();
@@ -63,15 +79,9 @@ describe("v0.6 literal HTTP boundaries", () => {
       await app.indexWorkspace({ mode: "full" });
       const client = await symbolId(app, "loadUsers", "typescript");
       const server = await symbolId(app, "list_users", "python");
-      const trace = await app.traceCode({
-        symbolId: client,
-        direction: "out",
-        edgeKinds: ["CALLS"],
-        depth: 1,
-        limit: 50,
-      }) as Envelope<TraceData>;
+      const trace = await traceCalls(app, client);
 
-      const boundary = trace.data.edges.find((edge) =>
+      const boundary = trace.edges.find((edge) =>
         edge.sourceId === client && edge.targetId === server &&
         edge.evidence?.some((item) => item.provider === "contextmesh_http_boundary"));
       expect(boundary).toMatchObject({ kind: "CALLS", status: "resolved" });
@@ -122,16 +132,9 @@ describe("v0.6 literal HTTP boundaries", () => {
       ].join("\n"));
       await app.indexWorkspace({ mode: "incremental" });
 
-      const trace = await app.traceCode({
-        symbolId: client,
-        direction: "out",
-        edgeKinds: ["CALLS"],
-        depth: 1,
-        limit: 50,
-      }) as Envelope<TraceData>;
-      expect(trace.data.edges.some((edge) =>
-        edge.evidence?.some((item) => item.provider === "contextmesh_http_boundary"))).toBe(false);
-      expect(trace.data.unresolved).toContainEqual(expect.objectContaining({
+      const trace = await traceCalls(app, client);
+      expect(hasBoundaryEdge(trace)).toBe(false);
+      expect(trace.unresolved).toContainEqual(expect.objectContaining({
         sourceNodeId: client,
         kind: "HTTP_BOUNDARY_CALL",
         rawName: "GET /internal/users",
@@ -164,21 +167,48 @@ describe("v0.6 literal HTTP boundaries", () => {
     try {
       await app.indexWorkspace({ mode: "full" });
       const client = await symbolId(app, "loadUsers", "typescript");
-      const trace = await app.traceCode({
-        symbolId: client,
-        direction: "out",
-        edgeKinds: ["CALLS"],
-        depth: 1,
-        limit: 50,
-      }) as Envelope<TraceData>;
+      const trace = await traceCalls(app, client);
 
-      expect(trace.data.edges.some((edge) =>
-        edge.evidence?.some((item) => item.provider === "contextmesh_http_boundary"))).toBe(false);
-      expect(trace.data.unresolved).toContainEqual(expect.objectContaining({
+      expect(hasBoundaryEdge(trace)).toBe(false);
+      expect(trace.unresolved).toContainEqual(expect.objectContaining({
         sourceNodeId: client,
         kind: "HTTP_BOUNDARY_CALL",
         rawName: "GET /internal/users",
       }));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not map external URLs or composed strings onto a local route", async () => {
+    const root = workspace();
+    writeFileSync(path.join(root, "client.ts"), [
+      "export async function externalUsers() {",
+      "  return fetch('https://example.invalid/internal/users');",
+      "}",
+      "export async function composedUsers(id: string) {",
+      "  return fetch('/internal/' + id);",
+      "}",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(root, "service.py"), [
+      "from fastapi import FastAPI",
+      "app = FastAPI()",
+      "@app.get('/internal/users')",
+      "def list_users():",
+      "    return []",
+      "",
+    ].join("\n"));
+
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      for (const name of ["externalUsers", "composedUsers"]) {
+        const client = await symbolId(app, name, "typescript");
+        const trace = await traceCalls(app, client);
+        expect(hasBoundaryEdge(trace)).toBe(false);
+        expect(trace.unresolved.some((item) => item.kind === "HTTP_BOUNDARY_CALL")).toBe(false);
+      }
     } finally {
       await app.close();
     }
