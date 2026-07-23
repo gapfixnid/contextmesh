@@ -132,7 +132,7 @@ export class GenerationGraphCache {
   private cached<T>(entries: Map<string, CacheEntry<T>>, key: string, load: () => T): T {
     const existing = entries.get(key);
     if (existing) { existing.used = ++this.tick; return structuredClone(existing.value); }
-    const value = load(); entries.set(key, { value: structuredClone(value) });
+    const value = load(); entries.set(key, { value: structuredClone(value), used: ++this.tick });
     if (entries.size > this.capacity) {
       const oldest = [...entries].sort((a, b) => a[1].used - b[1].used || a[0].localeCompare(b[0]))[0];
       if (oldest) entries.delete(oldest[0]);
