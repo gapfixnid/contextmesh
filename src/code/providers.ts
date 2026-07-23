@@ -147,12 +147,14 @@ export function mergeGraphBatches(
       edges.set(key, edge);
       continue;
     }
+    const boundaryWins = statusRank(edge.status) >= statusRank(prior.status);
+    const selectedStatus = boundaryWins ? edge.status : prior.status;
     edges.set(key, {
       ...prior,
       confidence: Math.max(prior.confidence, edge.confidence),
-      resolutionKind: statusRank(edge.status) >= statusRank(prior.status) ? edge.resolutionKind : prior.resolutionKind,
+      resolutionKind: boundaryWins ? edge.resolutionKind : prior.resolutionKind,
       metadata: { ...prior.metadata, ...edge.metadata },
-      status: statusRank(edge.status) >= statusRank(prior.status) ? edge.status : prior.status,
+      ...(selectedStatus === undefined ? {} : { status: selectedStatus }),
       evidence: mergeEvidence(prior.evidence, edge.evidence),
     });
   }
