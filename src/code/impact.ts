@@ -43,10 +43,18 @@ export interface ImpactBoundary {
   protocol: string;
   method: string | null;
   path: string | null;
+  operation: string | null;
+  resource: string | null;
   clientLanguage: string | null;
   clientFile: string | null;
   serverLanguage: string | null;
   serverFile: string | null;
+  sourceRole: string | null;
+  sourceLanguage: string | null;
+  sourceFile: string | null;
+  targetRole: string | null;
+  targetLanguage: string | null;
+  targetFile: string | null;
 }
 
 interface ImpactNode {
@@ -122,10 +130,18 @@ function boundaryKey(boundary: ImpactBoundary): string {
     boundary.protocol,
     boundary.method ?? "",
     boundary.path ?? "",
+    boundary.operation ?? "",
+    boundary.resource ?? "",
     boundary.clientLanguage ?? "",
     boundary.clientFile ?? "",
     boundary.serverLanguage ?? "",
     boundary.serverFile ?? "",
+    boundary.sourceRole ?? "",
+    boundary.sourceLanguage ?? "",
+    boundary.sourceFile ?? "",
+    boundary.targetRole ?? "",
+    boundary.targetLanguage ?? "",
+    boundary.targetFile ?? "",
   ].join("\0");
 }
 
@@ -138,10 +154,18 @@ function boundaryEvidence(evidence: CodeEvidence[] | undefined): ImpactBoundary[
       protocol: details.boundaryProtocol,
       method: stringDetail(details, "boundaryMethod"),
       path: stringDetail(details, "boundaryPath"),
+      operation: stringDetail(details, "boundaryOperation"),
+      resource: stringDetail(details, "boundaryResource"),
       clientLanguage: stringDetail(details, "clientLanguage"),
       clientFile: stringDetail(details, "clientFile"),
       serverLanguage: stringDetail(details, "serverLanguage"),
       serverFile: stringDetail(details, "serverFile"),
+      sourceRole: stringDetail(details, "sourceRole"),
+      sourceLanguage: stringDetail(details, "sourceLanguage"),
+      sourceFile: stringDetail(details, "sourceFile"),
+      targetRole: stringDetail(details, "targetRole"),
+      targetLanguage: stringDetail(details, "targetLanguage"),
+      targetFile: stringDetail(details, "targetFile"),
     };
     boundaries.set(boundaryKey(boundary), boundary);
   }
