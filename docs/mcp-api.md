@@ -16,7 +16,7 @@ All tools are available over stdio. Defaults shown below are applied by the serv
 }
 ```
 
-`estimatedTokens` is a conservative UTF-8 estimate of the complete envelope. Normal `recall` and `get_context` responses always satisfy `estimatedTokens <= tokenBudget`; an input budget smaller than the minimum envelope returns `INVALID_ARGUMENT`. A paginated response can be truncated independently of its token budget; pass `data.nextOffset` as the next `offset`.
+`estimatedTokens` is a conservative UTF-8 estimate of the complete envelope. Normal `recall`, `get_context`, and `impact_code` responses always satisfy `estimatedTokens <= tokenBudget`; an input budget smaller than the minimum envelope returns `INVALID_ARGUMENT`. A paginated response can be truncated independently of its token budget; pass `data.nextOffset` as the next `offset`.
 
 Recall/context memories are untrusted data. Their provenance includes session identity, budget-limited code links and `codeLinksOmitted`. With `includeAnchors=true`, anchors are selected before pagination; `limit`, `offset`, and `nextOffset` apply to ordinary results.
 
@@ -28,6 +28,7 @@ Recall/context memories are untrusted data. Their provenance includes session id
 | `workspace_status` | no inputs |
 | `search_code` | `query`, optional `kinds`, `limit=20` (max 100), `offset=0` |
 | `trace_code` | `symbolId`, `direction="both"`, optional `edgeKinds`, `depth=2` (max 5), `limit=100` (max 500) |
+| `impact_code` | `symbolId`, `direction="in" \| "out" = "in"`, optional `edgeKinds`, `depth=3` (max 5), `limit=50` (max 200), `tokenBudget=2000` |
 | `remember` | `content`, `topic`, `type`, `keywords=[]`, `importance=3`, `anchor=false`, `assertionStatus="observed"`, optional TTL/session/supersession/source symbols |
 | `recall` | at least one of `query`, `keywords`, or `includeAnchors`; optional type/topic filters, `tokenBudget=1000`, `limit=20`, `offset=0` |
 | `get_context` | `query`, optional `symbolId`, `tokenBudget=2000`, `include=["code","memory"]` |
@@ -39,13 +40,15 @@ Recall/context memories are untrusted data. Their provenance includes session id
 
 In v0.5, successful envelopes add `snapshot.graphGeneration` and `snapshot.precisionRevision`. `workspace_status.data.precision.providers` reports provider/version, capability, base generation, precision revision, status, coverage counts, lease expiry, and last error. `trace_code` edges may be `candidate`, `rejected`, or `resolved`, with deterministic merged evidence. A missing precision provider does not make the base graph unavailable.
 
-The first v0.6 boundary slice additively exposes resolved cross-language HTTP links through the existing `trace_code` `CALLS` edges. Such edges contain evidence from `contextmesh_http_boundary@http-literal-v1`; `evidence[].details` includes `boundaryProtocol`, normalized `boundaryMethod`/`boundaryPath`, client/server language and file, and the server source span. Missing or ambiguous literal endpoints remain `HTTP_BOUNDARY_CALL` entries in `trace_code.data.unresolved`. This slice does not add a new MCP tool or claim support for dynamic routes, RPC, queues, or database boundaries.
+The first v0.6 boundary slice additively exposes resolved cross-language HTTP links through `CALLS` edges. Such edges contain evidence from `contextmesh_http_boundary@http-literal-v1`; `evidence[].details` includes `boundaryProtocol`, normalized `boundaryMethod`/`boundaryPath`, client/server language and file, and the server source span. Missing or ambiguous literal endpoints remain `HTTP_BOUNDARY_CALL` unresolved entries. Dynamic routes, external URLs, composed strings, RPC, queues, and database boundaries are not confirmed.
+
+`impact_code` is the additive eleventh tool. It reuses one generation/precision snapshot from `trace_code` and returns deterministic upstream (`direction="in"`) or downstream (`direction="out"`) affected symbols, minimum depth, relation status, confidence, cross-language classification, and normalized boundary evidence. Rejected edges never become affected targets. Candidate or unresolved paths remain visible with `IMPACT_VERIFICATION_REQUIRED`, and every response states that static graph reachability does not prove runtime reachability. Summary counts describe the bounded observed trace; `truncated=true` means either graph limits or the token budget omitted details.
 
 When semantic retrieval was configured at server startup, `workspace_status.data.semantic` additively reports `code` and `memory` status, `eligibleEntityCount`, `validEmbeddingCount`, `coverage`, `modelKey`, generation/revision, normalized failure/retry fields, reconciliation diagnostics, and runtime diagnostics. Public error text is stable and redacted; paths and stacks are never returned. Omitting `--semantic-model` returns `{ "enabled": false }` and emits no semantic warning.
 
 MCP input schemas are unchanged in 0.2.0. `search_code.data.results[].score` is the final normalized relevance in `[0,1]` in both semantic-on and semantic-off modes. Exact identifiers are pinned; other lexical, semantic, and graph candidates are fused and diversified deterministically. Recoverable semantic failures return lexical/graph data normally and add only `SEMANTIC_PARTIAL: ...` or `SEMANTIC_UNAVAILABLE: ...` entries to the existing `warnings[]` array.
 
-`explore_context` is the additive tenth tool. It returns deterministic entry points, bounded intent-filtered relations, hash-verified current snippets, unresolved/low-confidence verification warnings, one snapshot, and an observed one-shot trace. Supported v0.4 intents are `implementation`, `architecture`, and `debugging`; impact analysis and history are not implemented.
+`explore_context` returns deterministic entry points, bounded intent-filtered relations, hash-verified current snippets, unresolved/low-confidence verification warnings, one snapshot, and an observed one-shot trace. Supported v0.4 intents are `implementation`, `architecture`, and `debugging`; history is not implemented.
 
 `workspace_status.data.graphKernel` and `workspace_status.data.watcher.durable` report migration-008 component health. A watcher startup failure is therefore visible after restart even when the graph's last committed generation remains readable; a verified component recovery clears only its own durable failure.
 
