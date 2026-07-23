@@ -4,6 +4,10 @@ import { z } from "zod";
 
 import type { ContextMeshApp } from "../app.js";
 import {
+  buildImpactEnvelope,
+  impactCodeSchema,
+} from "../code/impact.js";
+import {
   forgetSchema,
   exploreContextSchema,
   getContextSchema,
@@ -16,6 +20,7 @@ import {
   type Envelope,
 } from "../contracts.js";
 import { asContextMeshError } from "../errors.js";
+import type { TraceResult } from "../storage/database.js";
 
 const envelopeOutputSchema = z.object({
   schemaVersion: z.literal(1),
@@ -122,6 +127,31 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     async (input) => {
       try {
         return success(await app.traceCode(input));
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "impact_code",
+    {
+      title: "Analyze code impact",
+      description: "Summarize bounded upstream or downstream graph impact, including cross-language boundary evidence and verification requirements.",
+      inputSchema: impactCodeSchema,
+      outputSchema: envelopeOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const traced = await app.traceCode({
+          symbolId: input.symbolId,
+          direction: input.direction,
+          edgeKinds: input.edgeKinds,
+          depth: input.depth,
+          limit: input.limit,
+        }) as Envelope<TraceResult>;
+        return success(buildImpactEnvelope(traced, input));
       } catch (error) {
         return failure(error);
       }
