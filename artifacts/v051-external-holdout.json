@@ -940,26 +940,26 @@
     "runs": 20,
     "scope": "20 fresh Node processes with independent application, database, and materialized workspace instances",
     "signatures": [
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9",
-      "4ba1eecee4731dd8be7052a20e998871493919ff3646396018520b37644bd9a9"
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5",
+      "469cc2588999ed37a100e5f25dc85cfa270b2dfb40924eb658cb4df8c867a2e5"
     ]
   },
   "fixture": {
@@ -1094,7 +1094,7 @@
       "language": "rust",
       "lastError": "RUST_ANALYZER_DEFINITION_UNRESOLVED: rustlings/exercises/02_functions/functions1.rs:105:call_me",
       "provider": "rust_analyzer",
-      "providerVersion": "rust-analyzer-lsp-v2:safe:5ec1419d97d8",
+      "providerVersion": "rust-analyzer-lsp-v2:safe:a4d8e0364eb4",
       "rejectedEdges": 0,
       "resolvedEdges": 5,
       "status": "partial"
@@ -1116,16 +1116,16 @@
     "go": "go version go1.23.12 windows/amd64",
     "node": "v24.18.0",
     "platform": "win32-x64",
-    "rustAnalyzer": "rust-analyzer 1.85.0 (4d91de4e 2025-02-17)",
-    "rustc": "rustc 1.85.0 (4d91de4e4 2025-02-17)"
+    "rustAnalyzer": "rust-analyzer 1.96.1 (31fca3ad 2026-06-26)",
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)"
   },
   "schemaVersion": 1,
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
-    "files": 187,
-    "headCommit": "8734f25e1f96281c463d2f7b068a6cbb06e98cb6",
-    "headTreeDigest": "83d4476c8f28f681d4b7f13d05eb5ab5527217914bd9cc34581837f6eebb91bb",
-    "treeDigest": "83d4476c8f28f681d4b7f13d05eb5ab5527217914bd9cc34581837f6eebb91bb"
+    "files": 190,
+    "headCommit": "07faec88bec37d3605d8c07292698a623a975871",
+    "headTreeDigest": "d6906370d4f3eddfb946d924e87133e9c6e8a11e9d246db4bfcdc69e0b4ba867",
+    "treeDigest": "d6906370d4f3eddfb946d924e87133e9c6e8a11e9d246db4bfcdc69e0b4ba867"
   }
 }

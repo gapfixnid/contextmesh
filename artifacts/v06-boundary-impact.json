@@ -2,23 +2,23 @@
   "schemaVersion": 1,
   "release": "v0.6",
   "fixture": {
-    "id": "contextmesh-v06-boundary-impact-v1",
-    "digest": "2dba90b9741989283ca665e39bda94f67a650a056372b4976df41a8a07fe8779",
-    "caseCount": 8,
+    "id": "contextmesh-v06-boundary-impact-v2",
+    "digest": "dbb39a2900f5730ed1d13c5967648fed7e11ab1ffd818c0a8bdd5f99d7ac134f",
+    "caseCount": 11,
     "immutable": true,
     "provenance": {
       "origin": "ContextMesh v0.6 product scope and release acceptance criteria",
-      "authoredAgainst": "literal boundary providers http-literal-v1 and rpc-queue-db-literal-v1",
+      "authoredAgainst": "resource boundary providers http-resource-v2 and rpc-queue-db-resource-v2",
       "frozenAt": "2026-07-23",
       "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold."
     }
   },
   "source": {
     "contract": "git-source-snapshot-lf-v3",
-    "treeDigest": "83d4476c8f28f681d4b7f13d05eb5ab5527217914bd9cc34581837f6eebb91bb",
-    "files": 187,
-    "headCommit": "8734f25e1f96281c463d2f7b068a6cbb06e98cb6",
-    "headTreeDigest": "83d4476c8f28f681d4b7f13d05eb5ab5527217914bd9cc34581837f6eebb91bb",
+    "treeDigest": "d6906370d4f3eddfb946d924e87133e9c6e8a11e9d246db4bfcdc69e0b4ba867",
+    "files": 190,
+    "headCommit": "07faec88bec37d3605d8c07292698a623a975871",
+    "headTreeDigest": "d6906370d4f3eddfb946d924e87133e9c6e8a11e9d246db4bfcdc69e0b4ba867",
     "dirty": false
   },
   "runner": {
@@ -28,23 +28,23 @@
   "runs": 5,
   "deterministic": true,
   "signatures": [
-    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
-    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
-    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
-    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68",
-    "d6ab17c5714e1607d488b3c25fed15cfb216da033cb982883d080923fc6a2f68"
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71"
   ],
   "metrics": {
-    "expectedResolved": 5,
-    "actualResolved": 5,
-    "truePositive": 5,
+    "expectedResolved": 7,
+    "actualResolved": 7,
+    "truePositive": 7,
     "falsePositive": 0,
     "falseNegative": 0,
     "precision": 1,
     "recall": 1
   },
   "thresholds": {
-    "minimumCases": 8,
+    "minimumCases": 11,
     "deterministicRuns": 5,
     "resolvedPrecision": 1,
     "resolvedRecall": 1
@@ -279,6 +279,87 @@
         "candidateCount": 0
       },
       "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "negative-document-string",
+      "sourceQualifiedName": "negative-doc.ts#documentationOnly",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "negative-standalone-sql",
+      "sourceQualifiedName": "negative-sql.py#migration_notes",
+      "edgeKind": "WRITES_TO",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "typescript-python-go-flow",
+      "sourceQualifiedName": "flow-client.ts#startOrder",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "flow-service.py#accept_order",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/orders"
+        },
+        {
+          "qualifiedName": "flow-worker.go#process_order",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.accepted"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "flow-service.py#accept_order",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/orders",
+          "status": "resolved",
+          "confirmed": true
+        },
+        {
+          "qualifiedName": "flow-worker.go#process_order",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.accepted",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "flow-service.py#accept_order",
+        "flow-worker.go#process_order"
+      ],
       "passed": true
     }
   ],
