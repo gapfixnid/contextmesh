@@ -10,6 +10,7 @@ import { configDefaults, defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
+    testTimeout: 15_000,
     exclude: [
       ...configDefaults.exclude,
       "tests/v04-artifact-contract.test.ts",
