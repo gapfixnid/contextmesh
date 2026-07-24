@@ -16,6 +16,21 @@ describe("CI release tooling contract", () => {
     expect(sourceZip).toContain('"run", "verify:v06-artifact"');
   });
 
+  it("keeps v0.7 evaluation out of Fast CI and in the manual full gate", () => {
+    const fast = readFileSync(path.join(process.cwd(), ".github", "workflows", "ci-fast.yml"), "utf8");
+    const full = readFileSync(path.join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+    const sourceZip = readFileSync(path.join(process.cwd(), "scripts", "verify-source-zip.ts"), "utf8");
+    expect(fast).not.toContain("evaluate:v07");
+    expect(full).toContain("workflow_dispatch:");
+    expect(full).toContain("workflow_call:");
+    expect(full).not.toContain("push:");
+    expect(full).toContain("npm run evaluate:v07 -- --output artifacts/v07-memory-validation.json");
+    expect(full).toContain("npm run verify:v07-artifact");
+    expect(full).toContain("artifacts/v07-memory-validation.json");
+    expect(sourceZip).toContain('"artifacts/v07-memory-validation.json"');
+    expect(sourceZip).toContain('"run", "verify:v07-artifact"');
+  });
+
   it("provisions pinned Go and rust-analyzer in every job that executes verify:source-zip", () => {
     const workflow = readFileSync(path.join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
     const marker = "  clean-source-zip-release-gate:\n";

@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "release": "v0.7",
+  "fixture": {
+    "id": "contextmesh-v07-memory-validation-v1",
+    "digest": "e8d7ddd4dfa99de65d511f44daa5c7cca8ad097f2ead2bf3dc3424f977d6e9a2",
+    "caseCount": 16,
+    "immutable": true
+  },
+  "source": {
+    "contract": "git-source-snapshot-lf-v3",
+    "treeDigest": "297bb6c682975e9830edeb758c595163896561b898401dcf015ac621de21492b",
+    "files": 206,
+    "headCommit": "e4fbbbe4a4ad540f61c74b55359f63b4e1fe0554",
+    "headTreeDigest": "297bb6c682975e9830edeb758c595163896561b898401dcf015ac621de21492b",
+    "dirty": false
+  },
+  "runner": {
+    "node": "v24.18.0",
+    "platform": "win32"
+  },
+  "runs": 20,
+  "orderedSignatures": [
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1"
+  ],
+  "metrics": {
+    "unsafeNormalContextLeak": 0,
+    "validationAccuracy": 1,
+    "relocatedRecovery": 1,
+    "ambiguousFalseConfirmation": 0,
+    "duplicatePrecision": 1,
+    "duplicateRecall": 1,
+    "conflictPrecision": 1,
+    "conflictRecall": 1,
+    "auditReplayMismatch": 0,
+    "memoryRevisionMismatch": 0,
+    "migrationPreservationFailures": 0,
+    "maintenanceCursorFailures": 0
+  },
+  "thresholds": {
+    "deterministicRuns": 20,
+    "unsafeNormalContextLeak": 0,
+    "validationAccuracy": 1,
+    "relocatedRecovery": 1,
+    "ambiguousFalseConfirmation": 0,
+    "duplicatePrecision": 1,
+    "duplicateRecall": 1,
+    "conflictPrecision": 1,
+    "conflictRecall": 1,
+    "auditReplayMismatch": 0,
+    "memoryRevisionMismatch": 0,
+    "migrationPreservationFailures": 0
+  },
+  "probes": {
+    "maintenanceCursor": {
+      "failures": 0,
+      "checked": 1001,
+      "expected": 1001
+    },
+    "migration": {
+      "failures": 0,
+      "state": "stale",
+      "leaked": false
+    },
+    "semanticBackend": "deterministic-integration"
+  },
+  "caseResults": [
+    {
+      "id": "unchanged-linked-valid",
+      "category": "validation",
+      "expected": "valid",
+      "actual": "valid",
+      "passed": true
+    },
+    {
+      "id": "unique-rename-relocated",
+      "category": "validation",
+      "expected": "relocated",
+      "actual": "relocated",
+      "passed": true
+    },
+    {
+      "id": "ambiguous-rename-review",
+      "category": "validation",
+      "expected": "needs_review",
+      "actual": "needs_review",
+      "passed": true
+    },
+    {
+      "id": "changed-linked-stale",
+      "category": "validation",
+      "expected": "stale",
+      "actual": "stale",
+      "passed": true
+    },
+    {
+      "id": "deleted-target-orphaned",
+      "category": "validation",
+      "expected": "orphaned",
+      "actual": "orphaned",
+      "passed": true
+    },
+    {
+      "id": "structured-signature-contradicted",
+      "category": "validation",
+      "expected": "contradicted",
+      "actual": "contradicted",
+      "passed": true
+    },
+    {
+      "id": "stale-anchor-excluded",
+      "category": "safety",
+      "expected": "excluded",
+      "actual": "excluded",
+      "passed": true
+    },
+    {
+      "id": "contradicted-semantic-excluded",
+      "category": "safety",
+      "expected": "excluded",
+      "actual": "excluded",
+      "passed": true
+    },
+    {
+      "id": "near-duplicate-candidate",
+      "category": "duplicate",
+      "expected": "candidate",
+      "actual": "candidate",
+      "passed": true
+    },
+    {
+      "id": "structured-conflict-candidate",
+      "category": "conflict",
+      "expected": "candidate",
+      "actual": "candidate",
+      "passed": true
+    },
+    {
+      "id": "disjoint-validity-no-conflict",
+      "category": "conflict",
+      "expected": "none",
+      "actual": "none",
+      "passed": true
+    },
+    {
+      "id": "episode-compaction-candidate",
+      "category": "compaction",
+      "expected": "candidate",
+      "actual": "candidate",
+      "passed": true
+    },
+    {
+      "id": "validity-ended-excluded",
+      "category": "temporal",
+      "expected": "excluded",
+      "actual": "excluded",
+      "passed": true
+    },
+    {
+      "id": "access-reinforcement",
+      "category": "utility",
+      "expected": "reinforced",
+      "actual": "reinforced",
+      "passed": true
+    },
+    {
+      "id": "maintenance-noop",
+      "category": "maintenance",
+      "expected": "noop",
+      "actual": "noop",
+      "passed": true
+    },
+    {
+      "id": "audit-replay",
+      "category": "audit",
+      "expected": "stable",
+      "actual": "stable",
+      "passed": true
+    }
+  ],
+  "auditSignature": "b30cdbbeb36bac210e957d2ccbb49cf6d12bab5c232cc4211a13cd766135f89d",
+  "passed": true
+}

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
@@ -72,16 +72,11 @@ describe("mixed-language evaluation artifact", () => {
     if (gitWorktree) {
       expect({ treeDigest: artifact.source.treeDigest, files: artifact.source.files })
         .toEqual(v04CommitSourceEvidence(artifact.source.headCommit));
-      const current = v04SourceEvidence();
-      expect(current.dirty).toBe(false);
-      expect({ treeDigest: artifact.source.treeDigest, files: artifact.source.files })
-        .toEqual({ treeDigest: current.treeDigest, files: current.files });
+      expect(v04SourceEvidence().dirty).toBe(false);
     } else {
-      const evidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");
-      expect(existsSync(evidencePath)).toBe(true);
-      const current = JSON.parse(readFileSync(evidencePath, "utf8")) as typeof artifact.source;
-      expect({ treeDigest: artifact.source.treeDigest, files: artifact.source.files })
-        .toEqual({ treeDigest: current.treeDigest, files: current.files });
+      // A source archive intentionally contains the current v0.7 tree, not the
+      // immutable historical source tree recorded by this older artifact.
+      expect(artifact.source.headCommit).toMatch(/^[0-9a-f]{40}$/);
     }
     for (const timing of Object.values(artifact.performanceMs)) expect(timing.p95).toBeGreaterThanOrEqual(timing.p50);
   });

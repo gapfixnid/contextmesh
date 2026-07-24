@@ -15,6 +15,7 @@ import {
   recallSchema,
   reflectSchema,
   rememberSchema,
+  reviewMemoriesSchema,
   searchCodeSchema,
   traceCodeSchema,
   type Envelope,
@@ -35,6 +36,7 @@ const envelopeOutputSchema = z.object({
     precisionRevision: z.number().int().nonnegative(),
     successFence: z.number().int().nonnegative(),
     freshness: z.enum(["fresh", "fast-verified", "stale"]),
+    memoryRevision: z.number().int().nonnegative().optional(),
   }).optional(),
 });
 
@@ -59,7 +61,7 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
-  const server = new McpServer({ name: "contextmesh", version: "0.6.0" });
+  const server = new McpServer({ name: "contextmesh", version: "0.7.0" });
   const registerImpactTool = (name: "impact_analysis" | "impact_code", title: string): void => {
     server.registerTool(
       name,
@@ -174,6 +176,24 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
     async (input) => {
       try {
         return success(await app.remember(input));
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "review_memories",
+    {
+      title: "Review memories",
+      description: "List memory validation findings, run bounded deterministic maintenance, or apply an explicit review decision.",
+      inputSchema: reviewMemoriesSchema,
+      outputSchema: envelopeOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return success(app.reviewMemories(input));
       } catch (error) {
         return failure(error);
       }

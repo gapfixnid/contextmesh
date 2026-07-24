@@ -31,6 +31,7 @@ export interface ContextMemoryItem extends MemoryFragmentRecord {
 export interface AssembledContext {
   query: string;
   candidates: ContextCandidate[];
+  representativeKeys: Readonly<Record<"code" | "memory", string[]>>;
   relationships: TraceEdgeResult[];
   candidateTruncated: boolean;
   warnings: string[];
@@ -209,6 +210,7 @@ export class ContextAssembler {
         limit: 100,
         offset: 0,
       });
+      warnings.push(...recalled.warnings);
       candidateTruncated ||= recalled.truncated || (semanticMemory?.candidates.length ?? 0) === 100;
       const semanticMemories = semanticMemory
         ? this.database
@@ -225,6 +227,25 @@ export class ContextAssembler {
         lexicalItems.push(memoryItem(memory));
       }
       for (const memory of semanticMemories) semanticItems.push(memoryItem(memory));
+
+      const memorySeedIds = [...new Set([
+        ...semanticMemories.map((memory) => memory.id),
+        ...recalled.anchors.map((memory) => memory.id),
+        ...recalled.fragments.map((memory) => memory.id),
+      ])];
+      const memorySeedProvenance = this.database.getMemoryCodeProvenance(memorySeedIds);
+      const memoryLinkedCodeIds = [...new Set(memorySeedIds.flatMap((memoryId) =>
+        (memorySeedProvenance.get(memoryId) ?? []).flatMap((link) =>
+          link.codeNodeId &&
+          (link.validation?.state === "valid" || link.validation?.state === "relocated")
+            ? [link.codeNodeId]
+            : [])))];
+      for (const node of this.database.getCodeNodesByIds(memoryLinkedCodeIds)) {
+        if (allCodeNodeIds.has(node.id)) continue;
+        graphCodeIds.add(node.id);
+        allCodeNodeIds.add(node.id);
+        graphItems.push(codeItem(node));
+      }
 
       const linked = this.database.getMemoriesLinkedToNodes([...allCodeNodeIds], 30);
       const relatedIds = [
@@ -244,16 +265,30 @@ export class ContextAssembler {
       }
     }
 
-    const sources: RankingSource<UnifiedContextValue>[] = [];
-    sources.push(...planeSources(lexicalItems, 1));
-    sources.push(...planeSources(semanticItems, 1));
-    sources.push(...planeSources(graphItems, 0.75));
+    const primarySources: RankingSource<UnifiedContextValue>[] = [
+      ...planeSources(lexicalItems, 1),
+      ...planeSources(semanticItems, 1),
+    ];
+    const sources: RankingSource<UnifiedContextValue>[] = [
+      ...primarySources,
+      ...planeSources(graphItems, 0.75),
+    ];
     const rankingDiagnostics: RankingDiagnostics = {
       inputByNormalizationGroup: {},
       uniqueCandidates: 0,
       nearDuplicatePairs: 0,
       hardDeduplicatedCandidates: 0,
       selectedCandidates: 0,
+    };
+    const representativeKeys = {
+      code: fuseAndDiversify(primarySources.filter((source) => source.normalizationGroup === "code"))
+        .filter((candidate) => candidate.relevance >= 0.35)
+        .slice(0, 2)
+        .map((candidate) => candidate.id),
+      memory: fuseAndDiversify(primarySources.filter((source) => source.normalizationGroup === "memory"))
+        .filter((candidate) => candidate.relevance >= 0.35)
+        .slice(0, 2)
+        .map((candidate) => candidate.id),
     };
     const fused = fuseAndDiversify(sources, pinnedIds, pinnedItems, rankingDiagnostics);
 
@@ -315,6 +350,7 @@ export class ContextAssembler {
     return {
       query: input.query,
       candidates,
+      representativeKeys,
       relationships,
       candidateTruncated,
       warnings: [...new Set(warnings)],
@@ -333,7 +369,7 @@ export class ContextAssembler {
     const codeCandidates = assembled.candidates.filter((candidate) => candidate.kind === "code");
     const snippets = await mapConcurrent(codeCandidates, SNIPPET_READ_CONCURRENCY, async (candidate) => {
       const item = candidate.value as ContextCodeItem;
-      return this.indexer.readSnippet(item, item.source === "graph" ? 0 : 2);
+      return this.indexer.readSnippet(item, item.source === "direct" ? 2 : 0);
     });
     let codeIndex = 0;
     for (const candidate of assembled.candidates) {

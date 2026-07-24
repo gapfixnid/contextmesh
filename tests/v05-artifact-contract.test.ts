@@ -14,6 +14,8 @@ function runVerifier(artifactPath?: string): ReturnType<typeof spawnSync> {
   if (!npmCli) throw new Error("npm_execpath is required for the v0.5 artifact verifier contract test");
   const args = [npmCli, "run", "verify:v05-artifact"];
   if (artifactPath) args.push("--", artifactPath);
+  else args.push("--");
+  args.push("--historical");
   return spawnSync(process.execPath, args, {
     cwd: process.cwd(),
     env: process.env,
@@ -37,7 +39,7 @@ afterEach(() => {
 });
 
 describe("v0.5 quality artifact verifier", () => {
-  it("accepts the checked artifact only when it represents the current exact source", () => {
+  it("accepts the checked historical artifact only at its exact original source commit", () => {
     const run = runVerifier();
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
   });

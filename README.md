@@ -107,9 +107,9 @@ Fast freshness compares the configured path set, size, and modification time, th
 
 `search_code` and `recall` accept bounded `offset` pagination and return `nextOffset`. Every successful tool response uses the same versioned envelope and every error uses a stable ContextMesh error code.
 
-## Library API in 0.6.0
+## Library API in 0.7.0
 
-Configure semantic retrieval and the additive watcher through the constructor. Version 0.6.0 adds deterministic HTTP/RPC/queue/database resource evidence and the `impact_analysis` MCP tool. `impact_code` remains a compatibility alias with the same input and output contract.
+Configure semantic retrieval and the additive watcher through the constructor. Version 0.7.0 adds temporal memory validity, deterministic utility/decay, current-generation code-link validation, bounded maintenance, and the `review_memories` MCP tool. `impact_code` remains a compatibility alias with the same input and output contract.
 
 ```ts
 import { ContextMeshApp } from "contextmesh";

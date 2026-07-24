@@ -37,6 +37,7 @@ describe("MCP protocol", () => {
           "recall",
           "reflect",
           "remember",
+          "review_memories",
           "search_code",
           "trace_code",
           "workspace_status",
@@ -51,6 +52,13 @@ describe("MCP protocol", () => {
       const impactProperties = (impactTool?.inputSchema as { properties?: Record<string, unknown> }).properties;
       expect(impactProperties?.direction).toBeDefined();
       expect(impactProperties?.tokenBudget).toBeDefined();
+      const reviewTool = tools.tools.find((tool) => tool.name === "review_memories");
+      expect(reviewTool?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      });
 
       const indexed = await client.callTool({ name: "index_workspace", arguments: { mode: "full" } });
       expect(indexed.isError).not.toBe(true);
@@ -64,6 +72,13 @@ describe("MCP protocol", () => {
       };
       expect(structured.data.results.some((result) => result.name === "Calculator")).toBe(true);
       expect(structured.snapshot).toMatchObject({ graphGeneration: 1, successFence: 1 });
+
+      const reviewed = await client.callTool({
+        name: "review_memories",
+        arguments: { action: "list", limit: 20, offset: 0, tokenBudget: 2000 },
+      });
+      expect(reviewed.isError).not.toBe(true);
+      expect(JSON.parse((reviewed.content as Array<{ text: string }>)[0]!.text)).toEqual(reviewed.structuredContent);
 
       const invalid = await client.callTool({ name: "search_code", arguments: { query: "" } });
       expect(invalid.isError).toBe(true);
@@ -96,7 +111,7 @@ describe("MCP protocol", () => {
       try {
         await client.connect(transport);
         const tools = await client.listTools();
-        expect(tools.tools).toHaveLength(12);
+        expect(tools.tools).toHaveLength(13);
         const status = await client.callTool({ name: "workspace_status", arguments: {} });
         expect(status.isError).not.toBe(true);
       } finally {

@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
   v04CanonicalSourceEvidenceOrArchive,
+  v04CommitSourceEvidence,
   v04SourceDifferencePaths,
   type V04SourceEvidence,
 } from "./v04-artifact-contract.js";
@@ -119,7 +121,18 @@ const current = v04CanonicalSourceEvidenceOrArchive(process.cwd());
 if (current.dirty) {
   throw new Error(`V06_SOURCE_WORKTREE_DIRTY: ${v04SourceDifferencePaths(process.cwd()).join(", ") || "unknown difference"}`);
 }
-if (!sameSource(artifact.source, current)) {
+const historical = process.argv.includes("--historical");
+if (existsSync(path.join(process.cwd(), ".git"))) {
+  execFileSync("git", ["merge-base", "--is-ancestor", artifact.source.headCommit, "HEAD"], { stdio: "inherit" });
+  const committed = v04CommitSourceEvidence(artifact.source.headCommit);
+  if (
+    committed.treeDigest !== artifact.source.treeDigest ||
+    committed.files !== artifact.source.files
+  ) {
+    throw new Error("V06_ARTIFACT_SOURCE_MISMATCH: evidence does not match its exact source commit");
+  }
+}
+if (!historical && !sameSource(artifact.source, current)) {
   throw new Error("V06_ARTIFACT_SOURCE_MISMATCH: checked evidence does not identify the exact current source");
 }
 process.stdout.write(`${JSON.stringify({
