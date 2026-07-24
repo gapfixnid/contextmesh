@@ -39,7 +39,7 @@ function rejectedMutation(mutate: (artifact: Record<string, any>) => void): Retu
   writeFileSync(target, `${stableStringify(artifact)}\n`, "utf8");
   const npmCli = process.env.npm_execpath;
   if (!npmCli) throw new Error("npm_execpath is required for the artifact verifier contract test");
-  return spawnSync(process.execPath, [npmCli, "run", "verify:v04-artifact", "--", target], {
+  return spawnSync(process.execPath, [npmCli, "run", "verify:v04-artifact", "--", target, "--historical"], {
     cwd: process.cwd(),
     env: process.env,
     encoding: "utf8",
@@ -147,10 +147,10 @@ describe("v0.4 performance artifact verifier", () => {
     expect(() => v04CanonicalSourceEvidenceOrArchive(root)).toThrow("archive source file does not match manifest");
   });
 
-  it("accepts the checked artifact across generated-artifact-only commits", () => {
+  it("accepts the checked historical artifact at its exact original source commit", () => {
     const npmCli = process.env.npm_execpath;
     if (!npmCli) throw new Error("npm_execpath is required for the artifact verifier contract test");
-    const run = spawnSync(process.execPath, [npmCli, "run", "verify:v04-artifact"], {
+    const run = spawnSync(process.execPath, [npmCli, "run", "verify:v04-artifact", "--", "--historical"], {
       cwd: process.cwd(),
       env: process.env,
       encoding: "utf8",
