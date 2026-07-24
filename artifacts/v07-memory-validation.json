@@ -9,10 +9,10 @@
   },
   "source": {
     "contract": "git-source-snapshot-lf-v3",
-    "treeDigest": "1da34c53b4b37c42725da3f77290875383d599c9215c0255be00eaf408032e9c",
+    "treeDigest": "896e8514cf87fd64bf02b20e4fc97d08a77f904c55d2e0a288be91c49253f0af",
     "files": 206,
-    "headCommit": "f4456e1080844456ed99742bca05695dced113a0",
-    "headTreeDigest": "1da34c53b4b37c42725da3f77290875383d599c9215c0255be00eaf408032e9c",
+    "headCommit": "26d12784386dfbb0ffc3c0c7819ebf722ea8defa",
+    "headTreeDigest": "896e8514cf87fd64bf02b20e4fc97d08a77f904c55d2e0a288be91c49253f0af",
     "dirty": false
   },
   "runner": {
