@@ -335,7 +335,7 @@ class CoreSyntaxProvider implements SyntaxProvider {
     this.id = spec.provider;
     this.version = spec.language === "go" || spec.language === "rust"
       ? `${TREE_SITTER_GRAMMARS[spec.language].packageName}@${TREE_SITTER_GRAMMARS[spec.language].version}`
-      : "0.6.0";
+      : "0.7.0";
   }
 
   async extract(input: Parameters<SyntaxProvider["extract"]>[0]): Promise<SyntaxGraphBatch> {

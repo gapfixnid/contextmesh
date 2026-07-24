@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "protocol": "contextmesh.graph-kernel/v1",
-  "kernelVersion": "0.6.0",
+  "kernelVersion": "0.7.0",
   "runtimeNetwork": "denied",
   "grammars": [
     { "language": "python", "crate": "tree-sitter-python", "version": "0.25.0" },

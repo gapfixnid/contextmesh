@@ -252,6 +252,7 @@ try {
     "recall",
     "reflect",
     "remember",
+    "review_memories",
     "search_code",
     "trace_code",
     "workspace_status",
