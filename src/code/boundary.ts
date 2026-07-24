@@ -1,0 +1,470 @@
+import type {
+  CodeEdgeRecord,
+  CodeNodeRecord,
+  IndexedSourceFile,
+  UnresolvedReferenceRecord,
+} from "../contracts.js";
+import {
+  boundaryResourceEdge,
+  boundaryResourceNode,
+} from "./boundary-resource.js";
+import { executableMatches, lexicalSource } from "./source-lexical.js";
+
+export const HTTP_BOUNDARY_PROVIDER = "contextmesh_http_boundary";
+export const HTTP_BOUNDARY_PROVIDER_VERSION = "http-resource-v2";
+
+const CALLABLE_KINDS = new Set(["function", "method"]);
+const HTTP_METHOD = "(?:get|post|put|patch|delete|options|head)";
+const MAX_DIAGNOSTICS = 100;
+
+interface SourcePosition {
+  startByte: number;
+  endByte: number;
+  line: number;
+  column: number;
+}
+
+interface HttpEndpoint extends SourcePosition {
+  role: "client" | "server";
+  method: string;
+  path: string;
+  file: IndexedSourceFile;
+  owner: CodeNodeRecord;
+}
+
+export interface HttpBoundaryResult {
+  nodes: CodeNodeRecord[];
+  edges: CodeEdgeRecord[];
+  unresolvedReferences: UnresolvedReferenceRecord[];
+  diagnostics: string[];
+}
+
+function sourcePosition(source: string, start: number, end: number): SourcePosition {
+  const before = source.slice(0, start);
+  const lineStart = Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r")) + 1;
+  return {
+    startByte: Buffer.byteLength(before, "utf8"),
+    endByte: Buffer.byteLength(source.slice(0, end), "utf8"),
+    line: before.split(/\r\n|\r|\n/).length,
+    column: Buffer.byteLength(source.slice(lineStart, start), "utf8") + 1,
+  };
+}
+
+function normalizeStaticPath(value: string): string | null {
+  let normalized = value.trim();
+  if (
+    !normalized ||
+    normalized.startsWith("//") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalized) ||
+    normalized.includes("\\") ||
+    /\$\{|[{}<>*]/.test(normalized)
+  ) return null;
+  normalized = normalized.split(/[?#]/, 1)[0] ?? "";
+  if (!normalized.startsWith("/") || /(^|\/):[^/]+/.test(normalized)) return null;
+  normalized = normalized.replace(/\/{2,}/g, "/");
+  if (normalized.length > 1) normalized = normalized.replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function clientLiteralIsComplete(source: string, end: number): boolean {
+  const suffix = source.slice(end, Math.min(source.length, end + 64)).trimStart();
+  return suffix.startsWith(")") || suffix.startsWith(",");
+}
+
+function callableNodes(file: IndexedSourceFile, nodes: CodeNodeRecord[]): CodeNodeRecord[] {
+  return nodes.filter((node) => node.fileId === file.id && CALLABLE_KINDS.has(node.kind));
+}
+
+function containingOwner(file: IndexedSourceFile, nodes: CodeNodeRecord[], byteOffset: number): CodeNodeRecord | null {
+  const callable = callableNodes(file, nodes)
+    .filter((node) => node.startByte <= byteOffset && node.endByte >= byteOffset)
+    .sort((left, right) =>
+      (left.endByte - left.startByte) - (right.endByte - right.startByte) ||
+      right.startByte - left.startByte || left.id.localeCompare(right.id));
+  if (callable[0]) return callable[0];
+  return nodes
+    .filter((node) => node.fileId === file.id && node.kind === "module")
+    .sort((left, right) => left.id.localeCompare(right.id))[0] ?? null;
+}
+
+function namedOwner(file: IndexedSourceFile, nodes: CodeNodeRecord[], name: string): CodeNodeRecord | null {
+  const local = callableNodes(file, nodes).filter((node) => node.name === name);
+  return local.length === 1 ? local[0]! : null;
+}
+
+function addEndpoint(
+  target: HttpEndpoint[],
+  role: HttpEndpoint["role"],
+  method: string,
+  rawPath: string,
+  file: IndexedSourceFile,
+  owner: CodeNodeRecord | null,
+  source: string,
+  start: number,
+  end: number,
+): boolean {
+  const path = normalizeStaticPath(rawPath);
+  if (!path || !owner || (role === "client" && !clientLiteralIsComplete(source, end))) return false;
+  target.push({
+    role,
+    method: method.toUpperCase(),
+    path,
+    file,
+    owner,
+    ...sourcePosition(source, start, end),
+  });
+  return true;
+}
+
+function callWindow(source: string, start: number, maximum = 400): string {
+  const bounded = source.slice(start, Math.min(source.length, start + maximum));
+  const close = bounded.indexOf(")");
+  return close >= 0 ? bounded.slice(0, close + 1) : bounded;
+}
+
+function reportMissingHandler(
+  diagnostics: string[],
+  file: IndexedSourceFile,
+  handler: string,
+  rawPath: string,
+  owner: CodeNodeRecord | null,
+): void {
+  if (diagnostics.length < MAX_DIAGNOSTICS && normalizeStaticPath(rawPath) && !owner) {
+    diagnostics.push(`HTTP_BOUNDARY_SERVER_HANDLER_UNRESOLVED: ${file.relativePath}:${handler}`);
+  }
+}
+
+function extractJavaScript(
+  file: IndexedSourceFile,
+  nodes: CodeNodeRecord[],
+  masked: string,
+  executable: readonly boolean[],
+  clients: HttpEndpoint[],
+  servers: HttpEndpoint[],
+  diagnostics: string[],
+): void {
+  const server = new RegExp(
+    `\\b(?:app|router|server|fastify)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2\\s*,\\s*([A-Za-z_$][\\w$]*)`,
+    "gi",
+  );
+  for (const match of executableMatches(masked, server, executable)) {
+    const owner = namedOwner(file, nodes, match[4]!);
+    if (!addEndpoint(servers, "server", match[1]!, match[3]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[4]!, match[3]!, owner);
+    }
+  }
+
+  const fetchCall = /\bfetch\s*\(\s*(["'])([^"'\\\r\n]+)\1/gi;
+  for (const match of executableMatches(masked, fetchCall, executable)) {
+    const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
+    const method = callWindow(masked, match.index!).match(/\bmethod\s*:\s*["'](get|post|put|patch|delete|options|head)["']/i)?.[1] ?? "GET";
+    addEndpoint(clients, "client", method, match[2]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
+  }
+
+  const axiosCall = new RegExp(
+    `\\b(?:axios|ky)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2`,
+    "gi",
+  );
+  for (const match of executableMatches(masked, axiosCall, executable)) {
+    const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
+    addEndpoint(clients, "client", match[1]!, match[3]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
+  }
+}
+
+function extractPython(
+  file: IndexedSourceFile,
+  nodes: CodeNodeRecord[],
+  masked: string,
+  executable: readonly boolean[],
+  clients: HttpEndpoint[],
+  servers: HttpEndpoint[],
+  diagnostics: string[],
+): void {
+  const decorator = new RegExp(
+    `@(?:app|router|blueprint)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2[^\\r\\n]*\\)\\s*\\r?\\n[ \\t]*(?:async[ \\t]+)?def[ \\t]+([A-Za-z_]\\w*)`,
+    "gi",
+  );
+  for (const match of executableMatches(masked, decorator, executable)) {
+    const owner = namedOwner(file, nodes, match[4]!);
+    if (!addEndpoint(servers, "server", match[1]!, match[3]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[4]!, match[3]!, owner);
+    }
+  }
+
+  const route = /@(?:app|router|blueprint)\s*\.\s*route\s*\(\s*(["'])([^"'\\\r\n]+)\1([^\r\n]*)\)\s*\r?\n[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)/gi;
+  for (const match of executableMatches(masked, route, executable)) {
+    const methodsSource = match[3]?.match(/methods\s*=\s*\[([^\]]*)\]/i)?.[1] ?? "";
+    const methods = [...methodsSource.matchAll(/["']([A-Za-z]+)["']/g)].map((item) => item[1]!);
+    const owner = namedOwner(file, nodes, match[4]!);
+    for (const method of methods.length > 0 ? methods : ["ANY"]) {
+      if (!addEndpoint(servers, "server", method, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+        reportMissingHandler(diagnostics, file, match[4]!, match[2]!, owner);
+      }
+    }
+  }
+
+  const client = new RegExp(
+    `\\b(?:requests|httpx)\\s*\\.\\s*(${HTTP_METHOD})\\s*\\(\\s*(["'])([^"'\\\\\\r\\n]+)\\2`,
+    "gi",
+  );
+  for (const match of executableMatches(masked, client, executable)) {
+    const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
+    addEndpoint(clients, "client", match[1]!, match[3]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
+  }
+}
+
+function extractGo(
+  file: IndexedSourceFile,
+  nodes: CodeNodeRecord[],
+  masked: string,
+  executable: readonly boolean[],
+  clients: HttpEndpoint[],
+  servers: HttpEndpoint[],
+  diagnostics: string[],
+): void {
+  const handle = /\b(?:http\.)?HandleFunc\s*\(\s*"([^"\\\r\n]+)"\s*,\s*([A-Za-z_]\w*)/g;
+  for (const match of executableMatches(masked, handle, executable)) {
+    const owner = namedOwner(file, nodes, match[2]!);
+    if (!addEndpoint(servers, "server", "ANY", match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[2]!, match[1]!, owner);
+    }
+  }
+
+  const client = /\bhttp\.(Get|Post|Head)\s*\(\s*"([^"\\\r\n]+)"/g;
+  for (const match of executableMatches(masked, client, executable)) {
+    const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
+    addEndpoint(clients, "client", match[1]!, match[2]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
+  }
+
+  const request = /\bhttp\.NewRequest(?:WithContext)?\s*\(\s*"([A-Za-z]+)"\s*,\s*"([^"\\\r\n]+)"/g;
+  for (const match of executableMatches(masked, request, executable)) {
+    const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
+    addEndpoint(clients, "client", match[1]!, match[2]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
+  }
+}
+
+function extractRust(
+  file: IndexedSourceFile,
+  nodes: CodeNodeRecord[],
+  masked: string,
+  executable: readonly boolean[],
+  clients: HttpEndpoint[],
+  servers: HttpEndpoint[],
+  diagnostics: string[],
+): void {
+  const route = new RegExp(
+    `\\.route\\s*\\(\\s*"([^"\\\\\\r\\n]+)"\\s*,\\s*(${HTTP_METHOD})\\s*\\(\\s*([A-Za-z_]\\w*)\\s*\\)`,
+    "gi",
+  );
+  for (const match of executableMatches(masked, route, executable)) {
+    const owner = namedOwner(file, nodes, match[3]!);
+    if (!addEndpoint(servers, "server", match[2]!, match[1]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[3]!, match[1]!, owner);
+    }
+  }
+
+  const actix = new RegExp(
+    `#\\[(${HTTP_METHOD})\\s*\\(\\s*"([^"\\\\\\r\\n]+)"\\s*\\)\\]\\s*(?:pub\\s+)?(?:async\\s+)?fn\\s+([A-Za-z_]\\w*)`,
+    "gi",
+  );
+  for (const match of executableMatches(masked, actix, executable)) {
+    const owner = namedOwner(file, nodes, match[3]!);
+    if (!addEndpoint(servers, "server", match[1]!, match[2]!, file, owner, file.content, match.index!, match.index! + match[0].length)) {
+      reportMissingHandler(diagnostics, file, match[3]!, match[2]!, owner);
+    }
+  }
+
+  const client = /\breqwest::get\s*\(\s*"([^"\\\r\n]+)"/g;
+  for (const match of executableMatches(masked, client, executable)) {
+    const position = sourcePosition(file.content, match.index!, match.index! + match[0].length);
+    addEndpoint(clients, "client", "GET", match[1]!, file,
+      containingOwner(file, nodes, position.startByte), file.content, match.index!, match.index! + match[0].length);
+  }
+}
+
+function extractEndpoints(files: IndexedSourceFile[], nodes: CodeNodeRecord[]): {
+  clients: HttpEndpoint[];
+  servers: HttpEndpoint[];
+  diagnostics: string[];
+} {
+  const clients: HttpEndpoint[] = [];
+  const servers: HttpEndpoint[] = [];
+  const diagnostics: string[] = [];
+  for (const file of [...files].sort((left, right) => left.pathKey.localeCompare(right.pathKey))) {
+    const lexical = lexicalSource(file.content, file.language);
+    const masked = lexical.masked;
+    if (["typescript", "tsx", "javascript", "jsx", "mjs", "cjs"].includes(file.language)) {
+      extractJavaScript(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
+    } else if (file.language === "python") {
+      extractPython(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
+    } else if (file.language === "go") {
+      extractGo(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
+    } else if (file.language === "rust") {
+      extractRust(file, nodes, masked, lexical.executable, clients, servers, diagnostics);
+    }
+  }
+  const key = (item: HttpEndpoint): string =>
+    `${item.role}\0${item.method}\0${item.path}\0${item.file.pathKey}\0${item.startByte}\0${item.owner.id}`;
+  return {
+    clients: clients.sort((left, right) => key(left).localeCompare(key(right))),
+    servers: servers.sort((left, right) => key(left).localeCompare(key(right))),
+    diagnostics: [...new Set(diagnostics)],
+  };
+}
+
+function boundaryEvidence(
+  client: HttpEndpoint,
+  server: HttpEndpoint,
+): NonNullable<CodeEdgeRecord["evidence"]>[number] {
+  return {
+    provider: HTTP_BOUNDARY_PROVIDER,
+    providerVersion: HTTP_BOUNDARY_PROVIDER_VERSION,
+    source: "resolver",
+    confidence: 1,
+    sourceSpan: {
+      startByte: client.startByte,
+      endByte: client.endByte,
+      line: client.line,
+      column: client.column,
+    },
+    details: {
+      boundaryProtocol: "http",
+      boundaryMethod: client.method,
+      boundaryPath: client.path,
+      clientLanguage: client.file.language,
+      clientFile: client.file.relativePath,
+      serverLanguage: server.file.language,
+      serverFile: server.file.relativePath,
+      serverSourceSpan: {
+        startByte: server.startByte,
+        endByte: server.endByte,
+        line: server.line,
+        column: server.column,
+      },
+    },
+  };
+}
+
+function evidenceKey(item: NonNullable<CodeEdgeRecord["evidence"]>[number]): string {
+  return `${item.provider}\0${item.providerVersion}\0${JSON.stringify(item.sourceSpan)}\0${JSON.stringify(item.details)}`;
+}
+
+export function linkHttpBoundaries(
+  files: IndexedSourceFile[],
+  nodes: CodeNodeRecord[],
+): HttpBoundaryResult {
+  const extracted = extractEndpoints(files, nodes);
+  const resources = new Map<string, CodeNodeRecord>();
+  const edges = new Map<string, CodeEdgeRecord>();
+  const pairs = new Map<string, {
+    client: HttpEndpoint;
+    server: HttpEndpoint;
+    evidence: NonNullable<CodeEdgeRecord["evidence"]>;
+  }>();
+  const unresolvedReferences: UnresolvedReferenceRecord[] = [];
+
+  for (const client of extracted.clients) {
+    const differentLanguage = extracted.servers.filter((server) =>
+      server.path === client.path && server.file.language !== client.file.language);
+    const exact = differentLanguage.filter((server) => server.method === client.method);
+    const fallback = differentLanguage.filter((server) => server.method === "ANY");
+    const candidates = new Map((exact.length > 0 ? exact : fallback).map((server) => [server.owner.id, server]));
+    if (candidates.size === 1) {
+      const server = [...candidates.values()][0]!;
+      const identity = { protocol: "http" as const, operation: client.method, resource: client.path };
+      const resource = boundaryResourceNode(
+        { id: client.file.workspaceId },
+        client.file.generation,
+        identity,
+      );
+      resources.set(resource.id, resource);
+      const key = `${client.owner.id}\0${resource.id}\0${server.owner.id}`;
+      const item = boundaryEvidence(client, server);
+      const prior = pairs.get(key);
+      if (prior) {
+        prior.evidence = [...new Map([...prior.evidence, item].map((entry) => [evidenceKey(entry), entry])).values()]
+          .sort((left, right) => evidenceKey(left).localeCompare(evidenceKey(right)));
+      } else {
+        pairs.set(key, { client, server, evidence: [item] });
+      }
+      continue;
+    }
+
+    unresolvedReferences.push({
+      workspaceId: client.file.workspaceId,
+      fileId: client.file.id,
+      sourceNodeId: client.owner.id,
+      kind: "HTTP_BOUNDARY_CALL",
+      rawName: `${client.method} ${client.path}`,
+      qualifier: "http",
+      line: client.line,
+      column: client.column,
+      candidates: [...candidates.keys()].sort(),
+      generation: client.file.generation,
+      confidence: candidates.size > 1 ? 0.5 : 0,
+      evidence: [{
+        provider: HTTP_BOUNDARY_PROVIDER,
+        providerVersion: HTTP_BOUNDARY_PROVIDER_VERSION,
+        source: "resolver",
+        confidence: candidates.size > 1 ? 0.5 : 0,
+        sourceSpan: {
+          startByte: client.startByte,
+          endByte: client.endByte,
+          line: client.line,
+          column: client.column,
+        },
+        details: {
+          boundaryProtocol: "http",
+          boundaryMethod: client.method,
+          boundaryPath: client.path,
+          clientLanguage: client.file.language,
+          clientFile: client.file.relativePath,
+          candidateCount: candidates.size,
+        },
+      }],
+    });
+  }
+
+  for (const { client, server, evidence } of pairs.values()) {
+    const identity = { protocol: "http" as const, operation: client.method, resource: client.path };
+    const resource = boundaryResourceNode({ id: client.file.workspaceId }, client.file.generation, identity);
+    for (const edge of [
+      boundaryResourceEdge({
+        workspaceId: client.file.workspaceId,
+        sourceId: client.owner.id,
+        targetId: resource.id,
+        kind: "REQUESTS",
+        generation: client.file.generation,
+        evidence,
+        identity,
+      }),
+      boundaryResourceEdge({
+        workspaceId: client.file.workspaceId,
+        sourceId: resource.id,
+        targetId: server.owner.id,
+        kind: "HANDLED_BY",
+        generation: client.file.generation,
+        evidence,
+        identity,
+      }),
+    ]) edges.set(`${edge.sourceId}\0${edge.targetId}\0${edge.kind}`, edge);
+  }
+
+  const unresolvedKey = (item: UnresolvedReferenceRecord): string =>
+    `${item.fileId}\0${item.sourceNodeId ?? ""}\0${item.rawName}\0${item.line}\0${item.column}`;
+  unresolvedReferences.sort((left, right) => unresolvedKey(left).localeCompare(unresolvedKey(right)));
+  return {
+    nodes: [...resources.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    edges: [...edges.values()].sort((left, right) =>
+      `${left.sourceId}\0${left.targetId}\0${left.kind}`.localeCompare(
+        `${right.sourceId}\0${right.targetId}\0${right.kind}`,
+      )),
+    unresolvedReferences,
+    diagnostics: extracted.diagnostics,
+  };
+}

@@ -8,7 +8,10 @@ import type { OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor
 
 const PROBE_TIMEOUT_MS = 5_000;
 const LSP_REQUEST_TIMEOUT_MS = 15_000;
-const WORKSPACE_READY_TIMEOUT_MS = 30_000;
+// A cold rust-analyzer workspace can spend more than 30 seconds loading the
+// toolchain even when build scripts and proc macros are disabled. Keep the
+// bound finite, but allow clean consumer/source-archive installs to settle.
+const WORKSPACE_READY_TIMEOUT_MS = 60_000;
 const MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024;
 
 interface CommandSpec { executable: string; args: string[] }

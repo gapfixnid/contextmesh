@@ -9,6 +9,8 @@ import type {
   AnalysisLevel,
   EdgeStatus,
 } from "../contracts.js";
+import { linkHttpBoundaries } from "./boundary.js";
+import { linkProtocolBoundaries } from "./protocol-boundary.js";
 import type { ScannedFile } from "./scanner.js";
 
 export interface ProjectDescriptor {
@@ -117,6 +119,35 @@ export function mergeEvidence(...groups: Array<CodeEdgeRecord["evidence"]>): Non
   return [...merged.values()].sort((left, right) => evidenceKey(left).localeCompare(evidenceKey(right)));
 }
 
+function statusRank(status: EdgeStatus | undefined): number {
+  if (status === "resolved") return 3;
+  if (status === "rejected") return 2;
+  return 1;
+}
+
+function boundaryValues(metadata: Record<string, unknown>): Record<string, unknown>[] {
+  if (!Array.isArray(metadata.boundaries)) return [];
+  return metadata.boundaries.filter((value): value is Record<string, unknown> =>
+    Boolean(value) && typeof value === "object" && !Array.isArray(value));
+}
+
+function mergeMetadata(left: Record<string, unknown>, right: Record<string, unknown>): Record<string, unknown> {
+  const values = new Map<string, Record<string, unknown>>();
+  for (const value of [...boundaryValues(left), ...boundaryValues(right)]) {
+    values.set(JSON.stringify(value), value);
+  }
+  if (values.size === 0) return { ...left, ...right };
+  const boundaries = [...values.values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const protocols = [...new Set(boundaries.flatMap((item) =>
+    typeof item.boundaryProtocol === "string" ? [item.boundaryProtocol] : []))].sort();
+  return {
+    ...left,
+    ...right,
+    boundaryProtocol: protocols.length === 1 ? protocols[0] : "multiple",
+    boundaries,
+  };
+}
+
 export function mergeGraphBatches(
   batches: SyntaxGraphBatch[],
   adapterStats: AdapterStats[],
@@ -131,12 +162,43 @@ export function mergeGraphBatches(
   const unresolved = new Map(
     batches.flatMap((batch) => batch.unresolvedReferences.map((item) => [unresolvedKey(item), item])),
   );
+
+  const boundaryResults = [
+    linkHttpBoundaries([...files.values()], [...nodes.values()]),
+    linkProtocolBoundaries([...files.values()], [...nodes.values()]),
+  ];
+  for (const boundary of boundaryResults) {
+    for (const node of boundary.nodes) nodes.set(node.id, node);
+    for (const edge of boundary.edges) {
+      const key = edgeKey(edge);
+      const prior = edges.get(key);
+      if (!prior) {
+        edges.set(key, edge);
+        continue;
+      }
+      const boundaryWins = statusRank(edge.status) >= statusRank(prior.status);
+      const selectedStatus = boundaryWins ? edge.status : prior.status;
+      edges.set(key, {
+        ...prior,
+        confidence: Math.max(prior.confidence, edge.confidence),
+        resolutionKind: boundaryWins ? edge.resolutionKind : prior.resolutionKind,
+        metadata: mergeMetadata(prior.metadata, edge.metadata),
+        ...(selectedStatus === undefined ? {} : { status: selectedStatus }),
+        evidence: mergeEvidence(prior.evidence, edge.evidence),
+      });
+    }
+    for (const item of boundary.unresolvedReferences) unresolved.set(unresolvedKey(item), item);
+  }
+
   return {
     files: [...files.values()].sort((a, b) => a.pathKey.localeCompare(b.pathKey)),
     nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
     edges: [...edges.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b))),
     unresolvedReferences: [...unresolved.values()].sort((a, b) => unresolvedKey(a).localeCompare(unresolvedKey(b))),
-    diagnostics: batches.flatMap((batch) => batch.diagnostics),
+    diagnostics: [
+      ...batches.flatMap((batch) => batch.diagnostics),
+      ...boundaryResults.flatMap((boundary) => boundary.diagnostics),
+    ],
     adapterStats,
   };
 }

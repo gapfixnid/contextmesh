@@ -4,6 +4,8 @@ import path from "node:path";
 import ts from "typescript";
 
 import { normalizePathKey, sha256 } from "../../utils.js";
+import { HTTP_BOUNDARY_PROVIDER_VERSION } from "../boundary.js";
+import { PROTOCOL_BOUNDARY_PROVIDER_VERSION } from "../protocol-boundary.js";
 import type { LanguageAdapter, PrecisionProvider, ProjectDescriptor, ProjectDiscoveryInput, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
 
 export interface TypeScriptCompilerConfiguration {
@@ -97,6 +99,7 @@ export function discoverTypeScriptProject(rootPath: string, input: ProjectDiscov
     .sort((left, right) => left.fileName.localeCompare(right.fileName));
   const configHash = sha256(JSON.stringify({
     typescriptVersion: ts.version,
+    boundaryProviderVersions: [HTTP_BOUNDARY_PROVIDER_VERSION, PROTOCOL_BOUNDARY_PROVIDER_VERSION],
     configPath: configPath ? normalizePathKey(configPath, caseSensitivePaths) : null,
     configuredFileNames,
     effectiveCompilerOptions: canonicalizeCompilerValue(options, caseSensitivePaths),

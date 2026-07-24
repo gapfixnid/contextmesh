@@ -806,43 +806,52 @@ export class ContextMeshApp {
         },
       };
     };
-    const representatives = new Map<"code" | "memory", (typeof result.candidates)[number]>();
+    const representatives = new Map<"code" | "memory", Array<(typeof result.candidates)[number]>>();
     for (const candidate of result.candidates) {
-      if (candidate.priority < 2 || candidate.relevance < 0.35 || representatives.has(candidate.kind)) continue;
-      representatives.set(candidate.kind, candidate);
+      if (candidate.priority < 2 || candidate.relevance < 0.35) continue;
+      const plane = representatives.get(candidate.kind) ?? [];
+      if (plane.length >= 2) continue;
+      plane.push(candidate);
+      representatives.set(candidate.kind, plane);
     }
     const selectedKeys = new Set<string>();
     const fitsWithSoftReservations = (
       candidateData: ContextData,
       current: (typeof result.candidates)[number],
     ): boolean => {
-      packingDiagnostics.softReservationEvaluations += 1;
-      let reserved = candidateData;
-      for (const [plane, representative] of representatives) {
-        if (
-          selectedPlanes.has(plane) ||
-          plane === current.kind ||
-          representative.key === current.key ||
-          selectedKeys.has(representative.key)
-        ) {
-          continue;
+      const fitsAtTarget = (target: number): boolean => {
+        packingDiagnostics.softReservationEvaluations += 1;
+        let reserved = candidateData;
+        for (const [plane, planeRepresentatives] of representatives) {
+          const selectedCount = plane === "code" ? reserved.code.length : reserved.memories.length;
+          let needed = Math.max(0, Math.min(target, planeRepresentatives.length) - selectedCount);
+          for (const representative of planeRepresentatives) {
+            if (needed === 0) break;
+            if (representative.key === current.key || selectedKeys.has(representative.key)) continue;
+            if (plane === "code") {
+              reserved = {
+                ...reserved,
+                code: [...reserved.code, representative.value as ContextCodeItem],
+              };
+            } else {
+              reserved = {
+                ...reserved,
+                memories: [
+                  ...reserved.memories,
+                  prepareMemory(representative.value as ContextMemoryItem),
+                ],
+              };
+            }
+            needed -= 1;
+          }
         }
-        if (plane === "code") {
-          reserved = {
-            ...reserved,
-            code: [...reserved.code, representative.value as ContextCodeItem],
-          };
-        } else {
-          reserved = {
-            ...reserved,
-            memories: [
-              ...reserved.memories,
-              prepareMemory(representative.value as ContextMemoryItem),
-            ],
-          };
-        }
-      }
-      const fits = fitsWithReservedRelationships(reserved);
+        return fitsWithReservedRelationships(reserved);
+      };
+      // Reserve two representatives per requested plane when the envelope can
+      // afford them. This prevents small cross-runtime score shifts from
+      // letting many short memories crowd out the next code candidate. Fall
+      // back to the original one-per-plane reservation for tight envelopes.
+      const fits = fitsAtTarget(2) || fitsAtTarget(1);
       if (fits) packingDiagnostics.softReservationFits += 1;
       else packingDiagnostics.softReservationBudgetRejections += 1;
       return fits;

@@ -4,6 +4,10 @@ import { z } from "zod";
 
 import type { ContextMeshApp } from "../app.js";
 import {
+  buildImpactEnvelope,
+  impactCodeSchema,
+} from "../code/impact.js";
+import {
   forgetSchema,
   exploreContextSchema,
   getContextSchema,
@@ -16,6 +20,7 @@ import {
   type Envelope,
 } from "../contracts.js";
 import { asContextMeshError } from "../errors.js";
+import type { TraceResult } from "../storage/database.js";
 
 const envelopeOutputSchema = z.object({
   schemaVersion: z.literal(1),
@@ -54,7 +59,33 @@ function failure(error: unknown) {
 }
 
 export function createMcpServer(app: ContextMeshApp): McpServer {
-  const server = new McpServer({ name: "contextmesh", version: "0.5.0" });
+  const server = new McpServer({ name: "contextmesh", version: "0.6.0" });
+  const registerImpactTool = (name: "impact_analysis" | "impact_code", title: string): void => {
+    server.registerTool(
+      name,
+      {
+        title,
+        description: "Summarize bounded upstream or downstream graph impact, including resource nodes, cross-language boundary evidence, and verification requirements.",
+        inputSchema: impactCodeSchema,
+        outputSchema: envelopeOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (input) => {
+        try {
+          const traced = await app.traceCode({
+            symbolId: input.symbolId,
+            direction: input.direction,
+            edgeKinds: input.edgeKinds,
+            depth: input.depth,
+            limit: input.limit,
+          }) as Envelope<TraceResult>;
+          return success(buildImpactEnvelope(traced, input));
+        } catch (error) {
+          return failure(error);
+        }
+      },
+    );
+  };
 
   server.registerTool(
     "index_workspace",
@@ -127,6 +158,9 @@ export function createMcpServer(app: ContextMeshApp): McpServer {
       }
     },
   );
+
+  registerImpactTool("impact_analysis", "Analyze impact");
+  registerImpactTool("impact_code", "Analyze code impact (compatibility alias)");
 
   server.registerTool(
     "remember",

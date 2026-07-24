@@ -1,8 +1,55 @@
 import type { CodeEdgeKind, CodeEdgeRecord, UnresolvedReferenceRecord } from "../contracts.js";
 import type { ContextMeshStorage, TraceResult } from "../storage/database.js";
 import type { CodeSearchResult } from "../storage/database.js";
+import { HTTP_BOUNDARY_PROVIDER, HTTP_BOUNDARY_PROVIDER_VERSION } from "./boundary.js";
+import { PROTOCOL_BOUNDARY_PROVIDER, PROTOCOL_BOUNDARY_PROVIDER_VERSION } from "./protocol-boundary.js";
 
 interface CacheEntry<T> { value: T; used: number }
+
+function edgeKey(edge: Pick<CodeEdgeRecord, "sourceId" | "targetId" | "kind">): string {
+  return `${edge.kind}\0${edge.sourceId}\0${edge.targetId}`;
+}
+
+function boundaryEvidence(edge: CodeEdgeRecord): NonNullable<CodeEdgeRecord["evidence"]> {
+  const values = Array.isArray(edge.metadata.boundaries) ? edge.metadata.boundaries : [];
+  return values.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const details = value as Record<string, unknown>;
+    const protocol = typeof details.boundaryProtocol === "string" ? details.boundaryProtocol : "";
+    const provider = typeof details.boundaryProvider === "string"
+      ? details.boundaryProvider
+      : protocol === "http"
+        ? HTTP_BOUNDARY_PROVIDER
+        : PROTOCOL_BOUNDARY_PROVIDER;
+    const providerVersion = typeof details.boundaryProviderVersion === "string"
+      ? details.boundaryProviderVersion
+      : protocol === "http"
+        ? HTTP_BOUNDARY_PROVIDER_VERSION
+        : PROTOCOL_BOUNDARY_PROVIDER_VERSION;
+    const sourceSpan = details.clientSourceSpan ?? details.sourceSpan;
+    return [{
+      provider,
+      providerVersion,
+      source: "resolver" as const,
+      confidence: 1,
+      ...(sourceSpan && typeof sourceSpan === "object" && !Array.isArray(sourceSpan)
+        ? { sourceSpan: sourceSpan as NonNullable<NonNullable<CodeEdgeRecord["evidence"]>[number]["sourceSpan"]> }
+        : {}),
+      details,
+    }];
+  });
+}
+
+function crossLanguageBoundaryEdges(database: ContextMeshStorage): CodeEdgeRecord[] {
+  return database.getExistingRelations().edges.flatMap(({ edge }) => {
+    if (!Array.isArray(edge.metadata.boundaries) || edge.metadata.boundaries.length === 0) return [];
+    return [{
+      ...edge,
+      status: "resolved" as const,
+      evidence: boundaryEvidence(edge),
+    }];
+  });
+}
 
 export class GenerationGraphCache {
   private generation = -1;
@@ -22,13 +69,18 @@ export class GenerationGraphCache {
     const precisionRevision = this.database.getPrecisionRevision();
     if (generation === this.generation && precisionRevision === this.precisionRevision) return;
     const partitions = [this.database.getStoredGraphPartition("non-python"), this.database.getStoredGraphPartition("python")];
+    const effectiveEdges = new Map<string, CodeEdgeRecord>();
+    for (const edge of [
+      ...partitions.flatMap((partition) => partition.edges),
+      ...crossLanguageBoundaryEdges(this.database),
+    ]) effectiveEdges.set(edgeKey(edge), edge);
     const forward = new Map<string, CodeEdgeRecord[]>();
     const reverse = new Map<string, CodeEdgeRecord[]>();
-    for (const edge of partitions.flatMap((partition) => partition.edges)) {
+    for (const edge of effectiveEdges.values()) {
       const out = forward.get(edge.sourceId) ?? []; out.push(edge); forward.set(edge.sourceId, out);
       const incoming = reverse.get(edge.targetId) ?? []; incoming.push(edge); reverse.set(edge.targetId, incoming);
     }
-    const order = (left: CodeEdgeRecord, right: CodeEdgeRecord): number => `${left.kind}\0${left.sourceId}\0${left.targetId}`.localeCompare(`${right.kind}\0${right.sourceId}\0${right.targetId}`);
+    const order = (left: CodeEdgeRecord, right: CodeEdgeRecord): number => edgeKey(left).localeCompare(edgeKey(right));
     for (const edges of forward.values()) edges.sort(order);
     for (const edges of reverse.values()) edges.sort(order);
     const nodeRecords = partitions.flatMap((partition) => partition.nodes);
@@ -64,8 +116,8 @@ export class GenerationGraphCache {
       const candidates = direction === "out" ? [...(this.forward.get(current.id) ?? [])]
         : direction === "in" ? [...(this.reverse.get(current.id) ?? [])]
           : [...(this.forward.get(current.id) ?? []), ...(this.reverse.get(current.id) ?? [])];
-      const unique = new Map(candidates.filter((edge) => !allowed || allowed.has(edge.kind)).map((edge) => [`${edge.kind}\0${edge.sourceId}\0${edge.targetId}`, edge]));
-      for (const edge of [...unique.values()].sort((a, b) => `${a.kind}\0${a.sourceId}\0${a.targetId}`.localeCompare(`${b.kind}\0${b.sourceId}\0${b.targetId}`))) {
+      const unique = new Map(candidates.filter((edge) => !allowed || allowed.has(edge.kind)).map((edge) => [edgeKey(edge), edge]));
+      for (const edge of [...unique.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)))) {
         if (edges.length >= limit) break;
         const nextId = edge.sourceId === current.id ? edge.targetId : edge.sourceId;
         edges.push({ sourceId: edge.sourceId, targetId: edge.targetId, kind: edge.kind, confidence: edge.confidence, resolutionKind: edge.resolutionKind,

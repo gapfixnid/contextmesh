@@ -1,0 +1,367 @@
+{
+  "schemaVersion": 1,
+  "release": "v0.6",
+  "fixture": {
+    "id": "contextmesh-v06-boundary-impact-v2",
+    "digest": "dbb39a2900f5730ed1d13c5967648fed7e11ab1ffd818c0a8bdd5f99d7ac134f",
+    "caseCount": 11,
+    "immutable": true,
+    "provenance": {
+      "origin": "ContextMesh v0.6 product scope and release acceptance criteria",
+      "authoredAgainst": "resource boundary providers http-resource-v2 and rpc-queue-db-resource-v2",
+      "frozenAt": "2026-07-23",
+      "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold."
+    }
+  },
+  "source": {
+    "contract": "git-source-snapshot-lf-v3",
+    "treeDigest": "dcf06b226d4a9fe9c8e24ada5d76fbb5f7db5585be167b2e8c34745a84d0a949",
+    "files": 190,
+    "headCommit": "c32af1b91b24aaba97d0ce25fdec737ac994c4b8",
+    "headTreeDigest": "dcf06b226d4a9fe9c8e24ada5d76fbb5f7db5585be167b2e8c34745a84d0a949",
+    "dirty": false
+  },
+  "runner": {
+    "node": "v24.18.0",
+    "platform": "win32-x64"
+  },
+  "runs": 5,
+  "deterministic": true,
+  "signatures": [
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71",
+    "f1aa88878b28f8edf6416cc044bbc01d9206c6d95e9d24ca68c47d71371ded71"
+  ],
+  "metrics": {
+    "expectedResolved": 7,
+    "actualResolved": 7,
+    "truePositive": 7,
+    "falsePositive": 0,
+    "falseNegative": 0,
+    "precision": 1,
+    "recall": 1
+  },
+  "thresholds": {
+    "minimumCases": 11,
+    "deterministicRuns": 5,
+    "resolvedPrecision": 1,
+    "resolvedRecall": 1
+  },
+  "caseResults": [
+    {
+      "id": "http-resolved",
+      "sourceQualifiedName": "http-client.ts#loadUsers",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "http-service.py#list_users",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/users"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "http-service.py#list_users",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/users",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "http-service.py#list_users"
+      ],
+      "passed": true
+    },
+    {
+      "id": "http-ambiguous",
+      "sourceQualifiedName": "http-ambiguous-client.ts#loadAmbiguous",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "HTTP_BOUNDARY_CALL",
+          "rawName": "GET /api/ambiguous",
+          "minimumCandidates": 2
+        },
+        "observed": true,
+        "candidateCount": 2
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "rpc-resolved",
+      "sourceQualifiedName": "rpc-client.ts#loadRpcUser",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "rpc-service.py#get_rpc_user",
+          "protocol": "rpc",
+          "operation": "call",
+          "resource": "users.get"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "rpc-service.py#get_rpc_user",
+          "protocol": "rpc",
+          "operation": "call",
+          "resource": "users.get",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "rpc-service.py#get_rpc_user"
+      ],
+      "passed": true
+    },
+    {
+      "id": "rpc-ambiguous",
+      "sourceQualifiedName": "rpc-ambiguous-client.ts#loadRpcAmbiguous",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "RPC_BOUNDARY_CALL",
+          "rawName": "CALL users.ambiguous",
+          "minimumCandidates": 2
+        },
+        "observed": true,
+        "candidateCount": 2
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "queue-fanout",
+      "sourceQualifiedName": "queue-producer.ts#publishOrder",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "queue-one.py#first_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created"
+        },
+        {
+          "qualifiedName": "queue-two.py#second_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "queue-one.py#first_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created",
+          "status": "resolved",
+          "confirmed": true
+        },
+        {
+          "qualifiedName": "queue-two.py#second_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "queue-one.py#first_consumer",
+        "queue-two.py#second_consumer"
+      ],
+      "passed": true
+    },
+    {
+      "id": "queue-missing",
+      "sourceQualifiedName": "queue-producer.ts#publishMissing",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "QUEUE_BOUNDARY_PUBLISH",
+          "rawName": "PUBLISH orders.missing",
+          "minimumCandidates": 0
+        },
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "database-resolved",
+      "sourceQualifiedName": "db-writer.ts#writeAudit",
+      "edgeKind": "REFERENCES",
+      "expectedTargets": [
+        {
+          "qualifiedName": "db-reader.py#read_audit",
+          "protocol": "database",
+          "operation": "insert_to_read",
+          "resource": "audit_events"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "db-reader.py#read_audit",
+          "protocol": "database",
+          "operation": "insert_to_read",
+          "resource": "audit_events",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "db-reader.py#read_audit"
+      ],
+      "passed": true
+    },
+    {
+      "id": "database-missing",
+      "sourceQualifiedName": "db-writer.ts#writeMissing",
+      "edgeKind": "REFERENCES",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": {
+          "kind": "DATABASE_BOUNDARY_WRITE",
+          "rawName": "INSERT orphan_table",
+          "minimumCandidates": 0
+        },
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "negative-document-string",
+      "sourceQualifiedName": "negative-doc.ts#documentationOnly",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "negative-standalone-sql",
+      "sourceQualifiedName": "negative-sql.py#migration_notes",
+      "edgeKind": "WRITES_TO",
+      "expectedTargets": [],
+      "actualTargets": [],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [],
+      "passed": true
+    },
+    {
+      "id": "typescript-python-go-flow",
+      "sourceQualifiedName": "flow-client.ts#startOrder",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "flow-service.py#accept_order",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/orders"
+        },
+        {
+          "qualifiedName": "flow-worker.go#process_order",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.accepted"
+        }
+      ],
+      "actualTargets": [
+        {
+          "qualifiedName": "flow-service.py#accept_order",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/orders",
+          "status": "resolved",
+          "confirmed": true
+        },
+        {
+          "qualifiedName": "flow-worker.go#process_order",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.accepted",
+          "status": "resolved",
+          "confirmed": true
+        }
+      ],
+      "unexpectedTargets": [],
+      "missingTargets": [],
+      "unresolved": {
+        "expected": null,
+        "observed": true,
+        "candidateCount": 0
+      },
+      "impactConfirmedTargets": [
+        "flow-service.py#accept_order",
+        "flow-worker.go#process_order"
+      ],
+      "passed": true
+    }
+  ],
+  "passed": true
+}

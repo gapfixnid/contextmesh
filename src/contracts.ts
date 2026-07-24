@@ -10,6 +10,7 @@ export const CODE_NODE_KINDS = [
   "type_alias",
   "enum",
   "variable",
+  "resource",
 ] as const;
 
 export const CODE_EDGE_KINDS = [
@@ -20,6 +21,12 @@ export const CODE_EDGE_KINDS = [
   "EXTENDS",
   "IMPLEMENTS",
   "REFERENCES",
+  "REQUESTS",
+  "HANDLED_BY",
+  "PUBLISHES",
+  "CONSUMES",
+  "READS_FROM",
+  "WRITES_TO",
 ] as const;
 
 export const MEMORY_TYPES = [

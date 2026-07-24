@@ -1,0 +1,76 @@
+name: v0.6 source gate (manual)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  full-source:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.85.0
+          components: rust-analyzer
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - run: npm ci
+      - run: go test ./...
+        working-directory: native/go-provider
+      - name: Run typecheck
+        shell: pwsh
+        run: |
+          npm run typecheck *>&1 | Tee-Object -FilePath v06-typecheck.log
+          $code = $LASTEXITCODE
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v06-typecheck-${{ runner.os }}-${{ github.sha }}
+          path: v06-typecheck.log
+          if-no-files-found: error
+      - name: Run lint
+        shell: pwsh
+        run: |
+          npm run lint *>&1 | Tee-Object -FilePath v06-lint.log
+          $code = $LASTEXITCODE
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v06-lint-${{ runner.os }}-${{ github.sha }}
+          path: v06-lint.log
+          if-no-files-found: error
+      - run: npm run build:native
+      - name: Run full non-artifact source suite
+        shell: pwsh
+        run: |
+          npm run test:source *>&1 | Tee-Object -FilePath v06-source-tests.log
+          $code = $LASTEXITCODE
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v06-source-tests-${{ runner.os }}-${{ github.sha }}
+          path: v06-source-tests.log
+          if-no-files-found: error
+      - run: npm run build

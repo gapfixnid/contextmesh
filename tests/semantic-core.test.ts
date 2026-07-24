@@ -124,9 +124,9 @@ describe("hybrid ranking", () => {
     expect(ranked.map((candidate) => candidate.id)).toEqual(["pinned"]);
   });
 
-  it("uses a 1e-5 internal ordering bucket while preserving 1e-6 public score precision", () => {
-    expect(rankScore(0.500001)).toBe(rankScore(0.500004));
-    expect(rankScore(0.500006)).toBeGreaterThan(rankScore(0.500004));
+  it("uses a 1e-3 internal ordering bucket while preserving 1e-6 public score precision", () => {
+    expect(rankScore(0.5001)).toBe(rankScore(0.5004));
+    expect(rankScore(0.5006)).toBeGreaterThan(rankScore(0.5004));
   });
 
   it("uses only the contracted code and memory fields for redundancy text", () => {

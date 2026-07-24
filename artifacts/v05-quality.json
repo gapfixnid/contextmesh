@@ -757,26 +757,26 @@
     "identical": true,
     "runs": 20,
     "signatures": [
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a",
-      "7e6dcd4409134609c9ede0aa83f2acc4f987a1ac188380de23d7c9ebd9b7055a"
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb",
+      "8e1521fce6e4cc97928f23d041fd7b8b1d652054cf18b15376946deea4d9ffdb"
     ]
   },
   "fixture": {
@@ -950,7 +950,7 @@
   "providerConformance": [
     {
       "actualStatus": "ready",
-      "actualVersion": "0.5.0",
+      "actualVersion": "0.6.0",
       "diagnosticsMatch": true,
       "passed": true,
       "provider": "contextmesh_python_resolver",
@@ -991,7 +991,7 @@
       "lastError": null,
       "precisionRevision": 77,
       "provider": "contextmesh_python_resolver",
-      "providerVersion": "0.5.0",
+      "providerVersion": "0.6.0",
       "rejectedEdges": 2,
       "resolvedEdges": 10,
       "status": "ready"
@@ -1019,7 +1019,7 @@
       "lastError": "RUST_ANALYZER_DEFINITION_UNRESOLVED: rust/src/caller.rs:136:rust_missing; RUST_ANALYZER_DEFINITION_UNRESOLVED: rust/src/caller.rs:193:rust_ambiguous; RUST_ANALYZER_DEFINITION_UNRESOLVED: rust/src/caller.rs:316:rust_holdout_missing; RUST_ANALYZER_DEFINITION_UNRESOLVED: rust/src/caller.rs:389:rust_holdout_ambiguous",
       "precisionRevision": 80,
       "provider": "rust_analyzer",
-      "providerVersion": "rust-analyzer-lsp-v2:safe:5ec1419d97d8",
+      "providerVersion": "rust-analyzer-lsp-v2:safe:a4d8e0364eb4",
       "rejectedEdges": 0,
       "resolvedEdges": 2,
       "status": "partial"
@@ -1044,8 +1044,8 @@
     "go": "go version go1.23.12 windows/amd64",
     "node": "v24.18.0",
     "platform": "win32-x64",
-    "rustAnalyzer": "rust-analyzer 1.85.0 (4d91de4e 2025-02-17)",
-    "rustc": "rustc 1.85.0 (4d91de4e4 2025-02-17)"
+    "rustAnalyzer": "rust-analyzer 1.96.1 (31fca3ad 2026-06-26)",
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)"
   },
   "schemaVersion": 4,
   "semanticCaseResults": [
@@ -1265,10 +1265,10 @@
   "source": {
     "contract": "git-source-snapshot-lf-v3",
     "dirty": false,
-    "files": 175,
-    "headCommit": "e98f3c49d40cc8f5a7ffcef6684bdf83f2814218",
-    "headTreeDigest": "435f6fc52c5c166d4ce7904e99ebc384a789b7b4eef169b2968609836295ed2d",
-    "treeDigest": "435f6fc52c5c166d4ce7904e99ebc384a789b7b4eef169b2968609836295ed2d"
+    "files": 190,
+    "headCommit": "c32af1b91b24aaba97d0ce25fdec737ac994c4b8",
+    "headTreeDigest": "dcf06b226d4a9fe9c8e24ada5d76fbb5f7db5585be167b2e8c34745a84d0a949",
+    "treeDigest": "dcf06b226d4a9fe9c8e24ada5d76fbb5f7db5585be167b2e8c34745a84d0a949"
   },
   "statusCoverage": [
     "candidate",

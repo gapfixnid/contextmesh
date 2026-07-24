@@ -16,7 +16,7 @@ import { extractPythonKernelFacts, type KernelSpan } from "../native-kernel.js";
 import type { LanguageAdapter, OverlayPrecisionProvider, PrecisionOverlayBatch, ProjectDescriptor, SyntaxGraphBatch, SyntaxProvider } from "../providers.js";
 
 export const PYTHON_PROVIDER_VERSIONS = {
-  runtime: "contextmesh-graph-kernel@0.5.0",
+  runtime: "contextmesh-graph-kernel@0.6.0",
   portableRuntime: "web-tree-sitter@0.26.11",
   grammar: "tree-sitter-python@0.25.0",
   manifest: "smol-toml@1.7.0",
@@ -93,7 +93,7 @@ export function discoverPythonProject(rootPath: string): ProjectDescriptor {
   };
 }
 
-function evidence(source: CodeEvidence["source"], confidence: number, node?: KernelSpan, provider = "contextmesh_graph_kernel", providerVersion = "0.5.0"): CodeEvidence[] {
+function evidence(source: CodeEvidence["source"], confidence: number, node?: KernelSpan, provider = "contextmesh_graph_kernel", providerVersion = "0.6.0"): CodeEvidence[] {
   return [{
     provider,
     providerVersion,
@@ -126,7 +126,7 @@ function moduleName(relativePath: string, root: string, packageDirectories: Pyth
 
 class PythonSyntaxProvider implements SyntaxProvider {
   readonly id = "contextmesh_graph_kernel";
-  readonly version = "0.5.0";
+  readonly version = "0.6.0";
 
   async extract(input: Parameters<SyntaxProvider["extract"]>[0]): Promise<SyntaxGraphBatch> {
     const kernel = await extractPythonKernelFacts(input.files.filter((file) => file.language === "python"), undefined, input.mode === "full");
@@ -310,7 +310,7 @@ function pythonMask(source: string): string {
 
 class PythonResolvedProvider implements OverlayPrecisionProvider {
   readonly id = "contextmesh_python_resolver";
-  readonly version = "0.5.0";
+  readonly version = "0.6.0";
   readonly capability = "resolved" as const;
 
   async available(): Promise<{ available: boolean; diagnostic?: string }> {

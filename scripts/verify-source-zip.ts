@@ -32,7 +32,12 @@ const currentEvidence = v04SourceEvidence(project);
 if (currentEvidence.headCommit !== archiveCommit || currentEvidence.dirty) {
   throw new Error("Source ZIP evidence must identify the clean current HEAD");
 }
-const releaseEvidence = ["artifacts/v04-performance.json", "artifacts/v05-quality.json", "artifacts/v051-external-holdout.json"]
+const releaseEvidence = [
+  "artifacts/v04-performance.json",
+  "artifacts/v05-quality.json",
+  "artifacts/v051-external-holdout.json",
+  "artifacts/v06-boundary-impact.json",
+]
   .map((file) => JSON.parse(readFileSync(path.join(project, file), "utf8")) as {
     source: typeof currentEvidence;
   })
@@ -118,6 +123,7 @@ try {
   execFileSync(process.execPath, [npmCli, "run", "verify:v04-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:v05-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:v051-holdout"], { cwd: extracted, stdio: "inherit" });
+  execFileSync(process.execPath, [npmCli, "run", "verify:v06-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:package"], { cwd: extracted, stdio: "inherit" });
 
   if (modelPath) {

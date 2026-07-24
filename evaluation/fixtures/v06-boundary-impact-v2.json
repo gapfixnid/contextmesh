@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 2,
+  "id": "contextmesh-v06-boundary-impact-v2",
+  "immutable": true,
+  "description": "Deterministic cross-language boundary and impact-analysis acceptance cases for HTTP, RPC, queue, and database protocols.",
+  "provenance": {
+    "origin": "ContextMesh v0.6 product scope and release acceptance criteria",
+    "authoredAgainst": "resource boundary providers http-resource-v2 and rpc-queue-db-resource-v2",
+    "frozenAt": "2026-07-23",
+    "mutationPolicy": "Never mutate this fixture in place; publish a new id and digest for changed gold."
+  },
+  "thresholds": {
+    "minimumCases": 11,
+    "deterministicRuns": 5,
+    "resolvedPrecision": 1,
+    "resolvedRecall": 1
+  },
+  "files": [
+    {
+      "path": "http-client.ts",
+      "content": "export function loadUsers() {\n  return fetch('/api/users');\n}\n"
+    },
+    {
+      "path": "http-service.py",
+      "content": "@app.get('/api/users')\ndef list_users():\n    return []\n"
+    },
+    {
+      "path": "http-ambiguous-client.ts",
+      "content": "export function loadAmbiguous() {\n  return fetch('/api/ambiguous');\n}\n"
+    },
+    {
+      "path": "http-one.py",
+      "content": "@app.get('/api/ambiguous')\ndef first_http():\n    return []\n"
+    },
+    {
+      "path": "http-two.py",
+      "content": "@app.get('/api/ambiguous')\ndef second_http():\n    return []\n"
+    },
+    {
+      "path": "rpc-client.ts",
+      "content": "export function loadRpcUser() {\n  return rpc.call('users.get', { id: 1 });\n}\n"
+    },
+    {
+      "path": "rpc-service.py",
+      "content": "@rpc.method('users.get')\ndef get_rpc_user():\n    return {'id': 1}\n"
+    },
+    {
+      "path": "rpc-ambiguous-client.ts",
+      "content": "export function loadRpcAmbiguous() {\n  return rpc.call('users.ambiguous', { id: 1 });\n}\n"
+    },
+    {
+      "path": "rpc-one.py",
+      "content": "@rpc.method('users.ambiguous')\ndef first_rpc():\n    return {'id': 1}\n"
+    },
+    {
+      "path": "rpc-two.py",
+      "content": "@rpc.method('users.ambiguous')\ndef second_rpc():\n    return {'id': 1}\n"
+    },
+    {
+      "path": "queue-producer.ts",
+      "content": "export function publishOrder() {\n  return queue.publish('orders.created', { id: 1 });\n}\nexport function publishMissing() {\n  return queue.publish('orders.missing', { id: 1 });\n}\n"
+    },
+    {
+      "path": "queue-one.py",
+      "content": "@queue.consumer('orders.created')\ndef first_consumer():\n    return None\n"
+    },
+    {
+      "path": "queue-two.py",
+      "content": "@queue.consumer('orders.created')\ndef second_consumer():\n    return None\n"
+    },
+    {
+      "path": "db-writer.ts",
+      "content": "export function writeAudit() {\n  return db.execute('INSERT INTO audit_events (id) VALUES (1)');\n}\nexport function writeMissing() {\n  return db.execute('INSERT INTO orphan_table (id) VALUES (1)');\n}\n"
+    },
+    {
+      "path": "db-reader.py",
+      "content": "def read_audit():\n    return db.execute('SELECT id FROM audit_events')\n"
+    },
+    {
+      "path": "negative-doc.ts",
+      "content": "export function documentationOnly() {\n  return \"fetch('/api/users') and rpc.call('users.get', {})\";\n}\n"
+    },
+    {
+      "path": "negative-sql.py",
+      "content": "def migration_notes():\n    return 'INSERT INTO audit_events (id) VALUES (2)'\n\ndef query_expectation():\n    return 'SELECT id FROM audit_events'\n"
+    },
+    {
+      "path": "flow-client.ts",
+      "content": "export function startOrder() {\n  return fetch('/api/orders');\n}\n"
+    },
+    {
+      "path": "flow-service.py",
+      "content": "@app.get('/api/orders')\ndef accept_order():\n    return queue.publish('orders.accepted', {'id': 1})\n"
+    },
+    {
+      "path": "flow-worker.go",
+      "content": "package worker\nfunc process_order() {}\nfunc register() { queue.subscribe(\"orders.accepted\", process_order) }\n"
+    }
+  ],
+  "cases": [
+    {
+      "id": "http-resolved",
+      "sourceQualifiedName": "http-client.ts#loadUsers",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "http-service.py#list_users",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/users"
+        }
+      ],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "http-ambiguous",
+      "sourceQualifiedName": "http-ambiguous-client.ts#loadAmbiguous",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "expectedUnresolved": {
+        "kind": "HTTP_BOUNDARY_CALL",
+        "rawName": "GET /api/ambiguous",
+        "minimumCandidates": 2
+      }
+    },
+    {
+      "id": "rpc-resolved",
+      "sourceQualifiedName": "rpc-client.ts#loadRpcUser",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "rpc-service.py#get_rpc_user",
+          "protocol": "rpc",
+          "operation": "call",
+          "resource": "users.get"
+        }
+      ],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "rpc-ambiguous",
+      "sourceQualifiedName": "rpc-ambiguous-client.ts#loadRpcAmbiguous",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "expectedUnresolved": {
+        "kind": "RPC_BOUNDARY_CALL",
+        "rawName": "CALL users.ambiguous",
+        "minimumCandidates": 2
+      }
+    },
+    {
+      "id": "queue-fanout",
+      "sourceQualifiedName": "queue-producer.ts#publishOrder",
+      "edgeKind": "CALLS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "queue-one.py#first_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created"
+        },
+        {
+          "qualifiedName": "queue-two.py#second_consumer",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.created"
+        }
+      ],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "queue-missing",
+      "sourceQualifiedName": "queue-producer.ts#publishMissing",
+      "edgeKind": "CALLS",
+      "expectedTargets": [],
+      "expectedUnresolved": {
+        "kind": "QUEUE_BOUNDARY_PUBLISH",
+        "rawName": "PUBLISH orders.missing",
+        "minimumCandidates": 0
+      }
+    },
+    {
+      "id": "database-resolved",
+      "sourceQualifiedName": "db-writer.ts#writeAudit",
+      "edgeKind": "REFERENCES",
+      "expectedTargets": [
+        {
+          "qualifiedName": "db-reader.py#read_audit",
+          "protocol": "database",
+          "operation": "insert_to_read",
+          "resource": "audit_events"
+        }
+      ],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "database-missing",
+      "sourceQualifiedName": "db-writer.ts#writeMissing",
+      "edgeKind": "REFERENCES",
+      "expectedTargets": [],
+      "expectedUnresolved": {
+        "kind": "DATABASE_BOUNDARY_WRITE",
+        "rawName": "INSERT orphan_table",
+        "minimumCandidates": 0
+      }
+    },
+    {
+      "id": "negative-document-string",
+      "sourceQualifiedName": "negative-doc.ts#documentationOnly",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "negative-standalone-sql",
+      "sourceQualifiedName": "negative-sql.py#migration_notes",
+      "edgeKind": "WRITES_TO",
+      "expectedTargets": [],
+      "expectedUnresolved": null
+    },
+    {
+      "id": "typescript-python-go-flow",
+      "sourceQualifiedName": "flow-client.ts#startOrder",
+      "edgeKind": "REQUESTS",
+      "expectedTargets": [
+        {
+          "qualifiedName": "flow-service.py#accept_order",
+          "protocol": "http",
+          "operation": "GET",
+          "resource": "/api/orders"
+        },
+        {
+          "qualifiedName": "flow-worker.go#process_order",
+          "protocol": "queue",
+          "operation": "publish",
+          "resource": "orders.accepted"
+        }
+      ],
+      "expectedUnresolved": null
+    }
+  ]
+}

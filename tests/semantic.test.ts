@@ -124,7 +124,7 @@ describe("semantic indexing and retrieval", () => {
 
     const app = new ContextMeshApp(root, databasePath);
     const doctor = app.doctor() as Envelope<{ schemaVersions: number[] }>;
-    expect(doctor.data.schemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(doctor.data.schemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     expect(
       readdirSync(root).filter((name) => name.startsWith("phase3.sqlite3.backup-")),
     ).toHaveLength(1);
@@ -190,7 +190,7 @@ describe("semantic indexing and retrieval", () => {
     raw.close();
 
     let app = new ContextMeshApp(root, databasePath);
-    expect((app.doctor() as Envelope<{ schemaVersions: number[] }>).data.schemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect((app.doctor() as Envelope<{ schemaVersions: number[] }>).data.schemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     await app.close();
     app = new ContextMeshApp(root, databasePath);
     await app.close();
