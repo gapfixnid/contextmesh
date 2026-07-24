@@ -859,7 +859,7 @@ try {
     evaluation: {
       relevanceThreshold: 2,
       ndcgGain: "2^grade-1",
-      tieBreak: "rankScore(round(score*1e5)), then canonical-id-ascending; public scoreMicro=round(score*1e6)",
+      tieBreak: "rankScore(round(score*1e3)), then canonical-id-ascending; public scoreMicro=round(score*1e6)",
       code: { aggregate: aggregateRanked(codeMetrics), queries: codeMetrics },
       memory: { aggregate: aggregateRanked(memoryMetrics), queries: memoryMetrics },
       context: {

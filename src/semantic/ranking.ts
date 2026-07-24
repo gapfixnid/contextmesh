@@ -3,7 +3,7 @@ import { dotProduct } from "./vector-codec.js";
 const RRF_K = 60;
 const MMR_LAMBDA = 0.75;
 const SCORE_QUANTUM = 1_000_000;
-const RANK_SCORE_QUANTUM = 100_000;
+const RANK_SCORE_QUANTUM = 1_000;
 export const REDUNDANCY_TEXT_VERSION = 1;
 
 export interface RankingItem<T> {
