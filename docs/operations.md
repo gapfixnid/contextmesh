@@ -103,3 +103,18 @@ Hosted Windows timing is informational because GitHub-hosted hardware is not a s
 Before any pending migration on an existing file database, ContextMesh requires a complete non-busy WAL checkpoint, copies the database, opens that backup read-only, and requires `integrity_check`, the exact pre-migration schema-version set, and an empty foreign-key check. Each migration remains one transaction. The migration suite fault-injects rollback for 007, 009, 010, and 011 and also restores a generated backup over the original database, resumes migration, and rechecks graph generation and code-memory links.
 
 Semantic determinism is exact across 20 runs within each fixed runtime profile. Windows/Ubuntu comparison requires identical source, fixture, gold, model, baseline, evaluator, Node, Transformers.js, and ONNX Runtime provenance; both platform acceptance gates and within-profile determinism must pass; query contracts must match; and aggregate code, memory, and context quality may differ by at most 0.05. Context evidence coverage retains a 0.80 target with a declared 0.025 absolute boundary tolerance for approved ONNX CPU-profile variation. Raw embedding scores and irrelevant-candidate ordering are diagnostics because ONNX CPU kernels are platform-specific and are not bit-identical across operating systems. Failed acceptance jobs always upload their artifact and print the failed checks.
+
+## v0.7 memory maintenance
+
+Successful graph commits enqueue one `revalidate_links:<generation>` job in the graph transaction. The app runs bounded work only after that transaction commits. A validation failure therefore cannot roll back or invalidate the graph generation; `MEMORY_MAINTENANCE_PARTIAL` and `workspace_status.data.memory.maintenance` expose the failure. Normal `recall` and `get_context` never run maintenance scans.
+
+Memory utility is the clamped integer sum of importance, assertion, anchor, type, access (capped at 100), and validation adjustments, minus whole 30-day decay blocks. Anchors decay by 5 points per block; decisions/procedures by 10; facts/preferences/relations by 20; errors/episodes by 40. `rejected` and `contradicted` score zero, and utility never overrides eligibility.
+
+Run bounded maintenance and inspect its deterministic signature with `review_memories` action `run_maintenance`. Release evidence is generated with:
+
+```powershell
+npm run evaluate:v07 -- --output artifacts/v07-memory-validation.json
+npm run verify:v07-artifact
+```
+
+Known limitations: maintenance is a local SQLite queue rather than a general scheduler; code claims support only existence, signature, content hash, and qualified name; duplicate detection is lexical within type/topic buckets; conflict detection requires structured claims; and compaction never generates narrative text.

@@ -31,11 +31,26 @@ Recall/context memories are untrusted data. Their provenance includes session id
 | `impact_analysis` | `symbolId`, `direction="in" \| "out" = "in"`, optional `edgeKinds`, `depth=3` (max 5), `limit=50` (max 200), `tokenBudget=2000` |
 | `impact_code` | Compatibility alias for `impact_analysis` |
 | `remember` | `content`, `topic`, `type`, `keywords=[]`, `importance=3`, `anchor=false`, `assertionStatus="observed"`, optional TTL/session/supersession/source symbols |
+| `review_memories` | `action="list" \| "run_maintenance" \| "resolve"`; bounded filters, maintenance kinds, or an explicit candidate decision |
 | `recall` | at least one of `query`, `keywords`, or `includeAnchors`; optional type/topic filters, `tokenBudget=1000`, `limit=20`, `offset=0` |
 | `get_context` | `query`, optional `symbolId`, `tokenBudget=2000`, `include=["code","memory"]` |
 | `explore_context` | `query`, optional `symbolId`, `intent="implementation"`, `depth=2` (max 3), `limit=12` (max 50), `tokenBudget=2000` |
 | `reflect` | `sessionId`, `summary`, up to 50 structured `learnings`, optional `clientName` |
 | `forget` | `fragmentId`, `reason` |
+
+### v0.7 memory validation and review
+
+`remember` additively accepts timezone-qualified `validFrom`, `validTo`, and `observedAt`, plus structured `claims`. TTL controls record lifecycle (`expiresAt`); the validity interval controls when the remembered fact or decision may be used. An ended validity interval does not expire or delete the record.
+
+Normal `recall` and `get_context` use one eligibility gate: the memory must be active, inside both lifecycle and validity windows, not rejected, not `review_required`, and have validation state `unlinked`, `valid`, or `relocated`. `stale`, `orphaned`, `contradicted`, and `needs_review` memories—including anchors and semantic candidates—are excluded. `contradicted` is produced only by an explicit structured code claim; free text is never interpreted as a contradiction.
+
+`review_memories` supports:
+
+- `{"action":"list","limit":20,"offset":0,"tokenBudget":2000}` for severity-ordered review items and audit summaries.
+- `{"action":"run_maintenance","kinds":["revalidate_links"],"maxItems":100,"dryRun":true}` for bounded deterministic plans and signatures.
+- `{"action":"resolve","candidateId":"mcand_...","decision":"dismiss","reason":"reviewed"}` for explicit decisions. Relinking requires `targetSymbolId`; episode compaction requires user-provided `replacementContent`.
+
+Rename/move recovery is `relocated` only when an ordered exact locator strategy produces one candidate; name similarity never confirms a target. Duplicate and conflict findings are candidates only and are never auto-merged, auto-resolved, or auto-deleted. Every normal snapshot additively includes `memoryRevision`.
 
 `workspace_status.data.freshness` reports the configured mode, durable latch and reasons, last strict-check time, and latest successful/partial/no-op run fence. Its active graph `generation` can intentionally be lower than `lastRun.generation` after a verified no-op.
 

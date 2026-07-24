@@ -57,11 +57,17 @@ export function buildCodeSemanticDocument(node: CodeNodeRecord, relativePath: st
 }
 
 export function buildMemorySemanticDocument(memory: MemoryFragmentRecord): SemanticDocument {
+  const claims = [...(memory.claims ?? [])]
+    .sort((left, right) =>
+      `${left.namespace}\0${left.key}\0${left.operator}`.localeCompare(`${right.namespace}\0${right.key}\0${right.operator}`))
+    .map((claim) => `${claim.namespace}.${claim.key} ${claim.operator} ${JSON.stringify(claim.value)}`)
+    .join("\n");
   return document(memory.id, [
     ["type", memory.type],
     ["topic", memory.topic],
     ["keywords", memory.keywords.join(" ")],
     ["content", memory.content],
     ["assertion_status", memory.assertionStatus],
+    ["claims", claims],
   ]);
 }

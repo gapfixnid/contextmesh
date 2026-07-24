@@ -8,6 +8,7 @@ import {
   recallSchema,
   reflectSchema,
   rememberSchema,
+  reviewMemoriesSchema,
   searchCodeSchema,
   traceCodeSchema,
   type Envelope,
@@ -19,6 +20,7 @@ import {
   type RecallInput,
   type ReflectInput,
   type RememberInput,
+  type ReviewMemoriesInput,
   type SearchCodeInput,
   type TraceCodeInput,
 } from "./contracts.js";
@@ -189,6 +191,7 @@ export class ContextMeshApp {
         precisionRevision: freshness.precisionRevision,
         successFence: captured?.successFence ?? durable!.successFenceGeneration,
         freshness: freshness.stale ? "stale" : "fresh",
+        memoryRevision: this.database.getMemoryRevision(),
       } as const } : {}),
     };
   }
@@ -244,6 +247,17 @@ export class ContextMeshApp {
     if (this.activeIndex) return this.activeIndex;
     this.activeIndex = Promise.resolve().then(async () => {
       const result = await this.code.index(parsed.mode);
+      try {
+        this.memory.runMaintenance({
+          action: "run_maintenance",
+          kinds: ["revalidate_links"],
+          maxItems: 500,
+          dryRun: false,
+          tokenBudget: 2000,
+        });
+      } catch {
+        result.diagnostics.push("MEMORY_MAINTENANCE_PARTIAL");
+      }
       return this.envelope(result, { warnings: result.diagnostics });
     });
     try {
@@ -472,22 +486,27 @@ export class ContextMeshApp {
         : null;
     let result!: ReturnType<MemoryService["recall"]>;
     let semanticSnapshotChanged = false;
+    let memorySnapshotChanged = false;
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const memoryRevisionBefore = this.database.getMemoryRevision();
       const semanticCurrentBefore =
         !semanticResult || !this.semantic || this.semantic.isCurrent("memory", semanticResult);
       const candidate = this.memory.recall(parsed, semanticCurrentBefore ? semanticResult : null);
       const semanticCurrentAfter =
         !semanticResult || !this.semantic || this.semantic.isCurrent("memory", semanticResult);
       semanticSnapshotChanged = !semanticCurrentBefore || !semanticCurrentAfter;
-      if (semanticSnapshotChanged && attempt === 0 && this.semantic && semanticResult) {
-        semanticResult = semanticResult.queryVector
-          ? this.semantic.rescanMemory(semanticResult, parsed.types, parsed.topic, Math.min(10_100, parsed.offset + parsed.limit + 1))
-          : await this.semantic.searchMemory(
-              semanticQuery,
-              parsed.types,
-              parsed.topic,
-              Math.min(10_100, parsed.offset + parsed.limit + 1),
-            );
+      memorySnapshotChanged = memoryRevisionBefore !== this.database.getMemoryRevision();
+      if ((semanticSnapshotChanged || memorySnapshotChanged) && attempt === 0) {
+        if (semanticSnapshotChanged && this.semantic && semanticResult) {
+          semanticResult = semanticResult.queryVector
+            ? this.semantic.rescanMemory(semanticResult, parsed.types, parsed.topic, Math.min(10_100, parsed.offset + parsed.limit + 1))
+            : await this.semantic.searchMemory(
+                semanticQuery,
+                parsed.types,
+                parsed.topic,
+                Math.min(10_100, parsed.offset + parsed.limit + 1),
+              );
+        }
         continue;
       }
       result = semanticSnapshotChanged ? this.memory.recall(parsed, null) : candidate;
@@ -523,6 +542,8 @@ export class ContextMeshApp {
       ...(parsed.query ? [QUERY_TRUNCATED_WARNING] : []),
       ...(semanticResult?.warnings ?? []),
       ...(semanticSnapshotChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
+      ...(memorySnapshotChanged ? ["MEMORY_SNAPSHOT_CHANGED"] : []),
+      ...result.warnings,
     ];
     if (!envelopeFits(scope, data, warnings, false, parsed.tokenBudget)) {
       throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum response envelope", {
@@ -627,13 +648,18 @@ export class ContextMeshApp {
     }
 
     const truncated =
+      memorySnapshotChanged ||
       result.truncated ||
       queryTruncated ||
       anchorOmitted ||
       generalOmitted ||
       paginationStalled ||
       data.fragments.some((fragment) => fragment.provenance.codeLinksOmitted > 0);
-    const envelope = stabilizeEnvelope(scope, data, warnings, truncated);
+    const snapshotScope = this.scope();
+    const finalScope = envelopeFits(snapshotScope, data, warnings, truncated, parsed.tokenBudget)
+      ? snapshotScope
+      : scope;
+    const envelope = stabilizeEnvelope(finalScope, data, warnings, truncated);
     if (envelope.estimatedTokens > parsed.tokenBudget) {
       throw new ContextMeshError("INTERNAL_ERROR", "Recall token packing exceeded tokenBudget");
     }
@@ -677,6 +703,7 @@ export class ContextMeshApp {
           !semanticContext.memory || !this.semantic || this.semantic.isCurrent("memory", semanticContext.memory);
         return {
           snapshot,
+          memoryRevision: this.database.getMemoryRevision(),
           semanticCodeCurrent,
           semanticMemoryCurrent,
           result: this.context.assembleDatabase(
@@ -692,6 +719,7 @@ export class ContextMeshApp {
         snapshotResult.snapshot.successFence,
       );
       const final = await this.code.indexer.readFinalRequestState();
+      const memoryChanged = snapshotResult.memoryRevision !== this.database.getMemoryRevision();
       const generationChanged =
         hydrated.generationChanged ||
         initial.generation !== snapshotResult.snapshot.generation ||
@@ -707,7 +735,7 @@ export class ContextMeshApp {
             (!snapshotResult.semanticMemoryCurrent ||
               (semanticContext.memory && !this.semantic.isCurrent("memory", semanticContext.memory)))),
       );
-      if ((generationChanged || semanticChanged) && attempt === 0) {
+      if ((generationChanged || semanticChanged || memoryChanged) && attempt === 0) {
         if (this.semantic) {
           semanticContext =
             semanticContext.code?.queryVector || semanticContext.memory?.queryVector
@@ -735,8 +763,9 @@ export class ContextMeshApp {
         [
           ...(stale ? [INDEX_STALE_WARNING] : []),
           ...(semanticChanged ? [SEMANTIC_SNAPSHOT_CHANGED_WARNING] : []),
+          ...(memoryChanged ? ["MEMORY_SNAPSHOT_CHANGED"] : []),
         ],
-        generationChanged || semanticChanged,
+        generationChanged || semanticChanged || memoryChanged,
       );
     }
     throw new ContextMeshError("INTERNAL_ERROR", "Context retry did not produce a result");
@@ -1006,6 +1035,81 @@ export class ContextMeshApp {
     this.assertOpen();
     const parsed = validate<ForgetInput>(forgetSchema, input);
     return this.envelope({ fragment: this.memory.forget(parsed) });
+  }
+
+  private memoryReviewSummary(): Record<string, unknown> {
+    const memory = this.database.getStatus().memory as {
+      revision: number;
+      validationCounts: Record<string, number>;
+      pendingCandidates: number;
+      maintenance: { pendingJobs: number };
+    };
+    return {
+      countsByValidationState: memory.validationCounts,
+      pendingCandidates: memory.pendingCandidates,
+      pendingJobs: memory.maintenance.pendingJobs,
+      memoryRevision: memory.revision,
+    };
+  }
+
+  reviewMemories(input: unknown): Envelope<unknown> {
+    this.assertOpen();
+    const parsed = validate<ReviewMemoriesInput>(reviewMemoriesSchema, input);
+    if (parsed.action === "run_maintenance") {
+      const fullRun = this.memory.runMaintenance(parsed);
+      let run = fullRun;
+      const scope = this.scope();
+      const summary = this.memoryReviewSummary();
+      const makeData = () => ({
+        action: parsed.action,
+        run,
+        summary,
+        nextOffset: null,
+      });
+      let truncated = false;
+      while (!envelopeFits(scope, makeData(), [], truncated, parsed.tokenBudget) &&
+        (run.processedIds.length > 0 || run.candidateIds.length > 0)) {
+        truncated = true;
+        run = run.processedIds.length >= run.candidateIds.length
+          ? { ...run, processedIds: run.processedIds.slice(0, -1) }
+          : { ...run, candidateIds: run.candidateIds.slice(0, -1) };
+      }
+      if (!envelopeFits(scope, makeData(), [], truncated, parsed.tokenBudget)) {
+        throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum review_memories envelope");
+      }
+      return stabilizeEnvelope(scope, makeData(), [], truncated);
+    }
+    if (parsed.action === "resolve") {
+      const resolution = this.memory.resolveReviewCandidate(parsed);
+      const data = {
+        action: parsed.action,
+        resolution,
+        summary: this.memoryReviewSummary(),
+        nextOffset: null,
+      };
+      const scope = this.scope();
+      if (!envelopeFits(scope, data, [], false, parsed.tokenBudget)) {
+        throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum review_memories envelope");
+      }
+      return stabilizeEnvelope(scope, data, [], false);
+    }
+    const reviewed = this.memory.review(parsed);
+    let items = reviewed.items;
+    let truncated = reviewed.nextOffset !== null;
+    const makeData = () => ({
+      action: parsed.action,
+      items,
+      summary: this.memoryReviewSummary(),
+      nextOffset: items.length < reviewed.items.length ? parsed.offset + items.length : reviewed.nextOffset,
+    });
+    while (!envelopeFits(this.scope(), makeData(), [], truncated, parsed.tokenBudget) && items.length > 0) {
+      items = items.slice(0, -1);
+      truncated = true;
+    }
+    if (!envelopeFits(this.scope(), makeData(), [], truncated, parsed.tokenBudget)) {
+      throw new ContextMeshError("INVALID_ARGUMENT", "tokenBudget is smaller than the minimum review_memories envelope");
+    }
+    return stabilizeEnvelope(this.scope(), makeData(), [], truncated);
   }
 
   doctor(): Envelope<unknown> {

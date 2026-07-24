@@ -115,5 +115,6 @@ export function hybridMemoryRecall(
     fragments,
     truncated: hasMore,
     nextOffset: hasMore ? input.offset + input.limit : null,
+    warnings: lexical.warnings,
   };
 }

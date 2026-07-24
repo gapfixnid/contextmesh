@@ -66,6 +66,8 @@ jobs:
       - run: npm run verify:v051-holdout
       - run: npm run evaluate:v06 -- --output artifacts/v06-boundary-impact.json
       - run: npm run verify:v06-artifact
+      - run: npm run evaluate:v07 -- --output artifacts/v07-memory-validation.json
+      - run: npm run verify:v07-artifact
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -74,6 +76,7 @@ jobs:
             artifacts/v05-quality.json
             artifacts/v051-external-holdout.json
             artifacts/v06-boundary-impact.json
+            artifacts/v07-memory-validation.json
           if-no-files-found: error
       - run: npm run verify:native-supply-chain
       - run: npm run verify:v04-artifact

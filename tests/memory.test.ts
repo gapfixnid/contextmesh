@@ -230,7 +230,7 @@ describe("long-term memory lifecycle", () => {
     }
   });
 
-  it("expires TTL memories lazily and records the lifecycle event", async () => {
+  it("excludes TTL memories on read and expires them only through maintenance", async () => {
     const root = createFixtureWorkspace();
     workspaces.push(root);
     let app: ContextMeshApp | null = new ContextMeshApp(root);
@@ -266,7 +266,24 @@ describe("long-term memory lifecycle", () => {
         .prepare("SELECT count(*) AS count FROM memory_events WHERE fragment_id = ? AND event_type = 'expired'")
         .get(fragmentId) as { count: number };
       audit.close();
-      expect(event.count).toBe(1);
+      expect(event.count).toBe(0);
+      const rawState = new DatabaseSync(databasePath);
+      expect(rawState.prepare("SELECT state FROM memory_fragments WHERE id=?").get(fragmentId)?.state).toBe("active");
+      rawState.close();
+      app = new ContextMeshApp(root);
+      app.reviewMemories({
+        action: "run_maintenance",
+        kinds: ["expire_lifecycle"],
+        maxItems: 100,
+        dryRun: false,
+        tokenBudget: 2000,
+      });
+      const afterMaintenance = new DatabaseSync(databasePath);
+      expect(afterMaintenance.prepare(
+        "SELECT count(*) AS count FROM memory_events WHERE fragment_id=? AND event_type='expired'",
+      ).get(fragmentId)?.count).toBe(1);
+      expect(afterMaintenance.prepare("SELECT state FROM memory_fragments WHERE id=?").get(fragmentId)?.state).toBe("expired");
+      afterMaintenance.close();
     } finally {
       app?.close();
     }

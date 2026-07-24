@@ -246,7 +246,7 @@ describe("migration backup and writer-lease migration", () => {
     const restored = new ContextMeshDatabase(fixture.root, fixture.databasePath);
     restored.close();
     const verified = new DatabaseSync(fixture.databasePath, { readOnly: true });
-    expect(verified.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(13);
+    expect(verified.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(14);
     expect(verified.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
     expect(verified.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
     expect(verified.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -260,7 +260,7 @@ describe("migration 011", () => {
     const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
     database.close();
     const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
-    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(13);
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(14);
     expect(raw.prepare("SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='precision_nodes'").get()?.value).toBe(1);
     expect(raw.prepare("SELECT current_generation AS value FROM workspaces").get()?.value).toBe(7);
     expect(raw.prepare("SELECT code_node_id AS value FROM memory_code_links").get()?.value).toBe("node_1");
@@ -289,7 +289,7 @@ describe("migration 012", () => {
     const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
     database.close();
     const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
-    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(13);
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(14);
     expect(raw.prepare("SELECT count(*) AS value FROM pragma_table_info('precision_provider_state') WHERE name='transition_epoch'").get()?.value).toBe(1);
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     raw.close();
@@ -314,7 +314,7 @@ describe("migration 013", () => {
     const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
     database.close();
     const raw = new DatabaseSync(fixture.databasePath);
-    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(13);
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(14);
     raw.prepare(`INSERT INTO code_nodes(
       id,workspace_id,file_id,kind,name,qualified_name,local_key,content_hash,generation,
       metadata_json,language,ecosystem,native_kind,analysis_level
@@ -350,4 +350,42 @@ describe("migration 013", () => {
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     raw.close();
   }, 60_000);
+});
+
+describe("migration 014", () => {
+  it("backfills temporal metadata and link validation without changing durable graph identity", () => {
+    const fixture = transitionEpochDatabase();
+    const before = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    const memoryId = before.prepare("SELECT id FROM memory_fragments LIMIT 1").get()?.id;
+    const linkId = before.prepare("SELECT id FROM memory_code_links LIMIT 1").get()?.id;
+    const generation = before.prepare("SELECT current_generation FROM workspaces").get()?.current_generation;
+    const precision = before.prepare("SELECT precision_revision FROM workspaces").get()?.precision_revision;
+    before.close();
+    const database = new ContextMeshDatabase(fixture.root, fixture.databasePath);
+    database.close();
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(14);
+    expect(raw.prepare("SELECT memory_id FROM memory_fragment_metadata").get()?.memory_id).toBe(memoryId);
+    expect(raw.prepare("SELECT link_id FROM memory_code_link_validations").get()?.link_id).toBe(linkId);
+    expect(raw.prepare("SELECT current_generation FROM workspaces").get()?.current_generation).toBe(generation);
+    expect(raw.prepare("SELECT precision_revision FROM workspaces").get()?.precision_revision).toBe(precision);
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("rolls migration 014 back atomically when its validation hook fails", () => {
+    const fixture = transitionEpochDatabase();
+    expect(() => new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      migrationValidationHook: (version) => {
+        if (version === 14) throw new Error("injected memory validation migration failure");
+      },
+    })).toThrow("injected memory validation migration failure");
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare("SELECT count(*) AS value FROM schema_migrations WHERE version=14").get()?.value).toBe(0);
+    expect(raw.prepare(
+      "SELECT count(*) AS value FROM sqlite_schema WHERE type='table' AND name='memory_fragment_metadata'",
+    ).get()?.value).toBe(0);
+    expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
 });

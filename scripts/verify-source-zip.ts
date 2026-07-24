@@ -32,7 +32,7 @@ const currentEvidence = v04SourceEvidence(project);
 if (currentEvidence.headCommit !== archiveCommit || currentEvidence.dirty) {
   throw new Error("Source ZIP evidence must identify the clean current HEAD");
 }
-const releaseEvidence = [
+const legacyReleaseEvidence = [
   "artifacts/v04-performance.json",
   "artifacts/v05-quality.json",
   "artifacts/v051-external-holdout.json",
@@ -42,14 +42,18 @@ const releaseEvidence = [
     source: typeof currentEvidence;
   })
   .map((artifact) => artifact.source);
-const sourceEvidence = releaseEvidence[0]!;
-if (!releaseEvidence.every((evidence) =>
-  evidence.headCommit === sourceEvidence.headCommit &&
-  evidence.treeDigest === sourceEvidence.treeDigest &&
-  evidence.files === sourceEvidence.files &&
-  evidence.dirty === false) ||
-  currentEvidence.treeDigest !== sourceEvidence.treeDigest || currentEvidence.files !== sourceEvidence.files) {
-  throw new Error("Release artifacts must identify one exact non-artifact source commit and the current source tree");
+if (legacyReleaseEvidence.some((evidence) => evidence.dirty)) {
+  throw new Error("Legacy release artifacts must retain clean committed source evidence");
+}
+const sourceEvidence = (JSON.parse(
+  readFileSync(path.join(project, "artifacts/v07-memory-validation.json"), "utf8"),
+) as { source: typeof currentEvidence }).source;
+if (
+  sourceEvidence.dirty ||
+  currentEvidence.treeDigest !== sourceEvidence.treeDigest ||
+  currentEvidence.files !== sourceEvidence.files
+) {
+  throw new Error("The v0.7 release artifact must identify the exact current non-artifact source tree");
 }
 const sourceCommit = sourceEvidence.headCommit;
 execFileSync("git", ["merge-base", "--is-ancestor", sourceCommit, archiveCommit], { cwd: project, stdio: "inherit" });
@@ -124,6 +128,7 @@ try {
   execFileSync(process.execPath, [npmCli, "run", "verify:v05-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:v051-holdout"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:v06-artifact"], { cwd: extracted, stdio: "inherit" });
+  execFileSync(process.execPath, [npmCli, "run", "verify:v07-artifact"], { cwd: extracted, stdio: "inherit" });
   execFileSync(process.execPath, [npmCli, "run", "verify:package"], { cwd: extracted, stdio: "inherit" });
 
   if (modelPath) {

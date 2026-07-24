@@ -20,6 +20,10 @@ The Ubuntu job runs:
 Before pushing, run `npm run check:source` locally. Use focused tests for small
 changes and `npm run check` for migration, native, provider, or storage changes.
 
+Fast CI does not generate v0.7 release evidence. The manual/reusable Full CI
+runs `evaluate:v07`, verifies the canonical 20-run artifact, and uploads
+`artifacts/v07-memory-validation.json` after the source has been frozen.
+
 ## Stage-boundary checks
 
 `Full CI` is manual and reusable. Run it at the v0.7 and v0.8 boundaries and

@@ -177,19 +177,19 @@ describe("token envelope and memory selection hardening", () => {
       const compactRecall = await app.recall({
         query: relatedLongQuery,
         includeAnchors: true,
-        tokenBudget: 256,
+        tokenBudget: 384,
       }) as Envelope<{ query: string; fragments: MemoryView[] }>;
-      expectBudget(compactRecall, 256);
+      expectBudget(compactRecall, 384);
       expect(compactRecall.data.fragments.map((memory) => memory.id)).toContain(compact.data.fragment.id);
       expect(compactRecall.data.query.length).toBeLessThan(relatedLongQuery.length);
       expect(compactRecall.warnings).toContain("QUERY_TRUNCATED");
 
       const compactContext = await app.getContext({
         query: relatedLongQuery,
-        tokenBudget: 256,
+        tokenBudget: 384,
         include: ["memory"],
       }) as Envelope<{ query: string; memories: MemoryView[] }>;
-      expectBudget(compactContext, 256);
+      expectBudget(compactContext, 384);
       expect(compactContext.data.memories.map((memory) => memory.id)).toContain(compact.data.fragment.id);
       expect(compactContext.data.query.length).toBeLessThan(relatedLongQuery.length);
       expect(compactContext.warnings).toContain("QUERY_TRUNCATED");

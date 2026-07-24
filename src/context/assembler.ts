@@ -209,6 +209,7 @@ export class ContextAssembler {
         limit: 100,
         offset: 0,
       });
+      warnings.push(...recalled.warnings);
       candidateTruncated ||= recalled.truncated || (semanticMemory?.candidates.length ?? 0) === 100;
       const semanticMemories = semanticMemory
         ? this.database

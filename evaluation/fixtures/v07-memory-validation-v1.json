@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "contextmesh-v07-memory-validation-v1",
+  "immutable": true,
+  "description": "Deterministic memory validation, temporal safety, maintenance, and audit replay fixture.",
+  "thresholds": {
+    "deterministicRuns": 20,
+    "unsafeNormalContextLeak": 0,
+    "validationAccuracy": 1,
+    "relocatedRecovery": 1,
+    "ambiguousFalseConfirmation": 0,
+    "duplicatePrecision": 1,
+    "duplicateRecall": 1,
+    "conflictPrecision": 1,
+    "conflictRecall": 1,
+    "auditReplayMismatch": 0,
+    "memoryRevisionMismatch": 0,
+    "migrationPreservationFailures": 0
+  },
+  "cases": [
+    { "id": "unchanged-linked-valid", "category": "validation", "expected": "valid" },
+    { "id": "unique-rename-relocated", "category": "validation", "expected": "relocated" },
+    { "id": "ambiguous-rename-review", "category": "validation", "expected": "needs_review" },
+    { "id": "changed-linked-stale", "category": "validation", "expected": "stale" },
+    { "id": "deleted-target-orphaned", "category": "validation", "expected": "orphaned" },
+    { "id": "structured-signature-contradicted", "category": "validation", "expected": "contradicted" },
+    { "id": "stale-anchor-excluded", "category": "safety", "expected": "excluded" },
+    { "id": "contradicted-semantic-excluded", "category": "safety", "expected": "excluded" },
+    { "id": "near-duplicate-candidate", "category": "duplicate", "expected": "candidate" },
+    { "id": "structured-conflict-candidate", "category": "conflict", "expected": "candidate" },
+    { "id": "disjoint-validity-no-conflict", "category": "conflict", "expected": "none" },
+    { "id": "episode-compaction-candidate", "category": "compaction", "expected": "candidate" },
+    { "id": "validity-ended-excluded", "category": "temporal", "expected": "excluded" },
+    { "id": "access-reinforcement", "category": "utility", "expected": "reinforced" },
+    { "id": "maintenance-noop", "category": "maintenance", "expected": "noop" },
+    { "id": "audit-replay", "category": "audit", "expected": "stable" }
+  ]
+}
