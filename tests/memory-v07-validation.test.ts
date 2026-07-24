@@ -11,6 +11,39 @@ afterEach(() => {
 });
 
 describe("v0.7 code-link validation and context safety", () => {
+  it("closes recalled memory evidence back to its validated code symbol", async () => {
+    const root = createFixtureWorkspace();
+    roots.push(root);
+    const app = new ContextMeshApp(root);
+    try {
+      await app.indexWorkspace({ mode: "full" });
+      const search = await app.searchCode({ query: "double", kinds: ["function"] }) as Envelope<{
+        results: CodeSearchResult[];
+      }>;
+      const symbolId = search.data.results[0]!.id;
+      const remembered = await app.remember({
+        content: "quartz narwhal is the approved operational phrase",
+        topic: "evidence closure",
+        type: "fact",
+        sourceSymbolIds: [symbolId],
+      }) as Envelope<{ fragment: MemoryFragmentRecord }>;
+
+      const context = await app.getContext({
+        query: "quartz narwhal approved operational phrase",
+        include: ["code", "memory"],
+        tokenBudget: 4000,
+      }) as Envelope<{
+        code: Array<{ id: string }>;
+        memories: MemoryFragmentRecord[];
+      }>;
+
+      expect(context.data.memories.map((item) => item.id)).toContain(remembered.data.fragment.id);
+      expect(context.data.code.map((item) => item.id)).toContain(symbolId);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("marks changed code stale and excludes it from lexical and linked context", async () => {
     const root = createFixtureWorkspace();
     roots.push(root);

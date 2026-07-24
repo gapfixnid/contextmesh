@@ -836,27 +836,33 @@ export class ContextMeshApp {
       };
     };
     const representatives = new Map<"code" | "memory", Array<(typeof result.candidates)[number]>>();
-    for (const candidate of result.candidates) {
-      if (candidate.priority < 2 || candidate.relevance < 0.35) continue;
-      const plane = representatives.get(candidate.kind) ?? [];
-      if (plane.length >= 2) continue;
-      plane.push(candidate);
-      representatives.set(candidate.kind, plane);
+    const candidatesByKey = new Map(result.candidates.map((candidate) => [candidate.key, candidate]));
+    for (const plane of ["code", "memory"] as const) {
+      const planeRepresentatives = result.representativeKeys[plane]
+        .map((key) => candidatesByKey.get(key))
+        .filter((candidate): candidate is (typeof result.candidates)[number] =>
+          Boolean(candidate && candidate.kind === plane && candidate.priority >= 2));
+      if (planeRepresentatives.length > 0) representatives.set(plane, planeRepresentatives);
     }
     const selectedKeys = new Set<string>();
     const fitsWithSoftReservations = (
       candidateData: ContextData,
       current: (typeof result.candidates)[number],
     ): boolean => {
-      const fitsAtTarget = (target: number): boolean => {
+      const fitsAtTargets = (targets: Readonly<Record<"code" | "memory", number>>): boolean => {
         packingDiagnostics.softReservationEvaluations += 1;
         let reserved = candidateData;
         for (const [plane, planeRepresentatives] of representatives) {
-          const selectedCount = plane === "code" ? reserved.code.length : reserved.memories.length;
-          let needed = Math.max(0, Math.min(target, planeRepresentatives.length) - selectedCount);
-          for (const representative of planeRepresentatives) {
-            if (needed === 0) break;
-            if (representative.key === current.key || selectedKeys.has(representative.key)) continue;
+          const targetRepresentatives = planeRepresentatives.slice(0, targets[plane]);
+          const includedKeys = new Set([
+            ...selectedKeys,
+            current.key,
+            ...(plane === "code"
+              ? reserved.code.map((item) => `code:${item.id}`)
+              : reserved.memories.map((item) => `memory:${item.id}`)),
+          ]);
+          for (const representative of targetRepresentatives) {
+            if (includedKeys.has(representative.key)) continue;
             if (plane === "code") {
               reserved = {
                 ...reserved,
@@ -871,16 +877,20 @@ export class ContextMeshApp {
                 ],
               };
             }
-            needed -= 1;
+            includedKeys.add(representative.key);
           }
         }
         return fitsWithReservedRelationships(reserved);
       };
-      // Reserve two representatives per requested plane when the envelope can
-      // afford them. This prevents small cross-runtime score shifts from
-      // letting many short memories crowd out the next code candidate. Fall
-      // back to the original one-per-plane reservation for tight envelopes.
-      const fits = fitsAtTarget(2) || fitsAtTarget(1);
+      // Code snippets are materially larger than memory rows, so reserving two
+      // representatives in both planes can reject a useful second code item
+      // before packing begins. Prefer two code representatives plus one memory
+      // representative, which absorbs small cross-runtime semantic rank shifts
+      // without allowing short memories to crowd out the next code candidate.
+      // Fall back to one representative per plane for tight envelopes.
+      const fits =
+        fitsAtTargets({ code: 2, memory: 1 }) ||
+        fitsAtTargets({ code: 1, memory: 1 });
       if (fits) packingDiagnostics.softReservationFits += 1;
       else packingDiagnostics.softReservationBudgetRejections += 1;
       return fits;
