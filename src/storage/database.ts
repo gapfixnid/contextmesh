@@ -43,7 +43,7 @@ import {
   validityIntervalsOverlap,
 } from "../memory/maintenance.js";
 import { computeMemoryUtility } from "../memory/utility.js";
-import { selectLinkTarget } from "../memory/validation.js";
+import { evaluateLinkValidation, selectLinkTarget } from "../memory/validation.js";
 import { textRedundancy } from "../semantic/ranking.js";
 import {
   buildCodeSemanticDocument,
@@ -654,6 +654,7 @@ export interface ContextMeshStorage {
     kinds?: MemoryMaintenanceKind[];
     maxItems: number;
     dryRun: boolean;
+    continuationCursor?: string;
   }): MemoryMaintenanceRun;
   listMemoryReviewItems(input: {
     validationStates?: string[];
@@ -4672,6 +4673,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     kinds?: MemoryMaintenanceKind[];
     maxItems: number;
     dryRun: boolean;
+    continuationCursor?: string;
   }): MemoryMaintenanceRun {
     const kinds: MemoryMaintenanceKind[] = input.kinds?.length ? input.kinds : [
       "revalidate_links",
@@ -4683,6 +4685,12 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     ];
     const timestamp = this.nowIso();
     const revisionBefore = this.getMemoryRevision();
+    const suppliedCursor = parseJson<Record<string, unknown>>(input.continuationCursor ?? "{}", {});
+    const nextCursor: Record<string, string | number> = Object.fromEntries(
+      Object.entries(suppliedCursor).filter((entry): entry is [string, string | number] =>
+        typeof entry[1] === "string" || typeof entry[1] === "number"),
+    );
+    const continuingKinds = new Set<MemoryMaintenanceKind>();
     const processedIds: string[] = [];
     const candidateIds: string[] = [];
     const transitions: Array<Record<string, unknown>> = [];
@@ -4746,7 +4754,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
 
     const operation = (): void => {
       const pendingJobs = input.dryRun ? [] : this.db.prepare(
-        `SELECT id FROM memory_maintenance_jobs
+        `SELECT id,job_type,cursor_json FROM memory_maintenance_jobs
          WHERE workspace_id=? AND (
            state IN ('pending','failed') OR
            (state='running' AND lease_expires_epoch IS NOT NULL AND lease_expires_epoch<=?)
@@ -4754,6 +4762,15 @@ export class ContextMeshDatabase implements ContextMeshStorage {
            AND job_type IN (${placeholders(kinds.length)})
          ORDER BY created_at,id LIMIT ?`,
       ).all(this.workspace.id, Date.parse(timestamp), ...kinds, kinds.length);
+      const persistedCursor = (kind: MemoryMaintenanceKind): Record<string, unknown> => {
+        const job = pendingJobs.find((item) => stringValue(item.job_type) === kind);
+        return job ? parseJson<Record<string, unknown>>(job.cursor_json, {}) : {};
+      };
+      if (!input.continuationCursor) {
+        for (const job of pendingJobs) {
+          Object.assign(nextCursor, parseJson<Record<string, string | number>>(job.cursor_json, {}));
+        }
+      }
       for (const job of pendingJobs) {
         const leaseOwner = `memory_${process.pid}`;
         const leaseToken = randomUUID();
@@ -4775,33 +4792,48 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           reasonCodes: [], resultDigest: null,
         }), timestamp);
       }
-      const temporalRows = this.db.prepare(
-        `SELECT memory_id,maintenance_state,valid_from,valid_to FROM memory_fragment_metadata
-         WHERE workspace_id=? AND (valid_from>? OR (valid_to IS NOT NULL AND valid_to<=?))
-         ORDER BY memory_id LIMIT ?`,
-      ).all(this.workspace.id, timestamp, timestamp, input.maxItems);
-      for (const row of temporalRows) {
-        const reasonCode = stringValue(row.valid_from) > timestamp ? "NOT_YET_VALID" : "VALIDITY_ENDED";
-        if (stringValue(row.maintenance_state) === "review_required") continue;
-        transitions.push({
-          kind: "temporal", memoryId: stringValue(row.memory_id),
-          prior: stringValue(row.maintenance_state), next: "review_required", reasonCode,
-        });
-        if (!input.dryRun) {
-          this.db.prepare(
-            `UPDATE memory_fragment_metadata SET maintenance_state='review_required',
-             last_maintained_at=?,updated_at=? WHERE workspace_id=? AND memory_id=?`,
-          ).run(timestamp, timestamp, this.workspace.id, stringValue(row.memory_id));
+      if (kinds.includes("expire_lifecycle")) {
+        const temporalCursor = typeof nextCursor.temporalAfter === "string" ? nextCursor.temporalAfter : "";
+        const temporalPage = this.db.prepare(
+          `SELECT memory_id,maintenance_state,valid_from,valid_to FROM memory_fragment_metadata
+           WHERE workspace_id=? AND memory_id>?
+             AND (valid_from>? OR (valid_to IS NOT NULL AND valid_to<=?))
+           ORDER BY memory_id LIMIT ?`,
+        ).all(this.workspace.id, temporalCursor, timestamp, timestamp, input.maxItems + 1);
+        const temporalRows = temporalPage.slice(0, input.maxItems);
+        if (temporalRows.length > 0) nextCursor.temporalAfter = stringValue(temporalRows.at(-1)?.memory_id);
+        if (temporalPage.length > input.maxItems) continuingKinds.add("expire_lifecycle");
+        for (const row of temporalRows) {
+          const reasonCode = stringValue(row.valid_from) > timestamp ? "NOT_YET_VALID" : "VALIDITY_ENDED";
+          if (stringValue(row.maintenance_state) === "review_required") continue;
+          transitions.push({
+            kind: "temporal", memoryId: stringValue(row.memory_id),
+            prior: stringValue(row.maintenance_state), next: "review_required", reasonCode,
+          });
+          if (!input.dryRun) {
+            this.db.prepare(
+              `UPDATE memory_fragment_metadata SET maintenance_state='review_required',
+               last_maintained_at=?,updated_at=? WHERE workspace_id=? AND memory_id=?`,
+            ).run(timestamp, timestamp, this.workspace.id, stringValue(row.memory_id));
+          }
         }
       }
       if (kinds.includes("revalidate_links")) {
-        const links = this.db.prepare(
+        const revalidationCursor = Number(
+          suppliedCursor.revalidateLinksAfter ?? persistedCursor("revalidate_links").revalidateLinksAfter ?? 0,
+        );
+        const linkPage = this.db.prepare(
           `SELECT l.*,v.state AS prior_state,v.reason_code AS prior_reason,
                   v.checked_generation AS prior_generation,v.resolved_code_node_id AS prior_resolved
            FROM memory_code_links l
            LEFT JOIN memory_code_link_validations v ON v.link_id=l.id
-           WHERE l.workspace_id=? ORDER BY l.id LIMIT ?`,
-        ).all(this.workspace.id, input.maxItems);
+           WHERE l.workspace_id=? AND l.id>? ORDER BY l.id LIMIT ?`,
+        ).all(this.workspace.id, revalidationCursor, input.maxItems + 1);
+        const links = linkPage.slice(0, input.maxItems);
+        if (links.length > 0) nextCursor.revalidateLinksAfter = numberValue(links.at(-1)?.id);
+        if (linkPage.length > input.maxItems && links.length > 0) {
+          continuingKinds.add("revalidate_links");
+        }
         const nodes = this.db.prepare(
           `SELECT id,local_key,language,kind,name,qualified_name,signature,content_hash,
                   start_line,end_line,file_id
@@ -4840,41 +4872,30 @@ export class ContextMeshDatabase implements ContextMeshStorage {
             claim.source_symbol_id === null ||
             nullableString(claim.source_symbol_id) === nullableString(link.code_node_id) ||
             nullableString(claim.source_symbol_id) === (typeof snapshot.codeNodeId === "string" ? snapshot.codeNodeId : null));
-          const claimMismatch = relevantClaims.some((claim) => {
-            const expected = parseJson<unknown>(claim.value_json, null);
-            const key = stringValue(claim.claim_key);
-            if (key === "symbol.exists") return typeof expected === "boolean" && expected !== Boolean(target);
-            if (!target) return false;
-            if (key === "symbol.signature") return expected !== target.signature;
-            if (key === "symbol.contentHash") return expected !== target.contentHash;
-            if (key === "symbol.qualifiedName") return expected !== target.qualifiedName;
-            return false;
-          });
           const expectedHash = typeof snapshot.contentHash === "string" ? snapshot.contentHash : null;
-          let state: Exclude<MemoryFragmentRecord["validation"]["state"], "unlinked">;
-          let reasonCode: string;
-          let confidence: number;
-          if (claimMismatch) {
-            state = "contradicted"; reasonCode = "STRUCTURED_CLAIM_MISMATCH"; confidence = 0;
-          } else if (selection.state === "ambiguous") {
-            state = "needs_review"; reasonCode = "AMBIGUOUS_RELOCATION"; confidence = 0.5;
-          } else if (selection.state === "insufficient") {
-            state = "needs_review"; reasonCode = "LEGACY_LOCATOR_INSUFFICIENT"; confidence = 0.5;
-          } else if (!target) {
-            state = relevantClaims.some((claim) => stringValue(claim.claim_key) === "symbol.exists" &&
-              parseJson<unknown>(claim.value_json, null) === true) ? "contradicted" : "orphaned";
-            reasonCode = state === "contradicted" ? "SYMBOL_EXPECTED_TO_EXIST" : "TARGET_MISSING";
-            confidence = 0;
-          } else if (selection.state === "relocated" && expectedHash === target.contentHash) {
-            state = "relocated"; reasonCode = "UNIQUE_RELOCATION"; confidence = 0.95;
-          } else if (expectedHash === target.contentHash) {
-            state = "valid"; reasonCode = "EXACT_MATCH"; confidence = 1;
-          } else {
-            state = "stale"; reasonCode = "CONTENT_HASH_CHANGED"; confidence = 0.65;
-          }
+          const decision = evaluateLinkValidation(
+            {
+              localKey: stringValue(link.node_local_key),
+              language: nullableString(link.language),
+              kind: typeof snapshot.kind === "string" ? snapshot.kind : null,
+              name: typeof snapshot.name === "string" ? snapshot.name : null,
+              qualifiedName: typeof snapshot.qualifiedName === "string" ? snapshot.qualifiedName : null,
+              signature: typeof snapshot.signature === "string" ? snapshot.signature : null,
+              contentHash: expectedHash,
+            },
+            selection,
+            relevantClaims.map((claim) => ({
+              key: stringValue(claim.claim_key) as
+                "symbol.exists" | "symbol.signature" | "symbol.contentHash" | "symbol.qualifiedName",
+              value: parseJson<unknown>(claim.value_json, null),
+            })),
+          );
+          const { state, reasonCode, confidence } = decision;
+          const currentGeneration = this.getWorkspace().currentGeneration;
           const changed = stringValue(link.prior_state) !== state ||
             stringValue(link.prior_reason) !== reasonCode ||
-            nullableString(link.prior_resolved) !== (target?.id ?? null);
+            nullableString(link.prior_resolved) !== (target?.id ?? null) ||
+            numberValue(link.prior_generation) !== currentGeneration;
           if (changed) transitions.push({
             kind: "validation", linkId, memoryId, prior: nullableString(link.prior_state),
             next: state, reasonCode, targetId: target?.id ?? null,
@@ -4901,24 +4922,24 @@ export class ContextMeshDatabase implements ContextMeshStorage {
                 this.workspace.id, linkId,
               );
             }
-            this.db.prepare(
-              `INSERT INTO memory_code_link_validations(
-                link_id,workspace_id,memory_id,state,checked_generation,resolved_code_node_id,
-                expected_content_hash,observed_content_hash,confidence,reason_code,evidence_json,validated_at
-              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-              ON CONFLICT(link_id) DO UPDATE SET
-                state=excluded.state,checked_generation=excluded.checked_generation,
-                resolved_code_node_id=excluded.resolved_code_node_id,
-                expected_content_hash=excluded.expected_content_hash,
-                observed_content_hash=excluded.observed_content_hash,confidence=excluded.confidence,
-                reason_code=excluded.reason_code,evidence_json=excluded.evidence_json,
-                validated_at=excluded.validated_at`,
-            ).run(
-              linkId, this.workspace.id, memoryId, state, this.getWorkspace().currentGeneration,
-              target?.id ?? null, expectedHash, target?.contentHash ?? null, confidence, reasonCode,
-              canonicalJson({ selection: selection.state }), timestamp,
-            );
             if (changed) {
+              this.db.prepare(
+                `INSERT INTO memory_code_link_validations(
+                  link_id,workspace_id,memory_id,state,checked_generation,resolved_code_node_id,
+                  expected_content_hash,observed_content_hash,confidence,reason_code,evidence_json,validated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(link_id) DO UPDATE SET
+                  state=excluded.state,checked_generation=excluded.checked_generation,
+                  resolved_code_node_id=excluded.resolved_code_node_id,
+                  expected_content_hash=excluded.expected_content_hash,
+                  observed_content_hash=excluded.observed_content_hash,confidence=excluded.confidence,
+                  reason_code=excluded.reason_code,evidence_json=excluded.evidence_json,
+                  validated_at=excluded.validated_at`,
+              ).run(
+                linkId, this.workspace.id, memoryId, state, currentGeneration,
+                target?.id ?? null, expectedHash, target?.contentHash ?? null, confidence, reasonCode,
+                canonicalJson({ selection: selection.state }), timestamp,
+              );
               this.db.prepare(
                 `INSERT INTO memory_events(workspace_id,fragment_id,event_type,payload_json,created_at)
                  VALUES (?,?,'validation_changed',?,?)`,
@@ -4939,12 +4960,16 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
 
       if (kinds.includes("detect_duplicates")) {
-        const rows = this.db.prepare(
+        const duplicateCursor = typeof nextCursor.duplicatesAfter === "string" ? nextCursor.duplicatesAfter : "";
+        const duplicatePage = this.db.prepare(
           `SELECT m.id,m.type,m.topic,m.content,m.supersedes_id,mm.valid_from,mm.valid_to
            FROM memory_fragments m JOIN memory_fragment_metadata mm ON mm.memory_id=m.id
-           WHERE m.workspace_id=? AND m.state='active'
-           ORDER BY lower(m.topic),m.type,m.id LIMIT ?`,
-        ).all(this.workspace.id, input.maxItems);
+           WHERE m.workspace_id=? AND m.state='active' AND m.id>?
+           ORDER BY m.id LIMIT ?`,
+        ).all(this.workspace.id, duplicateCursor, input.maxItems + 1);
+        const rows = duplicatePage.slice(0, input.maxItems);
+        if (rows.length > 0) nextCursor.duplicatesAfter = stringValue(rows.at(-1)?.id);
+        if (duplicatePage.length > input.maxItems) continuingKinds.add("detect_duplicates");
         const buckets = new Map<string, SqlRow[]>();
         for (const row of rows) {
           processedIds.push(stringValue(row.id));
@@ -4973,21 +4998,25 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
 
       if (kinds.includes("detect_conflicts")) {
-        const claims = this.db.prepare(
-          `SELECT c.memory_id,c.namespace,c.claim_key,c.operator,c.value_json,c.value_digest,
+        const conflictCursor = typeof nextCursor.conflictsAfter === "string" ? nextCursor.conflictsAfter : "";
+        const conflictPage = this.db.prepare(
+          `SELECT c.id AS claim_id,c.memory_id,c.namespace,c.claim_key,c.operator,c.value_json,c.value_digest,
                   m.supersedes_id,mm.valid_from,mm.valid_to
            FROM memory_claims c
            JOIN memory_fragments m ON m.id=c.memory_id
            JOIN memory_fragment_metadata mm ON mm.memory_id=m.id
-           WHERE c.workspace_id=? AND m.state='active'
-           ORDER BY c.namespace,c.claim_key,c.operator,c.memory_id LIMIT ?`,
-        ).all(this.workspace.id, input.maxItems);
+           WHERE c.workspace_id=? AND m.state='active' AND c.id>?
+           ORDER BY c.id LIMIT ?`,
+        ).all(this.workspace.id, conflictCursor, input.maxItems + 1);
+        const claims = conflictPage.slice(0, input.maxItems);
+        if (claims.length > 0) nextCursor.conflictsAfter = stringValue(claims.at(-1)?.claim_id);
+        if (conflictPage.length > input.maxItems) continuingKinds.add("detect_conflicts");
         for (let leftIndex = 0; leftIndex < claims.length; leftIndex += 1) {
           const left = claims[leftIndex]!;
           for (let rightIndex = leftIndex + 1; rightIndex < claims.length; rightIndex += 1) {
             const right = claims[rightIndex]!;
             if (`${stringValue(left.namespace)}\0${stringValue(left.claim_key)}\0${stringValue(left.operator)}` !==
-                `${stringValue(right.namespace)}\0${stringValue(right.claim_key)}\0${stringValue(right.operator)}`) break;
+                `${stringValue(right.namespace)}\0${stringValue(right.claim_key)}\0${stringValue(right.operator)}`) continue;
             if (stringValue(left.value_digest) === stringValue(right.value_digest) ||
                 nullableString(left.supersedes_id) === stringValue(right.memory_id) ||
                 nullableString(right.supersedes_id) === stringValue(left.memory_id) ||
@@ -5005,12 +5034,17 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
 
       if (kinds.includes("compact_episodes")) {
-        const episodes = this.db.prepare(
+        const episodeCursor = typeof nextCursor.episodesAfter === "string" ? nextCursor.episodesAfter : "";
+        const episodePage = this.db.prepare(
           `SELECT m.id,m.session_id,m.topic,m.content,m.created_at
            FROM memory_fragments m JOIN memory_fragment_metadata mm ON mm.memory_id=m.id
-           WHERE m.workspace_id=? AND m.state='active' AND m.type='episode' AND m.session_id IS NOT NULL
-           ORDER BY m.session_id,lower(m.topic),m.created_at,m.id LIMIT ?`,
-        ).all(this.workspace.id, input.maxItems);
+           WHERE m.workspace_id=? AND m.state='active' AND m.type='episode'
+             AND m.session_id IS NOT NULL AND m.id>?
+           ORDER BY m.id LIMIT ?`,
+        ).all(this.workspace.id, episodeCursor, input.maxItems + 1);
+        const episodes = episodePage.slice(0, input.maxItems);
+        if (episodes.length > 0) nextCursor.episodesAfter = stringValue(episodes.at(-1)?.id);
+        if (episodePage.length > input.maxItems) continuingKinds.add("compact_episodes");
         const groups = new Map<string, SqlRow[]>();
         for (const row of episodes) {
           const key = `${stringValue(row.session_id)}\0${stringValue(row.topic).toLocaleLowerCase("en-US")}`;
@@ -5027,10 +5061,14 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
 
       if (kinds.includes("recompute_utility")) {
-        const rows = this.db.prepare(
+        const utilityCursor = typeof nextCursor.utilityAfter === "string" ? nextCursor.utilityAfter : "";
+        const utilityPage = this.db.prepare(
           `SELECT m.*,mm.*,mv.* FROM memory_fragments m ${MEMORY_RECORD_JOINS}
-           WHERE m.workspace_id=? ORDER BY m.id LIMIT ?`,
-        ).all(this.workspace.id, input.maxItems);
+           WHERE m.workspace_id=? AND m.id>? ORDER BY m.id LIMIT ?`,
+        ).all(this.workspace.id, utilityCursor, input.maxItems + 1);
+        const rows = utilityPage.slice(0, input.maxItems);
+        if (rows.length > 0) nextCursor.utilityAfter = stringValue(rows.at(-1)?.id);
+        if (utilityPage.length > input.maxItems) continuingKinds.add("recompute_utility");
         for (const row of rows) {
           const memory = mapMemory(row);
           processedIds.push(memory.id);
@@ -5060,11 +5098,16 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       }
 
       if (kinds.includes("expire_lifecycle")) {
-        const expired = this.db.prepare(
+        const expiryCursor = typeof nextCursor.expiryAfter === "string" ? nextCursor.expiryAfter : "";
+        const expiryPage = this.db.prepare(
           `SELECT id,session_id FROM memory_fragments
-           WHERE workspace_id=? AND state='active' AND expires_at IS NOT NULL AND expires_at<=?
+           WHERE workspace_id=? AND state='active' AND id>?
+             AND expires_at IS NOT NULL AND expires_at<=?
            ORDER BY id LIMIT ?`,
-        ).all(this.workspace.id, timestamp, input.maxItems);
+        ).all(this.workspace.id, expiryCursor, timestamp, input.maxItems + 1);
+        const expired = expiryPage.slice(0, input.maxItems);
+        if (expired.length > 0) nextCursor.expiryAfter = stringValue(expired.at(-1)?.id);
+        if (expiryPage.length > input.maxItems) continuingKinds.add("expire_lifecycle");
         for (const row of expired) {
           const id = stringValue(row.id);
           processedIds.push(id);
@@ -5094,11 +5137,21 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           processedIds: [...new Set(processedIds)].sort(),
           transitions: [...transitions].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))),
           candidateIds: [...new Set(candidateIds)].sort(),
-          continuationCursor: null,
+          continuationCursor: continuingKinds.size > 0 ? canonicalJson(nextCursor) : null,
         });
         for (const job of pendingJobs) {
+          const jobType = stringValue(job.job_type) as MemoryMaintenanceKind;
+          const hasContinuation = continuingKinds.has(jobType);
+          if (hasContinuation) {
+            this.db.prepare(
+              `UPDATE memory_maintenance_jobs SET state='pending',cursor_json=?,
+               lease_owner=NULL,lease_token=NULL,lease_expires_epoch=NULL,last_error=NULL,updated_at=?
+               WHERE workspace_id=? AND id=?`,
+            ).run(canonicalJson(nextCursor), timestamp, this.workspace.id, stringValue(job.id));
+            continue;
+          }
           this.db.prepare(
-            `UPDATE memory_maintenance_jobs SET state='succeeded',result_digest=?,completed_at=?,
+            `UPDATE memory_maintenance_jobs SET state='succeeded',cursor_json='{}',result_digest=?,completed_at=?,
              lease_owner=NULL,lease_token=NULL,lease_expires_epoch=NULL,last_error=NULL,updated_at=?
              WHERE workspace_id=? AND id=?`,
           ).run(digest, timestamp, timestamp, this.workspace.id, stringValue(job.id));
@@ -5163,7 +5216,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       processedIds: [...new Set(processedIds)].sort(),
       transitions: [...transitions].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))),
       candidateIds: [...new Set(candidateIds)].sort(),
-      continuationCursor: null,
+      continuationCursor: continuingKinds.size > 0 ? canonicalJson(nextCursor) : null,
     };
     return {
       dryRun: input.dryRun,
@@ -5171,7 +5224,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       processedIds: canonicalResult.processedIds,
       transitionCount: transitions.length,
       candidateIds: canonicalResult.candidateIds,
-      continuationCursor: null,
+      continuationCursor: canonicalResult.continuationCursor,
       signature: stableDigest(canonicalResult),
       memoryRevision: input.dryRun ? revisionBefore : this.getMemoryRevision(),
     };
@@ -5255,6 +5308,33 @@ export class ContextMeshDatabase implements ContextMeshStorage {
     };
   }
 
+  private recomputeMemoryMaintenanceState(memoryId: string, timestamp: string): void {
+    const unsafeValidation = this.db.prepare(
+      `SELECT 1 FROM memory_code_link_validations
+       WHERE workspace_id=? AND memory_id=? AND state IN ('stale','orphaned','contradicted','needs_review')
+       LIMIT 1`,
+    ).get(this.workspace.id, memoryId);
+    const pending = this.db.prepare(
+      `SELECT candidate_type FROM memory_review_candidates
+       WHERE workspace_id=? AND status='pending' AND (left_memory_id=? OR right_memory_id=?)
+       ORDER BY CASE candidate_type
+         WHEN 'code_validation' THEN 0 WHEN 'episode_compaction' THEN 1
+         WHEN 'conflict' THEN 2 ELSE 3 END,id`,
+    ).all(this.workspace.id, memoryId, memoryId);
+    const types = new Set(pending.map((row) => stringValue(row.candidate_type)));
+    const state = unsafeValidation || types.has("code_validation") || types.has("episode_compaction")
+      ? "review_required"
+      : types.has("conflict")
+        ? "conflict_candidate"
+        : types.has("duplicate")
+          ? "duplicate_candidate"
+          : "clean";
+    this.db.prepare(
+      `UPDATE memory_fragment_metadata SET maintenance_state=?,last_maintained_at=?,updated_at=?
+       WHERE workspace_id=? AND memory_id=? AND maintenance_state<>?`,
+    ).run(state, timestamp, timestamp, this.workspace.id, memoryId, state);
+  }
+
   resolveMemoryReview(input: {
     candidateId: string;
     decision: string;
@@ -5273,6 +5353,10 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       const leftId = nullableString(candidate.left_memory_id);
       const rightId = nullableString(candidate.right_memory_id);
       const fragmentId = input.fragmentId ?? leftId;
+      if (input.fragmentId && input.fragmentId !== leftId && input.fragmentId !== rightId) {
+        throw new ContextMeshError("INVALID_ARGUMENT", "fragmentId does not belong to the review candidate");
+      }
+      const affectedLinkIds: number[] = [];
       if (input.decision === "dismiss") {
         this.db.prepare(
           `UPDATE memory_review_candidates SET status='dismissed',resolution_json=?,resolved_at=?,updated_at=?
@@ -5310,14 +5394,57 @@ export class ContextMeshDatabase implements ContextMeshStorage {
         ).get(this.workspace.id, input.targetSymbolId, this.getWorkspace().currentGeneration);
         if (!node) throw new ContextMeshError("NOT_FOUND", `Current target symbol not found: ${input.targetSymbolId}`);
         if (!fragmentId) throw new ContextMeshError("INVALID_ARGUMENT", "candidate does not identify a memory");
+        const evidence = parseJson<{ linkId?: number }>(candidate.evidence_json, {});
+        if (!Number.isSafeInteger(evidence.linkId) || Number(evidence.linkId) <= 0) {
+          throw new ContextMeshError("INVALID_ARGUMENT", "code validation candidate does not identify a valid link");
+        }
+        const linkId = Number(evidence.linkId);
         const link = this.db.prepare(
-          "SELECT * FROM memory_code_links WHERE workspace_id=? AND memory_id=? ORDER BY id LIMIT 1",
-        ).get(this.workspace.id, fragmentId);
+          "SELECT * FROM memory_code_links WHERE workspace_id=? AND memory_id=? AND id=?",
+        ).get(this.workspace.id, fragmentId, linkId);
         if (!link) throw new ContextMeshError("NOT_FOUND", `Memory code link not found: ${fragmentId}`);
         const snapshot = parseJson<Record<string, unknown>>(link.locator_snapshot_json, {});
         if ((snapshot.language && snapshot.language !== nullableString(node.language)) ||
             (snapshot.kind && snapshot.kind !== stringValue(node.kind))) {
           throw new ContextMeshError("INVALID_ARGUMENT", "target symbol language/kind does not match the link locator");
+        }
+        const claims = this.db.prepare(
+          `SELECT claim_key,value_json,source_symbol_id FROM memory_claims
+           WHERE workspace_id=? AND memory_id=? AND namespace='code' ORDER BY claim_key`,
+        ).all(this.workspace.id, fragmentId);
+        const relevantClaims = claims.filter((claim) =>
+          claim.source_symbol_id === null ||
+          nullableString(claim.source_symbol_id) === nullableString(link.code_node_id) ||
+          nullableString(claim.source_symbol_id) === (typeof snapshot.codeNodeId === "string" ? snapshot.codeNodeId : null));
+        const target = {
+          id: stringValue(node.id),
+          localKey: stringValue(node.local_key),
+          language: nullableString(node.language),
+          kind: stringValue(node.kind),
+          name: stringValue(node.name),
+          qualifiedName: stringValue(node.qualified_name),
+          signature: stringValue(node.signature),
+          contentHash: stringValue(node.content_hash),
+        };
+        const decision = evaluateLinkValidation(
+          {
+            localKey: stringValue(link.node_local_key),
+            language: nullableString(link.language),
+            kind: typeof snapshot.kind === "string" ? snapshot.kind : null,
+            name: typeof snapshot.name === "string" ? snapshot.name : null,
+            qualifiedName: typeof snapshot.qualifiedName === "string" ? snapshot.qualifiedName : null,
+            signature: typeof snapshot.signature === "string" ? snapshot.signature : null,
+            contentHash: target.contentHash,
+          },
+          { state: "relocated", node: target },
+          relevantClaims.map((claim) => ({
+            key: stringValue(claim.claim_key) as
+              "symbol.exists" | "symbol.signature" | "symbol.contentHash" | "symbol.qualifiedName",
+            value: parseJson<unknown>(claim.value_json, null),
+          })),
+        );
+        if (decision.state === "contradicted") {
+          throw new ContextMeshError("INVALID_ARGUMENT", "target symbol contradicts a structured memory claim");
         }
         this.db.prepare(
           `UPDATE memory_code_links SET code_node_id=?,node_local_key=?,language=?,confidence=0.95,
@@ -5332,13 +5459,22 @@ export class ContextMeshDatabase implements ContextMeshStorage {
           }), this.workspace.id, numberValue(link.id),
         );
         this.db.prepare(
-          `UPDATE memory_code_link_validations SET state='relocated',checked_generation=?,
-           resolved_code_node_id=?,expected_content_hash=?,observed_content_hash=?,confidence=0.95,
-           reason_code='EXPLICIT_RELINK',evidence_json=?,validated_at=? WHERE link_id=?`,
+          `INSERT INTO memory_code_link_validations(
+             link_id,workspace_id,memory_id,state,checked_generation,resolved_code_node_id,
+             expected_content_hash,observed_content_hash,confidence,reason_code,evidence_json,validated_at
+           ) VALUES (?,?,?,'relocated',?,?,?,?,0.95,'EXPLICIT_RELINK',?,?)
+           ON CONFLICT(link_id) DO UPDATE SET state='relocated',checked_generation=excluded.checked_generation,
+             resolved_code_node_id=excluded.resolved_code_node_id,
+             expected_content_hash=excluded.expected_content_hash,
+             observed_content_hash=excluded.observed_content_hash,confidence=0.95,
+             reason_code='EXPLICIT_RELINK',evidence_json=excluded.evidence_json,
+             validated_at=excluded.validated_at`,
         ).run(
-          this.getWorkspace().currentGeneration, input.targetSymbolId, stringValue(node.content_hash),
-          stringValue(node.content_hash), canonicalJson({ explicit: true }), timestamp, numberValue(link.id),
+          numberValue(link.id), this.workspace.id, fragmentId, this.getWorkspace().currentGeneration,
+          input.targetSymbolId, stringValue(node.content_hash), stringValue(node.content_hash),
+          canonicalJson({ explicit: true, candidateId: input.candidateId }), timestamp,
         );
+        affectedLinkIds.push(numberValue(link.id));
         this.db.prepare(
           `UPDATE memory_review_candidates SET status='resolved',resolution_json=?,resolved_at=?,updated_at=?
            WHERE workspace_id=? AND id=?`,
@@ -5387,6 +5523,9 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       } else {
         throw new ContextMeshError("INVALID_ARGUMENT", `Unsupported review decision: ${input.decision}`);
       }
+      for (const memoryId of [leftId, rightId].filter((id): id is string => Boolean(id))) {
+        this.recomputeMemoryMaintenanceState(memoryId, timestamp);
+      }
       const semanticCommit = this.currentMemorySemanticCommit();
       if (semanticCommit) this.refreshMemorySemanticState(semanticCommit, timestamp);
       const before = this.getMemoryRevision();
@@ -5397,7 +5536,7 @@ export class ContextMeshDatabase implements ContextMeshStorage {
       ).run(this.workspace.id, fragmentId, canonicalJson({
         schemaVersion: 1, memoryRevisionBefore: before, memoryRevisionAfter: after,
         graphGeneration: this.getWorkspace().currentGeneration, candidateId: input.candidateId,
-        affectedMemoryIds: [leftId, rightId].filter(Boolean), affectedLinkIds: [],
+        affectedMemoryIds: [leftId, rightId].filter(Boolean), affectedLinkIds,
         priorState: "pending", nextState: input.decision === "dismiss" ? "dismissed" : "resolved",
         reasonCodes: [input.decision.toUpperCase()], resultDigest: stableDigest({
           candidateId: input.candidateId, decision: input.decision, reason: input.reason,

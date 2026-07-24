@@ -60,6 +60,7 @@ export class MemoryService {
       ...(input.kinds ? { kinds: input.kinds } : {}),
       maxItems: input.maxItems,
       dryRun: input.dryRun,
+      ...(input.continuationCursor ? { continuationCursor: input.continuationCursor } : {}),
     });
   }
 

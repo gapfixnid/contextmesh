@@ -248,13 +248,23 @@ export class ContextMeshApp {
     this.activeIndex = Promise.resolve().then(async () => {
       const result = await this.code.index(parsed.mode);
       try {
-        this.memory.runMaintenance({
-          action: "run_maintenance",
-          kinds: ["revalidate_links"],
-          maxItems: 500,
-          dryRun: false,
-          tokenBudget: 2000,
-        });
+        let continuationCursor: string | undefined;
+        const seenMaintenanceCursors = new Set<string>();
+        do {
+          const maintenance = this.memory.runMaintenance({
+            action: "run_maintenance",
+            kinds: ["revalidate_links"],
+            maxItems: 500,
+            dryRun: false,
+            tokenBudget: 2000,
+            ...(continuationCursor ? { continuationCursor } : {}),
+          });
+          continuationCursor = maintenance.continuationCursor ?? undefined;
+          if (continuationCursor && seenMaintenanceCursors.has(continuationCursor)) {
+            throw new ContextMeshError("INTERNAL_ERROR", "post-index memory maintenance cursor did not advance");
+          }
+          if (continuationCursor) seenMaintenanceCursors.add(continuationCursor);
+        } while (continuationCursor);
       } catch {
         result.diagnostics.push("MEMORY_MAINTENANCE_PARTIAL");
       }

@@ -47,7 +47,7 @@ Normal `recall` and `get_context` use one eligibility gate: the memory must be a
 `review_memories` supports:
 
 - `{"action":"list","limit":20,"offset":0,"tokenBudget":2000}` for severity-ordered review items and audit summaries.
-- `{"action":"run_maintenance","kinds":["revalidate_links"],"maxItems":100,"dryRun":true}` for bounded deterministic plans and signatures.
+- `{"action":"run_maintenance","kinds":["revalidate_links"],"maxItems":100,"dryRun":true}` for bounded deterministic plans and signatures. When `continuationCursor` is non-null, pass that opaque value into the next `run_maintenance` request; a durable queued job is marked succeeded only after the cursor is exhausted.
 - `{"action":"resolve","candidateId":"mcand_...","decision":"dismiss","reason":"reviewed"}` for explicit decisions. Relinking requires `targetSymbolId`; episode compaction requires user-provided `replacementContent`.
 
 Rename/move recovery is `relocated` only when an ordered exact locator strategy produces one candidate; name similarity never confirms a target. Duplicate and conflict findings are candidates only and are never auto-merged, auto-resolved, or auto-deleted. Every normal snapshot additively includes `memoryRevision`.

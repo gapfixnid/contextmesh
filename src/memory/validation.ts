@@ -42,10 +42,27 @@ export interface LinkLocator {
   contentHash: string | null;
 }
 
+export interface StructuredCodeClaim {
+  key: "symbol.exists" | "symbol.signature" | "symbol.contentHash" | "symbol.qualifiedName";
+  value: unknown;
+}
+
+export interface LinkTargetSelection {
+  state: "exact" | "relocated" | "ambiguous" | "missing" | "insufficient";
+  node: LinkValidationCandidate | null;
+}
+
+export interface LinkValidationDecision {
+  state: Exclude<MemoryValidationState, "unlinked">;
+  reasonCode: string;
+  confidence: number;
+  target: LinkValidationCandidate | null;
+}
+
 export function selectLinkTarget(
   locator: LinkLocator,
   nodes: readonly LinkValidationCandidate[],
-): { state: "exact" | "relocated" | "ambiguous" | "missing" | "insufficient"; node: LinkValidationCandidate | null } {
+): LinkTargetSelection {
   if (!locator.localKey || !locator.name || !locator.kind || !locator.contentHash) {
     return { state: "insufficient", node: null };
   }
@@ -65,4 +82,43 @@ export function selectLinkTarget(
     if (matches.length > 1) return { state: "ambiguous", node: null };
   }
   return { state: "missing", node: null };
+}
+
+export function evaluateLinkValidation(
+  locator: LinkLocator,
+  selection: LinkTargetSelection,
+  claims: readonly StructuredCodeClaim[],
+): LinkValidationDecision {
+  const target = selection.node;
+  const claimMismatch = claims.some((claim) => {
+    if (claim.key === "symbol.exists") {
+      return typeof claim.value === "boolean" && claim.value !== Boolean(target);
+    }
+    if (!target) return false;
+    if (claim.key === "symbol.signature") return claim.value !== target.signature;
+    if (claim.key === "symbol.contentHash") return claim.value !== target.contentHash;
+    return claim.value !== target.qualifiedName;
+  });
+  if (claimMismatch) {
+    return { state: "contradicted", reasonCode: "STRUCTURED_CLAIM_MISMATCH", confidence: 0, target };
+  }
+  if (selection.state === "ambiguous") {
+    return { state: "needs_review", reasonCode: "AMBIGUOUS_RELOCATION", confidence: 0.5, target: null };
+  }
+  if (selection.state === "insufficient") {
+    return { state: "needs_review", reasonCode: "LEGACY_LOCATOR_INSUFFICIENT", confidence: 0.5, target: null };
+  }
+  if (!target) {
+    const expectedToExist = claims.some((claim) => claim.key === "symbol.exists" && claim.value === true);
+    return expectedToExist
+      ? { state: "contradicted", reasonCode: "SYMBOL_EXPECTED_TO_EXIST", confidence: 0, target: null }
+      : { state: "orphaned", reasonCode: "TARGET_MISSING", confidence: 0, target: null };
+  }
+  if (selection.state === "relocated" && locator.contentHash === target.contentHash) {
+    return { state: "relocated", reasonCode: "UNIQUE_RELOCATION", confidence: 0.95, target };
+  }
+  if (locator.contentHash === target.contentHash) {
+    return { state: "valid", reasonCode: "EXACT_MATCH", confidence: 1, target };
+  }
+  return { state: "stale", reasonCode: "CONTENT_HASH_CHANGED", confidence: 0.65, target };
 }

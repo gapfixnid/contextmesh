@@ -59,15 +59,25 @@ INSERT INTO memory_code_link_validations(
 )
 SELECT l.id,l.workspace_id,l.memory_id,
   CASE
-    WHEN l.code_node_id IS NULL THEN 'needs_review'
     WHEN json_extract(l.locator_snapshot_json,'$.contentHash') IS NULL THEN 'needs_review'
-    ELSE 'valid'
+    WHEN l.code_node_id IS NULL OR n.id IS NULL THEN 'orphaned'
+    WHEN json_extract(l.locator_snapshot_json,'$.contentHash') = n.content_hash THEN 'valid'
+    ELSE 'stale'
   END,
-  w.current_generation,l.code_node_id,json_extract(l.locator_snapshot_json,'$.contentHash'),n.content_hash,
-  CASE WHEN l.code_node_id IS NULL OR json_extract(l.locator_snapshot_json,'$.contentHash') IS NULL THEN 0.5 ELSE 1.0 END,
-  CASE WHEN l.code_node_id IS NULL THEN 'LEGACY_TARGET_MISSING'
-       WHEN json_extract(l.locator_snapshot_json,'$.contentHash') IS NULL THEN 'LEGACY_LOCATOR_INSUFFICIENT'
-       ELSE 'EXACT_MATCH' END,
+  w.current_generation,CASE WHEN n.id IS NULL THEN NULL ELSE l.code_node_id END,
+  json_extract(l.locator_snapshot_json,'$.contentHash'),n.content_hash,
+  CASE
+    WHEN json_extract(l.locator_snapshot_json,'$.contentHash') IS NULL THEN 0.5
+    WHEN l.code_node_id IS NULL OR n.id IS NULL THEN 0.0
+    WHEN json_extract(l.locator_snapshot_json,'$.contentHash') = n.content_hash THEN 1.0
+    ELSE 0.65
+  END,
+  CASE
+    WHEN json_extract(l.locator_snapshot_json,'$.contentHash') IS NULL THEN 'LEGACY_LOCATOR_INSUFFICIENT'
+    WHEN l.code_node_id IS NULL OR n.id IS NULL THEN 'TARGET_MISSING'
+    WHEN json_extract(l.locator_snapshot_json,'$.contentHash') = n.content_hash THEN 'EXACT_MATCH'
+    ELSE 'CONTENT_HASH_CHANGED'
+  END,
   '{}',l.created_at
 FROM memory_code_links l
 JOIN workspaces w ON w.id=l.workspace_id

@@ -367,9 +367,92 @@ describe("migration 014", () => {
     expect(raw.prepare("SELECT max(version) AS value FROM schema_migrations").get()?.value).toBe(14);
     expect(raw.prepare("SELECT memory_id FROM memory_fragment_metadata").get()?.memory_id).toBe(memoryId);
     expect(raw.prepare("SELECT link_id FROM memory_code_link_validations").get()?.link_id).toBe(linkId);
+    expect(raw.prepare("SELECT state FROM memory_code_link_validations").get()?.state).toBe("needs_review");
     expect(raw.prepare("SELECT current_generation FROM workspaces").get()?.current_generation).toBe(generation);
     expect(raw.prepare("SELECT precision_revision FROM workspaces").get()?.precision_revision).toBe(precision);
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    raw.close();
+  });
+
+  it("backfills a locator hash mismatch as stale and excludes it before any reindex", () => {
+    const fixture = transitionEpochDatabase();
+    const before = new DatabaseSync(fixture.databasePath);
+    before.prepare(
+      "UPDATE memory_code_links SET locator_snapshot_json=? WHERE memory_id='mem_1'",
+    ).run(JSON.stringify({
+      kind: "function",
+      name: "legacy",
+      qualifiedName: "src/a.ts#legacy",
+      localKey: "src/a.ts:function:legacy",
+      contentHash: "old-nodehash",
+    }));
+    const extraMemories: Array<[string, string]> = [
+      ["mem_valid", "legacy valid evidence"],
+      ["mem_missing_hash", "legacy missing hash evidence"],
+      ["mem_orphan", "legacy orphan evidence"],
+    ];
+    for (const [id, content] of extraMemories) {
+      before.prepare(`INSERT INTO memory_fragments(
+        id,workspace_id,type,topic,content,content_hash,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?)`).run(
+        id, "ws_legacy", "fact", "migration", content, `${id}-hash`,
+        "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z",
+      );
+      before.prepare(
+        "INSERT INTO memory_fragments_fts(fragment_id,topic,content,keywords) VALUES(?,?,?,?)",
+      ).run(id, "migration", content, "");
+    }
+    before.prepare(`INSERT INTO memory_code_links(
+      workspace_id,memory_id,code_node_id,node_local_key,relation_type,confidence,locator_snapshot_json,created_at
+    ) VALUES(?,?,?,?,?,?,?,?)`).run(
+      "ws_legacy", "mem_valid", "node_1", "src/a.ts:function:legacy", "evidence", 1,
+      JSON.stringify({ kind: "function", name: "legacy", contentHash: "nodehash" }),
+      "2026-01-01T00:00:00.000Z",
+    );
+    before.prepare(`INSERT INTO memory_code_links(
+      workspace_id,memory_id,code_node_id,node_local_key,relation_type,confidence,locator_snapshot_json,created_at
+    ) VALUES(?,?,?,?,?,?,?,?)`).run(
+      "ws_legacy", "mem_missing_hash", "node_1", "src/a.ts:function:legacy", "evidence", 1,
+      JSON.stringify({ kind: "function", name: "legacy" }),
+      "2026-01-01T00:00:00.000Z",
+    );
+    before.prepare(`INSERT INTO memory_code_links(
+      workspace_id,memory_id,code_node_id,node_local_key,relation_type,confidence,locator_snapshot_json,created_at
+    ) VALUES(?,?,?,?,?,?,?,?)`).run(
+      "ws_legacy", "mem_orphan", null, "src/a.ts:function:removed", "evidence", 1,
+      JSON.stringify({ kind: "function", name: "removed", contentHash: "removed-hash" }),
+      "2026-01-01T00:00:00.000Z",
+    );
+    before.close();
+
+    const database = new ContextMeshDatabase(fixture.root, fixture.databasePath, {
+      clock: () => new Date("2026-01-02T00:00:00.000Z"),
+    });
+    const recalled = database.recall({
+      query: "keep link",
+      tokenBudget: 1000,
+      includeAnchors: false,
+      limit: 20,
+      offset: 0,
+    });
+    expect(recalled.fragments).toHaveLength(0);
+    database.close();
+
+    const raw = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    expect(raw.prepare(
+      "SELECT state FROM memory_code_link_validations WHERE memory_id='mem_1'",
+    ).get()?.state).toBe("stale");
+    expect(raw.prepare(
+      "SELECT reason_code FROM memory_code_link_validations WHERE memory_id='mem_1'",
+    ).get()?.reason_code).toBe("CONTENT_HASH_CHANGED");
+    expect(Object.fromEntries(raw.prepare(
+      "SELECT memory_id,state FROM memory_code_link_validations ORDER BY memory_id",
+    ).all().map((row) => [String(row.memory_id), String(row.state)]))).toMatchObject({
+      mem_1: "stale",
+      mem_valid: "valid",
+      mem_missing_hash: "needs_review",
+      mem_orphan: "orphaned",
+    });
     raw.close();
   });
 

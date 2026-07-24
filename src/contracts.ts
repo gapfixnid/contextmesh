@@ -244,6 +244,7 @@ const reviewMaintenanceSchema = z.object({
   ])).max(6).optional(),
   maxItems: z.number().int().min(1).max(500).default(100),
   dryRun: z.boolean().default(false),
+  continuationCursor: z.string().min(2).max(4000).optional(),
   tokenBudget: z.number().int().min(256).max(8000).default(2000),
 });
 const reviewResolveSchema = z.object({

@@ -21,6 +21,11 @@ const artifact = JSON.parse(text) as {
   fixture: { id: string; digest: string; caseCount: number; immutable: boolean };
   source: V04SourceEvidence; runs: number; orderedSignatures: string[];
   metrics: Record<string, number>; thresholds: Record<string, number>;
+  probes: {
+    maintenanceCursor: { failures: number; checked: number; expected: number };
+    migration: { failures: number; state: string; leaked: boolean };
+    semanticBackend: string;
+  };
   caseResults: Array<{ id: string; passed: boolean }>; auditSignature: string; passed: boolean;
 };
 if (text.replaceAll("\r\n", "\n") !== `${JSON.stringify(artifact, null, 2)}\n`) {
@@ -35,6 +40,14 @@ if (artifact.schemaVersion !== 1 || artifact.release !== "v0.7" ||
     artifact.fixture.digest !== fixtureDigest || artifact.fixture.caseCount !== 16 ||
     artifact.fixture.immutable !== true || artifact.caseResults.length !== 16 ||
     new Set(artifact.caseResults.map((item) => item.id)).size !== 16 ||
+    artifact.probes?.maintenanceCursor?.failures !== 0 ||
+    artifact.probes?.maintenanceCursor?.checked !== 1001 ||
+    artifact.probes?.maintenanceCursor?.expected !== 1001 ||
+    artifact.probes?.migration?.failures !== 0 ||
+    artifact.probes?.migration?.state !== "stale" ||
+    artifact.probes?.migration?.leaked !== false ||
+    artifact.probes?.semanticBackend !== "deterministic-integration" ||
+    artifact.metrics.maintenanceCursorFailures !== 0 ||
     artifact.caseResults.some((item) => !item.passed) || artifact.passed !== true) {
   throw new Error("V07_ARTIFACT_INVALID: fixture or case contract mismatch");
 }
