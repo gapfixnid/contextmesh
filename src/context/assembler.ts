@@ -265,10 +265,14 @@ export class ContextAssembler {
       }
     }
 
-    const sources: RankingSource<UnifiedContextValue>[] = [];
-    sources.push(...planeSources(lexicalItems, 1));
-    sources.push(...planeSources(semanticItems, 1));
-    sources.push(...planeSources(graphItems, 0.75));
+    const primarySources: RankingSource<UnifiedContextValue>[] = [
+      ...planeSources(lexicalItems, 1),
+      ...planeSources(semanticItems, 1),
+    ];
+    const sources: RankingSource<UnifiedContextValue>[] = [
+      ...primarySources,
+      ...planeSources(graphItems, 0.75),
+    ];
     const rankingDiagnostics: RankingDiagnostics = {
       inputByNormalizationGroup: {},
       uniqueCandidates: 0,
@@ -277,11 +281,11 @@ export class ContextAssembler {
       selectedCandidates: 0,
     };
     const representativeKeys = {
-      code: fuseAndDiversify(sources.filter((source) => source.normalizationGroup === "code"))
+      code: fuseAndDiversify(primarySources.filter((source) => source.normalizationGroup === "code"))
         .filter((candidate) => candidate.relevance >= 0.35)
         .slice(0, 2)
         .map((candidate) => candidate.id),
-      memory: fuseAndDiversify(sources.filter((source) => source.normalizationGroup === "memory"))
+      memory: fuseAndDiversify(primarySources.filter((source) => source.normalizationGroup === "memory"))
         .filter((candidate) => candidate.relevance >= 0.35)
         .slice(0, 2)
         .map((candidate) => candidate.id),
