@@ -142,19 +142,22 @@ requireCondition(artifact.runner.contract === V04_ARTIFACT_CONTRACT, "runner con
 requireCondition(Boolean(artifact.runner.os && artifact.runner.cpu && artifact.runner.node && artifact.runner.rust), "runner identity incomplete");
 requireCondition(artifact.runner.runtimeNetwork === 0 && artifact.runner.mode === "sidecar", "runtime mode/network policy mismatch");
 validateFixedHardwareIdentity(artifact.runner);
-const expectedArtifactRuntime = historical && existsSync(path.join(process.cwd(), ".git"))
-  ? `contextmesh-graph-kernel@${
-    (JSON.parse(execFileSync(
-      "git",
-      ["show", `${artifact.git.commit}:package.json`],
-      { encoding: "utf8" },
-    )) as { version: string }).version
-  }`
+const historicalNativeRuntimeByCommit: Readonly<Record<string, string>> = {
+  c32af1b91b24aaba97d0ce25fdec737ac994c4b8: "contextmesh-graph-kernel@0.6.0",
+};
+const expectedArtifactRuntime = historical
+  ? existsSync(path.join(process.cwd(), ".git"))
+    ? `contextmesh-graph-kernel@${
+      (JSON.parse(execFileSync(
+        "git",
+        ["show", `${artifact.git.commit}:package.json`],
+        { encoding: "utf8" },
+      )) as { version: string }).version
+    }`
+    : historicalNativeRuntimeByCommit[artifact.git.commit]
   : expectedNativeRuntime();
 requireCondition(
-  historical && !existsSync(path.join(process.cwd(), ".git"))
-    ? /^contextmesh-graph-kernel@\d+\.\d+\.\d+$/.test(artifact.runner.native)
-    : artifact.runner.native === expectedArtifactRuntime,
+  Boolean(expectedArtifactRuntime) && artifact.runner.native === expectedArtifactRuntime,
   "native runtime does not match the graph-kernel handshake version",
 );
 
