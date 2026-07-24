@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "release": "v0.7",
+  "fixture": {
+    "id": "contextmesh-v07-memory-validation-v1",
+    "digest": "e8d7ddd4dfa99de65d511f44daa5c7cca8ad097f2ead2bf3dc3424f977d6e9a2",
+    "caseCount": 16,
+    "immutable": true
+  },
+  "source": {
+    "contract": "git-source-snapshot-lf-v3",
+    "treeDigest": "c227439a75ac2df7f0a8c995c57534b42f9a46bd45c3b6274eace83d0d388100",
+    "files": 206,
+    "headCommit": "4dc270bd0cad6d22a759a65e62cd61d19d241841",
+    "headTreeDigest": "c227439a75ac2df7f0a8c995c57534b42f9a46bd45c3b6274eace83d0d388100",
+    "dirty": false
+  },
+  "runner": {
+    "node": "v24.18.0",
+    "platform": "win32"
+  },
+  "runs": 20,
+  "orderedSignatures": [
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+    "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1"
+  ],
+  "metrics": {
+    "unsafeNormalContextLeak": 0,
+    "validationAccuracy": 1,
+    "relocatedRecovery": 1,
+    "ambiguousFalseConfirmation": 0,
+    "duplicatePrecision": 1,
+    "duplicateRecall": 1,
+    "conflictPrecision": 1,
+    "conflictRecall": 1,
+    "auditReplayMismatch": 0,
+    "memoryRevisionMismatch": 0,
+    "migrationPreservationFailures": 0
+  },
+  "thresholds": {
+    "deterministicRuns": 20,
+    "unsafeNormalContextLeak": 0,
+    "validationAccuracy": 1,
+    "relocatedRecovery": 1,
+    "ambiguousFalseConfirmation": 0,
+    "duplicatePrecision": 1,
+    "duplicateRecall": 1,
+    "conflictPrecision": 1,
+    "conflictRecall": 1,
+    "auditReplayMismatch": 0,
+    "memoryRevisionMismatch": 0,
+    "migrationPreservationFailures": 0
+  },
+  "caseResults": [
+    {
+      "id": "unchanged-linked-valid",
+      "category": "validation",
+      "expected": "valid",
+      "actual": "valid",
+      "passed": true
+    },
+    {
+      "id": "unique-rename-relocated",
+      "category": "validation",
+      "expected": "relocated",
+      "actual": "relocated",
+      "passed": true
+    },
+    {
+      "id": "ambiguous-rename-review",
+      "category": "validation",
+      "expected": "needs_review",
+      "actual": "needs_review",
+      "passed": true
+    },
+    {
+      "id": "changed-linked-stale",
+      "category": "validation",
+      "expected": "stale",
+      "actual": "stale",
+      "passed": true
+    },
+    {
+      "id": "deleted-target-orphaned",
+      "category": "validation",
+      "expected": "orphaned",
+      "actual": "orphaned",
+      "passed": true
+    },
+    {
+      "id": "structured-signature-contradicted",
+      "category": "validation",
+      "expected": "contradicted",
+      "actual": "contradicted",
+      "passed": true
+    },
+    {
+      "id": "stale-anchor-excluded",
+      "category": "safety",
+      "expected": "excluded",
+      "actual": "excluded",
+      "passed": true
+    },
+    {
+      "id": "contradicted-semantic-excluded",
+      "category": "safety",
+      "expected": "excluded",
+      "actual": "excluded",
+      "passed": true
+    },
+    {
+      "id": "near-duplicate-candidate",
+      "category": "duplicate",
+      "expected": "candidate",
+      "actual": "candidate",
+      "passed": true
+    },
+    {
+      "id": "structured-conflict-candidate",
+      "category": "conflict",
+      "expected": "candidate",
+      "actual": "candidate",
+      "passed": true
+    },
+    {
+      "id": "disjoint-validity-no-conflict",
+      "category": "conflict",
+      "expected": "none",
+      "actual": "none",
+      "passed": true
+    },
+    {
+      "id": "episode-compaction-candidate",
+      "category": "compaction",
+      "expected": "candidate",
+      "actual": "candidate",
+      "passed": true
+    },
+    {
+      "id": "validity-ended-excluded",
+      "category": "temporal",
+      "expected": "excluded",
+      "actual": "excluded",
+      "passed": true
+    },
+    {
+      "id": "access-reinforcement",
+      "category": "utility",
+      "expected": "reinforced",
+      "actual": "reinforced",
+      "passed": true
+    },
+    {
+      "id": "maintenance-noop",
+      "category": "maintenance",
+      "expected": "noop",
+      "actual": "noop",
+      "passed": true
+    },
+    {
+      "id": "audit-replay",
+      "category": "audit",
+      "expected": "stable",
+      "actual": "stable",
+      "passed": true
+    }
+  ],
+  "auditSignature": "9772758a8aa3e7f36496acfd6a56b6b88586e5ec6b7e9caa092a68eff22707b1",
+  "passed": true
+}
