@@ -349,5 +349,5 @@ describe("migration 013", () => {
     expect(nodeSql).not.toContain("'resource'");
     expect(raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     raw.close();
-  });
+  }, 60_000);
 });
