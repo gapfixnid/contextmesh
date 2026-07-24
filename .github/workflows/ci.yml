@@ -79,7 +79,7 @@ jobs:
             artifacts/v07-memory-validation.json
           if-no-files-found: error
       - run: npm run verify:native-supply-chain
-      - run: npm run verify:v04-artifact
+      - run: npm run verify:v04-artifact -- --historical
       - run: npm run evaluate:multilang
       - run: npm run verify:package
       - run: npm run audit:production
@@ -215,7 +215,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify canonical fixed-hardware v0.4 performance evidence
-        run: npm run verify:v04-artifact
+        run: npm run verify:v04-artifact -- --historical
 
   phase4-release-gate:
     if: always()

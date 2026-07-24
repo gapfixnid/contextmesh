@@ -108,7 +108,9 @@ function requireFiniteNumbers(value: unknown, keyPath = "artifact"): void {
   }
 }
 
-const artifactPath = path.resolve(process.argv[2] ?? "artifacts/v051-external-holdout.json");
+const artifactPath = path.resolve(
+  process.argv.slice(2).find((value) => !value.startsWith("--")) ?? "artifacts/v051-external-holdout.json",
+);
 const sourceText = readFileSync(artifactPath, "utf8");
 const artifact = JSON.parse(sourceText) as Artifact;
 requireCondition(
@@ -122,6 +124,7 @@ requireCondition(/^[0-9a-f]{64}$/.test(artifact.source.treeDigest), "source tree
 requireCondition(artifact.source.treeDigest === artifact.source.headTreeDigest, "measured source differed from HEAD");
 requireCondition(artifact.source.dirty === false, "measurement source was dirty");
 
+const historical = process.argv.includes("--historical");
 if (existsSync(path.join(process.cwd(), ".git"))) {
   execFileSync("git", ["merge-base", "--is-ancestor", artifact.source.headCommit, "HEAD"], { stdio: "inherit" });
   const committed = v04CommitSourceEvidence(artifact.source.headCommit);
@@ -129,36 +132,40 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     committed.treeDigest === artifact.source.treeDigest && committed.files === artifact.source.files,
     "artifact source digest does not match its exact commit",
   );
-  try {
-    execFileSync("git", [
-      "diff", "--quiet", artifact.source.headCommit, "HEAD", "--", ".",
-      ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
-    ]);
-  } catch {
-    throw new Error("Invalid v0.5.1 external holdout artifact: source changed after evaluation");
-  }
   const current = v04SourceEvidence();
   requireCondition(current.dirty === false,
     `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
-  requireCondition(
-    current.treeDigest === artifact.source.treeDigest && current.files === artifact.source.files,
-    "artifact was evaluated from a different source tree",
-  );
+  if (!historical) {
+    try {
+      execFileSync("git", [
+        "diff", "--quiet", artifact.source.headCommit, "HEAD", "--", ".",
+        ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
+      ]);
+    } catch {
+      throw new Error("Invalid v0.5.1 external holdout artifact: source changed after evaluation");
+    }
+    requireCondition(
+      current.treeDigest === artifact.source.treeDigest && current.files === artifact.source.files,
+      "artifact was evaluated from a different source tree",
+    );
+  }
 } else {
   const sourceCommit = readFileSync(path.join(process.cwd(), "SOURCE_COMMIT"), "utf8").trim();
   const archiveEvidence = JSON.parse(
     readFileSync(path.join(process.cwd(), "SOURCE_EVIDENCE.json"), "utf8"),
   ) as V04SourceEvidence;
   requireCondition(sourceCommit === archiveEvidence.headCommit, "archive source commit mismatch");
-  requireCondition(
-    artifact.source.headCommit === sourceCommit &&
-    archiveEvidence.contract === artifact.source.contract &&
-    archiveEvidence.treeDigest === artifact.source.treeDigest &&
-    archiveEvidence.files === artifact.source.files &&
-    archiveEvidence.dirty === false,
-    "archive source evidence mismatch",
-  );
-  verifyV04ArchiveSourceManifest(artifact.source);
+  if (!historical) {
+    requireCondition(
+      artifact.source.headCommit === sourceCommit &&
+      archiveEvidence.contract === artifact.source.contract &&
+      archiveEvidence.treeDigest === artifact.source.treeDigest &&
+      archiveEvidence.files === artifact.source.files &&
+      archiveEvidence.dirty === false,
+      "archive source evidence mismatch",
+    );
+    verifyV04ArchiveSourceManifest(artifact.source);
+  }
 }
 
 const fixturePath = path.join(process.cwd(), "evaluation", "fixtures", "v051-external-holdout-v4.json");

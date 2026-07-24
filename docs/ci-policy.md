@@ -23,6 +23,9 @@ changes and `npm run check` for migration, native, provider, or storage changes.
 Fast CI does not generate v0.7 release evidence. The manual/reusable Full CI
 runs `evaluate:v07`, verifies the canonical 20-run artifact, and uploads
 `artifacts/v07-memory-validation.json` after the source has been frozen.
+The immutable v0.4-v0.6 artifacts are checked in `--historical` mode against
+their exact original commits; they are not represented as current v0.7 source
+evidence. Only the v0.7 artifact must match the exact current release source.
 
 ## Stage-boundary checks
 

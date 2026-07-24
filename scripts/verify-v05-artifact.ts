@@ -70,7 +70,9 @@ interface Artifact {
   passed: boolean;
 }
 
-const artifactPath = path.resolve(process.argv[2] ?? "artifacts/v05-quality.json");
+const artifactPath = path.resolve(
+  process.argv.slice(2).find((value) => !value.startsWith("--")) ?? "artifacts/v05-quality.json",
+);
 const sourceText = readFileSync(artifactPath, "utf8");
 const artifact = JSON.parse(sourceText) as Artifact;
 const canonicalText = `${JSON.stringify(JSON.parse(stableStringify(artifact)), null, 2)}\n`;
@@ -83,6 +85,7 @@ requireCondition(/^[0-9a-f]{64}$/.test(artifact.source.treeDigest), "source tree
 requireCondition(artifact.source.treeDigest === artifact.source.headTreeDigest, "measured source did not equal its HEAD tree");
 requireCondition(artifact.source.dirty === false, "measurement source was dirty");
 
+const historical = process.argv.includes("--historical");
 if (existsSync(path.join(process.cwd(), ".git"))) {
   execFileSync("git", ["merge-base", "--is-ancestor", artifact.source.headCommit, "HEAD"], { stdio: "inherit" });
   const committed = v04CommitSourceEvidence(artifact.source.headCommit);
@@ -90,21 +93,23 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     committed.treeDigest === artifact.source.treeDigest && committed.files === artifact.source.files,
     "artifact source digest does not match its exact source commit",
   );
-  try {
-    execFileSync("git", [
-      "diff", "--quiet", artifact.source.headCommit, "HEAD", "--", ".",
-      ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
-    ]);
-  } catch {
-    throw new Error("Invalid v0.5 artifact: non-artifact source changed after the evaluated source commit");
-  }
   const current = v04SourceEvidence();
   requireCondition(current.dirty === false,
     `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
-  requireCondition(
-    current.treeDigest === artifact.source.treeDigest && current.files === artifact.source.files,
-    "artifact was evaluated from a different source tree",
-  );
+  if (!historical) {
+    try {
+      execFileSync("git", [
+        "diff", "--quiet", artifact.source.headCommit, "HEAD", "--", ".",
+        ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
+      ]);
+    } catch {
+      throw new Error("Invalid v0.5 artifact: non-artifact source changed after the evaluated source commit");
+    }
+    requireCondition(
+      current.treeDigest === artifact.source.treeDigest && current.files === artifact.source.files,
+      "artifact was evaluated from a different source tree",
+    );
+  }
 } else {
   const sourceCommitPath = path.join(process.cwd(), "SOURCE_COMMIT");
   const sourceEvidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");
@@ -112,14 +117,16 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   const archiveCommit = readFileSync(sourceCommitPath, "utf8").trim();
   const archiveEvidence = JSON.parse(readFileSync(sourceEvidencePath, "utf8")) as V04SourceEvidence;
   requireCondition(archiveCommit === archiveEvidence.headCommit && archiveEvidence.dirty === false, "archive commit evidence is invalid");
-  requireCondition(
-    artifact.source.headCommit === archiveCommit &&
-    archiveEvidence.contract === artifact.source.contract &&
-    archiveEvidence.treeDigest === artifact.source.treeDigest &&
-    archiveEvidence.files === artifact.source.files,
-    "archive source tree does not match artifact source",
-  );
-  verifyV04ArchiveSourceManifest(artifact.source);
+  if (!historical) {
+    requireCondition(
+      artifact.source.headCommit === archiveCommit &&
+      archiveEvidence.contract === artifact.source.contract &&
+      archiveEvidence.treeDigest === artifact.source.treeDigest &&
+      archiveEvidence.files === artifact.source.files,
+      "archive source tree does not match artifact source",
+    );
+    verifyV04ArchiveSourceManifest(artifact.source);
+  }
 }
 
 const fixture = JSON.parse(readFileSync(path.join(process.cwd(), "evaluation", "fixtures", "v05-quality-v6.json"), "utf8")) as Record<string, unknown>;

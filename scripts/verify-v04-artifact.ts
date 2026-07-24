@@ -76,7 +76,9 @@ interface Artifact {
   thresholds: Record<string, boolean | number>;
 }
 
-const artifactPath = path.resolve(process.argv[2] ?? "artifacts/v04-performance.json");
+const artifactPath = path.resolve(
+  process.argv.slice(2).find((value) => !value.startsWith("--")) ?? "artifacts/v04-performance.json",
+);
 const source = readFileSync(artifactPath, "utf8");
 const artifact = JSON.parse(source) as Artifact;
 const canonicalSource = stableStringify(artifact);
@@ -92,6 +94,7 @@ requireCondition(artifact.source.dirty === false, "canonical measurement source 
 requireCondition(artifact.source.treeDigest === artifact.source.headTreeDigest, "measured working source did not equal its HEAD tree");
 requireCondition(artifact.source.contract === V04_SOURCE_CONTRACT, "source contract mismatch");
 requireCondition(/^[0-9a-f]{64}$/.test(artifact.source.treeDigest), "source tree digest missing");
+const historical = process.argv.includes("--historical");
 if (existsSync(path.join(process.cwd(), ".git"))) {
   execFileSync("git", ["merge-base", "--is-ancestor", artifact.git.commit, "HEAD"], { stdio: "inherit" });
   const committedSource = v04CommitSourceEvidence(artifact.git.commit);
@@ -99,21 +102,23 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
     artifact.source.treeDigest === committedSource.treeDigest && artifact.source.files === committedSource.files,
     "artifact source digest does not match its exact source commit",
   );
-  try {
-    execFileSync("git", [
-      "diff", "--quiet", artifact.git.commit, "HEAD", "--", ".",
-      ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
-    ]);
-  } catch {
-    throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
-  }
   const currentSource = v04SourceEvidence();
   requireCondition(currentSource.dirty === false,
     `current non-artifact source working tree is dirty: ${v04SourceDifferencePaths().join(", ") || "unknown difference"}`);
-  requireCondition(
-    artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
-    "artifact was measured from a different source tree",
-  );
+  if (!historical) {
+    try {
+      execFileSync("git", [
+        "diff", "--quiet", artifact.git.commit, "HEAD", "--", ".",
+        ":(exclude)artifacts/**", ":(exclude)evaluation/artifacts/**",
+      ]);
+    } catch {
+      throw new Error("Invalid v0.4 artifact: non-artifact source changed after the measured source commit");
+    }
+    requireCondition(
+      artifact.source.treeDigest === currentSource.treeDigest && artifact.source.files === currentSource.files,
+      "artifact was measured from a different source tree",
+    );
+  }
 } else {
   const sourceCommitPath = path.join(process.cwd(), "SOURCE_COMMIT");
   const sourceEvidencePath = path.join(process.cwd(), "SOURCE_EVIDENCE.json");
@@ -121,21 +126,37 @@ if (existsSync(path.join(process.cwd(), ".git"))) {
   const archiveCommit = readFileSync(sourceCommitPath, "utf8").trim();
   const archiveEvidence = JSON.parse(readFileSync(sourceEvidencePath, "utf8")) as Artifact["source"];
   requireCondition(archiveCommit === archiveEvidence.headCommit && archiveEvidence.dirty === false, "archive commit evidence is invalid");
-  requireCondition(
-    artifact.source.headCommit === archiveCommit &&
-    archiveEvidence.contract === artifact.source.contract &&
-    archiveEvidence.treeDigest === artifact.source.treeDigest &&
-    archiveEvidence.files === artifact.source.files,
-    "archive source tree does not match artifact source",
-  );
-  verifyV04ArchiveSourceManifest(artifact.source);
+  if (!historical) {
+    requireCondition(
+      artifact.source.headCommit === archiveCommit &&
+      archiveEvidence.contract === artifact.source.contract &&
+      archiveEvidence.treeDigest === artifact.source.treeDigest &&
+      archiveEvidence.files === artifact.source.files,
+      "archive source tree does not match artifact source",
+    );
+    verifyV04ArchiveSourceManifest(artifact.source);
+  }
 }
 requireCondition(/^[0-9a-f]{64}$/.test(artifact.fixtureDigest), "fixture digest missing");
 requireCondition(artifact.runner.contract === V04_ARTIFACT_CONTRACT, "runner contract mismatch");
 requireCondition(Boolean(artifact.runner.os && artifact.runner.cpu && artifact.runner.node && artifact.runner.rust), "runner identity incomplete");
 requireCondition(artifact.runner.runtimeNetwork === 0 && artifact.runner.mode === "sidecar", "runtime mode/network policy mismatch");
 validateFixedHardwareIdentity(artifact.runner);
-requireCondition(artifact.runner.native === expectedNativeRuntime(), "native runtime does not match the graph-kernel handshake version");
+const expectedArtifactRuntime = historical && existsSync(path.join(process.cwd(), ".git"))
+  ? `contextmesh-graph-kernel@${
+    (JSON.parse(execFileSync(
+      "git",
+      ["show", `${artifact.git.commit}:package.json`],
+      { encoding: "utf8" },
+    )) as { version: string }).version
+  }`
+  : expectedNativeRuntime();
+requireCondition(
+  historical && !existsSync(path.join(process.cwd(), ".git"))
+    ? /^contextmesh-graph-kernel@\d+\.\d+\.\d+$/.test(artifact.runner.native)
+    : artifact.runner.native === expectedArtifactRuntime,
+  "native runtime does not match the graph-kernel handshake version",
+);
 
 for (const label of ["small", "medium", "large"]) {
   requireCondition(artifact.measurements.coldFull[label]?.timing.samples === 5, `${label} cold samples must equal 5`);
