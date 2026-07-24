@@ -12,6 +12,6 @@ permissions:
 
 jobs:
   full-ci:
-    uses: ./.github/workflows/ci-full.yml
+    uses: ./.github/workflows/ci.yml
     with:
       stage: ${{ github.ref_name }}

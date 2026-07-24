@@ -1,4 +1,4 @@
-name: Full CI
+name: Stage-boundary Full CI
 run-name: Full CI (${{ inputs.stage || 'manual' }})
 
 on:
