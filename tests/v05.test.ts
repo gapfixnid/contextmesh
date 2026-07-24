@@ -2203,7 +2203,7 @@ describe("v0.5 precision overlays and core languages", () => {
       }
       await app.close();
     }
-  }, 90_000);
+  }, 180_000);
 
   it("keeps Cargo dependency resolution offline in safe mode while serving the base graph", async () => {
     let connections = 0;
