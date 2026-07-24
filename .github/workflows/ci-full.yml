@@ -1,15 +1,28 @@
-name: CI
+name: Full CI
+run-name: Full CI (${{ inputs.stage || 'manual' }})
 
 on:
-  push:
-  pull_request:
-  schedule:
-    - cron: "0 18 * * *"
   workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage boundary being validated
+        required: true
+        type: choice
+        options:
+          - v0.7
+          - v0.8
+          - v1.0-rc
+          - manual
+  workflow_call:
+    inputs:
+      stage:
+        description: Stage boundary or release tag being validated
+        required: false
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
